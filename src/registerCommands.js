@@ -16,7 +16,7 @@ const register = async () => {
   const { commandData } = await loadCommands(logger);
 
   try {
-    logger.info('Registering slash commands for guild deployment...');
+    logger.info(`Registering ${commandData.length} slash command(s) for guild deployment...`);
     await rest.put(
       Routes.applicationGuildCommands(config.discord.clientId, config.discord.guildId),
       { body: commandData },

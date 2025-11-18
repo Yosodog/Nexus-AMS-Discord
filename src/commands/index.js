@@ -42,5 +42,8 @@ export const loadCommands = async (logger) => {
     }
   }
 
+  // Summarize loaded commands for easier debugging/registration confirmation.
+  logger.info(`Loaded ${commands.size} command(s): ${Array.from(commands.keys()).join(', ')}`);
+
   return { commands, commandData };
 };
