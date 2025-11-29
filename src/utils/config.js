@@ -12,8 +12,4 @@ export const config = {
     baseUrl: process.env.NEXUS_API_URL ?? '',
     apiKey: process.env.NEXUS_API_KEY ?? '',
   },
-  reverb: {
-    url: process.env.REVERB_URL ?? '',
-    apiKey: process.env.REVERB_KEY ?? '',
-  },
 };

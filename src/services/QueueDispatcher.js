@@ -1,0 +1,185 @@
+import { EmbedBuilder } from 'discord.js';
+
+/**
+ * Dispatches queued Nexus Discord commands to the appropriate handler.
+ * Designed for easy extension as new actions are added server-side.
+ */
+export class QueueDispatcher {
+  constructor({ client, logger }) {
+    this.client = client;
+    this.logger = logger;
+
+    this.handlers = {
+      WAR_ALERT: (command) => this.#handleWarAlert(command),
+    };
+  }
+
+  /**
+   * Dispatch a queued command to its action-specific handler.
+   * @param {any} command queue item returned by Nexus
+   * @returns {Promise<{ success: boolean, reason?: string }>}
+   */
+  async dispatch(command) {
+    const action = command?.action;
+
+    if (!action || typeof action !== 'string') {
+      this.logger.warn('Queue item is missing an action', command?.id ?? 'unknown');
+      return { success: false, reason: 'invalid_action' };
+    }
+
+    const handler = this.handlers[action];
+
+    if (!handler) {
+      this.logger.warn(`Unsupported queue action received: ${action}`);
+      return { success: false, reason: 'unsupported_action' };
+    }
+
+    try {
+      return await handler(command);
+    } catch (error) {
+      this.logger.error(`Unhandled error while processing ${action}`, error?.message ?? error);
+      return { success: false, reason: 'handler_error' };
+    }
+  }
+
+  async #handleWarAlert(command) {
+    const payload = command?.payload ?? {};
+    const channelId = payload.channel_id;
+
+    if (!channelId) {
+      this.logger.warn('WAR_ALERT payload missing channel_id', command?.id ?? 'unknown');
+      return { success: false, reason: 'missing_channel' };
+    }
+
+    const channel = await this.#resolveChannel(channelId);
+
+    if (!channel) {
+      this.logger.warn('WAR_ALERT channel missing or inaccessible', { channelId, commandId: command?.id });
+      return { success: false, reason: 'channel_unavailable' };
+    }
+
+    const embed = this.#buildWarAlertEmbed(command);
+
+    try {
+      await channel.send({ embeds: [embed] });
+      this.logger.info('Delivered WAR_ALERT embed', { commandId: command?.id, channelId });
+      return { success: true };
+    } catch (error) {
+      this.logger.error('Failed to send WAR_ALERT embed to Discord', error?.message ?? error);
+      return { success: false, reason: 'discord_send_failed' };
+    }
+  }
+
+  async #resolveChannel(channelId) {
+    const cached = this.client.channels.cache.get(channelId);
+    if (cached?.isTextBased?.()) {
+      return cached;
+    }
+
+    try {
+      const fetched = await this.client.channels.fetch(channelId);
+      if (fetched?.isTextBased?.()) {
+        return fetched;
+      }
+
+      return null;
+    } catch (error) {
+      this.logger.warn('Channel fetch failed or inaccessible', { channelId, error: error?.message ?? error });
+      return null;
+    }
+  }
+
+  #buildWarAlertEmbed(command) {
+    const payload = command?.payload ?? {};
+    const createdAt = command?.created_at ? new Date(command.created_at) : new Date();
+
+    const descriptionParts = [];
+    if (payload.war_url) {
+      descriptionParts.push(`➡️ [War Timeline](${payload.war_url})`);
+    }
+    if (payload.counter?.url) {
+      const counterLabel = payload.counter.id ? `Counter #${payload.counter.id}` : 'Counter';
+      descriptionParts.push(`🧭 [${counterLabel}](${payload.counter.url})`);
+    }
+
+    const embed = new EmbedBuilder().setTitle(`⚔️ War Alert${payload.war_id ? ` #${payload.war_id}` : ''}`);
+
+    if (payload.war_url) {
+      embed.setURL(payload.war_url);
+    }
+
+    embed
+      .setColor(0xd64045)
+      .setDescription(descriptionParts.join('\n') || 'A new war alert was received.')
+      .addFields(
+        { name: 'Attacker', value: this.#formatParticipant(payload.attacker, '🔥'), inline: true },
+        { name: 'Defender', value: this.#formatParticipant(payload.defender, '🛡️'), inline: true },
+        {
+          name: 'Scores',
+          value: `${this.#formatNumber(payload.attacker?.score)} vs ${this.#formatNumber(payload.defender?.score)}`,
+          inline: true,
+        },
+        {
+          name: 'Cities',
+          value: `${this.#formatNumber(payload.attacker?.cities)} vs ${this.#formatNumber(payload.defender?.cities)}`,
+          inline: true,
+        },
+        {
+          name: 'Attacker Military',
+          value: this.#formatMilitary(payload.attacker?.military),
+        },
+        {
+          name: 'Defender Military',
+          value: this.#formatMilitary(payload.defender?.military),
+        },
+      )
+      .setTimestamp(createdAt);
+
+    return embed;
+  }
+
+  #formatParticipant(side = {}, emoji = '') {
+    const leader = side.leader_name ?? 'Unknown leader';
+    const nation = side.nation_name ?? 'Unknown nation';
+    const allianceName = side.alliance?.name ?? null;
+    const allianceLink = side.links?.alliance ?? side.alliance?.url ?? null;
+    const alliance = allianceName && allianceLink ? `[${allianceName}](${allianceLink})` : allianceName ?? '—';
+
+    const links = [];
+    if (side.links?.nation) {
+      links.push(`[Nation](${side.links.nation})`);
+    }
+    if (side.links?.alliance) {
+      links.push(`[Alliance](${side.links.alliance})`);
+    }
+
+    const linkLine = links.length > 0 ? `🔗 ${links.join(' • ')}` : '🔗 No links provided';
+
+    return `${emoji} **${nation}** (${leader})
+Alliance: ${alliance}
+${linkLine}`;
+  }
+
+  #formatMilitary(military = {}) {
+    const unitOrder = [
+      { key: 'soldiers', label: '🪖 Soldiers' },
+      { key: 'tanks', label: '🛡️ Tanks' },
+      { key: 'aircraft', label: '✈️ Aircraft' },
+      { key: 'ships', label: '🚢 Ships' },
+      { key: 'spies', label: '🕵️ Spies' },
+      { key: 'missiles', label: '🎯 Missiles' },
+      { key: 'nukes', label: '☢️ Nukes' },
+    ];
+
+    const parts = unitOrder.map(({ key, label }) => `${label}: ${this.#formatNumber(military[key])}`);
+    return parts.join(' • ');
+  }
+
+  #formatNumber(value) {
+    if (value === null || value === undefined || Number.isNaN(Number(value))) {
+      return '—';
+    }
+
+    return new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(Number(value));
+  }
+}

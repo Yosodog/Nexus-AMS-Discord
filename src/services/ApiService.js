@@ -63,6 +63,37 @@ export class ApiService {
   }
 
   /**
+   * Fetch pending Discord commands from the Nexus queue API.
+   * @param {number} [limit=20] maximum number of items to fetch per poll
+   * @returns {Promise<{ data: any[] }>} response payload from Nexus
+   */
+  async fetchDiscordQueue(limit = 20) {
+    const endpointUrl = new URL('/api/v1/discord/queue', this.baseUrl);
+    endpointUrl.searchParams.set('limit', String(limit));
+
+    return this.request({
+      method: 'get',
+      url: endpointUrl.toString(),
+    });
+  }
+
+  /**
+   * Report the processing outcome for a queued Discord command.
+   * @param {string} id queue item identifier
+   * @param {'complete' | 'failed'} status processing status to report
+   * @returns {Promise<any>} response payload
+   */
+  async updateDiscordQueueStatus(id, status) {
+    const endpointUrl = new URL(`/api/v1/discord/queue/${id}/status`, this.baseUrl);
+
+    return this.request({
+      method: 'post',
+      url: endpointUrl.toString(),
+      data: { status },
+    });
+  }
+
+  /**
    * Exchange a Discord-issued verification code with Nexus to link user accounts.
    * Always returns a normalized outcome instead of throwing so callers can render friendly errors.
    * @param {object} payload verification payload to send to Nexus

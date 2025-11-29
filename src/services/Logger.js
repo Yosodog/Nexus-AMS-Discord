@@ -58,8 +58,6 @@ export class Logger {
       'DISCORD_GUILD_ID',
       'NEXUS_API_URL',
       'NEXUS_API_KEY',
-      'REVERB_URL',
-      'REVERB_KEY',
     ];
 
     return secretKeys

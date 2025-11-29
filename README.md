@@ -1,19 +1,19 @@
 # Nexus AMS Discord Bot
 
-Discord bot scaffolding for the Nexus AMS project. It currently ships a simple `/ping` check and the plumbing to add more slash commands, talk to the Nexus API, and (future) consume Reverb WebSocket notifications.
+Discord bot scaffolding for the Nexus AMS project. It currently ships a simple `/ping` check, `/verify` to link Nexus accounts, and a queue worker that polls Nexus for Discord-bound actions like war alerts.
 
 ## Features
 - Slash command loader with a health-check `/ping`.
 - Guild-scoped slash command registration script.
 - Structured logging with basic secret scrubbing.
-- Nexus API REST client stub with retries.
-- Reverb WebSocket client stub (connection currently disabled in `src/bot.js`).
+- Nexus API REST client with retries and queue polling worker.
+- WAR_ALERT dispatcher that builds rich embeds and reports outcomes to Nexus.
 
 ## Project Structure
 - `src/bot.js` — bootstraps the client, wiring listeners and services.
 - `src/commands/` — individual slash commands; add new files here.
 - `src/listeners/` — Discord event listeners (e.g., `interactionCreate`).
-- `src/services/` — shared services (API client, Reverb socket, logger).
+- `src/services/` — shared services (API client, queue worker/dispatcher, logger).
 - `src/utils/` — configuration and environment validation helpers.
 - `src/registerCommands.js` — registers slash commands to a guild.
 
@@ -33,7 +33,6 @@ Discord bot scaffolding for the Nexus AMS project. It currently ships a simple `
 3. Populate the environment variables:
    - `DISCORD_BOT_TOKEN`, `DISCORD_CLIENT_ID`, `DISCORD_GUILD_ID`
    - `NEXUS_API_URL`, `NEXUS_API_KEY`
-   - `REVERB_URL`, `REVERB_KEY` (optional, Reverb connection is currently skipped)
 
 ## Running
 - Start the bot:
@@ -49,5 +48,4 @@ Discord bot scaffolding for the Nexus AMS project. It currently ships a simple `
 Create a new file in `src/commands/` exporting `data` (a `SlashCommandBuilder`) and `execute`. The loader auto-registers any `.js` file in that folder except `index.js`.
 
 ## Notes
-- Reverb WebSocket reconnect/heartbeat logic is scaffolded but the connection is intentionally disabled in `src/bot.js` until the integration is ready.
 - Logging redacts known secrets; still avoid logging sensitive payloads directly.
