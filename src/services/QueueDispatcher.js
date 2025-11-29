@@ -11,6 +11,7 @@ export class QueueDispatcher {
 
     this.handlers = {
       WAR_ALERT: (command) => this.#handleWarAlert(command),
+      ALLIANCE_DEPARTURE: (command) => this.#handleAllianceDeparture(command),
     };
   }
 
@@ -39,6 +40,34 @@ export class QueueDispatcher {
     } catch (error) {
       this.logger.error(`Unhandled error while processing ${action}`, error?.message ?? error);
       return { success: false, reason: 'handler_error' };
+    }
+  }
+
+  async #handleAllianceDeparture(command) {
+    const payload = command?.payload ?? {};
+    const channelId = payload.channel_id;
+
+    if (!channelId) {
+      this.logger.warn('ALLIANCE_DEPARTURE payload missing channel_id', command?.id ?? 'unknown');
+      return { success: false, reason: 'missing_channel' };
+    }
+
+    const channel = await this.#resolveChannel(channelId);
+
+    if (!channel) {
+      this.logger.warn('ALLIANCE_DEPARTURE channel missing or inaccessible', { channelId, commandId: command?.id });
+      return { success: false, reason: 'channel_unavailable' };
+    }
+
+    const embed = this.#buildAllianceDepartureEmbed(command);
+
+    try {
+      await channel.send({ embeds: [embed] });
+      this.logger.info('Delivered ALLIANCE_DEPARTURE embed', { commandId: command?.id, channelId });
+      return { success: true };
+    } catch (error) {
+      this.logger.error('Failed to send ALLIANCE_DEPARTURE embed to Discord', error?.message ?? error);
+      return { success: false, reason: 'discord_send_failed' };
     }
   }
 
@@ -138,6 +167,60 @@ export class QueueDispatcher {
     return embed;
   }
 
+  #buildAllianceDepartureEmbed(command) {
+    const payload = command?.payload ?? {};
+    const nation = payload.nation ?? {};
+    const leftAt = this.#parseDate(payload.left_at);
+    const createdAt = this.#parseDate(command?.created_at) ?? new Date();
+    const timestamp = leftAt ?? createdAt;
+
+    const embed = new EmbedBuilder().setTitle('🏳️ Alliance Departure').setColor(0xf59f00);
+
+    if (nation.links?.nation) {
+      embed.setURL(nation.links.nation);
+    }
+
+    const descriptionLines = [
+      `${nation.leader_name ?? 'A nation'} (${nation.nation_name ?? 'Unknown nation'}) has left ${
+        this.#formatAlliance(payload.previous_alliance) ?? 'an alliance'
+      }.`,
+    ];
+
+    if (payload.new_alliance) {
+      descriptionLines.push(`New allegiance: ${this.#formatAlliance(payload.new_alliance)}.`);
+    } else {
+      descriptionLines.push('They are currently unaffiliated.');
+    }
+
+    if (nation.links?.nation) {
+      descriptionLines.push(`🔗 [Nation Profile](${nation.links.nation})`);
+    }
+
+    embed
+      .setDescription(descriptionLines.join('\n'))
+      .addFields(
+        {
+          name: 'Previous Alliance',
+          value: this.#formatAlliance(payload.previous_alliance) ?? 'Unknown',
+          inline: true,
+        },
+        {
+          name: 'New Alliance',
+          value: this.#formatAlliance(payload.new_alliance) ?? 'Unaffiliated',
+          inline: true,
+        },
+        {
+          name: 'Timing',
+          value: leftAt
+            ? `${this.#formatDiscordTime(leftAt, 'f')} (${this.#formatDiscordTime(leftAt, 'R')})`
+            : this.#formatDiscordTime(createdAt, 'R'),
+        },
+      )
+      .setTimestamp(timestamp);
+
+    return embed;
+  }
+
   #formatParticipant(side = {}, emoji = '') {
     const leader = side.leader_name ?? 'Unknown leader';
     const nation = side.nation_name ?? 'Unknown nation';
@@ -181,5 +264,36 @@ ${linkLine}`;
     }
 
     return new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(Number(value));
+  }
+
+  #formatAlliance(alliance) {
+    if (!alliance || typeof alliance !== 'object') {
+      return null;
+    }
+
+    const name = alliance.name ?? 'Unknown alliance';
+    if (alliance.link) {
+      return `[${name}](${alliance.link})`;
+    }
+
+    return name;
+  }
+
+  #formatDiscordTime(date, style = 'R') {
+    if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+      return 'Unknown time';
+    }
+
+    const seconds = Math.floor(date.getTime() / 1000);
+    return `<t:${seconds}:${style}>`;
+  }
+
+  #parseDate(input) {
+    if (!input) {
+      return null;
+    }
+
+    const date = input instanceof Date ? input : new Date(input);
+    return Number.isNaN(date.getTime()) ? null : date;
   }
 }
