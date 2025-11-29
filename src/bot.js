@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { Client, Collection, Events, GatewayIntentBits } from 'discord.js';
 import { loadCommands } from './commands/index.js';
 import { registerInteractionListener } from './listeners/interactionCreate.js';
+import { registerMessageListener } from './listeners/messageCreate.js';
 import { ApiService } from './services/ApiService.js';
 import { Logger } from './services/Logger.js';
 import { QueueDispatcher } from './services/QueueDispatcher.js';
@@ -24,7 +25,12 @@ const logger = new Logger('Bot');
 
 const bootstrap = async () => {
   const client = new Client({
-    intents: [GatewayIntentBits.Guilds],
+    intents: [
+      GatewayIntentBits.Guilds,
+      GatewayIntentBits.GuildMembers,
+      GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.MessageContent,
+    ],
   });
 
   // Load commands and attach to the client for easy access by listeners.
@@ -52,6 +58,7 @@ const bootstrap = async () => {
   const commandContext = { apiService };
 
   registerInteractionListener(client, client.commands, logger, commandContext);
+  registerMessageListener(client, apiService, new Logger('MessageListener'));
 
   client.once(Events.ClientReady, () => {
     logger.info('Bot Ready');

@@ -94,6 +94,96 @@ export class ApiService {
   }
 
   /**
+   * Submit a new application on behalf of a Discord user.
+   * @param {{ nation_id: number, discord_user_id: string, discord_username: string }} payload application payload
+   * @returns {Promise<any>} Nexus response containing application and config
+   */
+  async createApplication(payload) {
+    const endpointUrl = new URL('/api/v1/discord/applications', this.baseUrl).toString();
+
+    return this.request({
+      method: 'post',
+      url: endpointUrl,
+      data: payload,
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+    });
+  }
+
+  /**
+   * Attach a Discord channel to an application for transcript correlation.
+   * @param {{ application_id: number|string, discord_channel_id: string }} payload association payload
+   * @returns {Promise<any>} Nexus response
+   */
+  async attachApplicationChannel(payload) {
+    const endpointUrl = new URL('/api/v1/discord/applications/attach-channel', this.baseUrl).toString();
+
+    return this.request({
+      method: 'post',
+      url: endpointUrl,
+      data: payload,
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+    });
+  }
+
+  /**
+   * Log a Discord message to Nexus for transcript storage.
+   * @param {{ discord_channel_id: string, discord_message_id: string, discord_user_id: string, discord_username: string, content: string, sent_at: number, is_staff: boolean }} payload message payload
+   * @returns {Promise<any>} Nexus response indicating logging status
+   */
+  async logApplicationMessage(payload) {
+    const endpointUrl = new URL('/api/v1/discord/applications/messages', this.baseUrl).toString();
+
+    return this.request({
+      method: 'post',
+      url: endpointUrl,
+      data: payload,
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+    });
+  }
+
+  /**
+   * Approve an applicant via Nexus.
+   * @param {{ applicant_discord_id: string, moderator_discord_id: string }} payload approval payload
+   * @returns {Promise<any>} Nexus response containing config for post-approval actions
+   */
+  async approveApplication(payload) {
+    const endpointUrl = new URL('/api/v1/discord/applications/approve', this.baseUrl).toString();
+
+    return this.request({
+      method: 'post',
+      url: endpointUrl,
+      data: payload,
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+    });
+  }
+
+  /**
+   * Deny an applicant via Nexus.
+   * @param {{ applicant_discord_id: string, moderator_discord_id: string }} payload denial payload
+   * @returns {Promise<any>} Nexus response
+   */
+  async denyApplication(payload) {
+    const endpointUrl = new URL('/api/v1/discord/applications/deny', this.baseUrl).toString();
+
+    return this.request({
+      method: 'post',
+      url: endpointUrl,
+      data: payload,
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+    });
+  }
+
+  /**
    * Exchange a Discord-issued verification code with Nexus to link user accounts.
    * Always returns a normalized outcome instead of throwing so callers can render friendly errors.
    * @param {object} payload verification payload to send to Nexus
