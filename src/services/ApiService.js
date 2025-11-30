@@ -148,6 +148,24 @@ export class ApiService {
   }
 
   /**
+   * Submit an intel report captured from Discord to Nexus.
+   * @param {{ report: string, source?: string }} payload intel payload containing the raw in-game text
+   * @returns {Promise<any>} Nexus response with parsed intel details
+   */
+  async sendIntelReport(payload) {
+    const endpointUrl = new URL('/api/v1/discord/intel', this.baseUrl).toString();
+
+    return this.request({
+      method: 'post',
+      url: endpointUrl,
+      data: payload,
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+    });
+  }
+
+  /**
    * Approve an applicant via Nexus.
    * @param {{ applicant_discord_id: string, moderator_discord_id: string }} payload approval payload
    * @returns {Promise<any>} Nexus response containing config for post-approval actions
