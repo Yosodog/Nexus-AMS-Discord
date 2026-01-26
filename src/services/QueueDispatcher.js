@@ -5,13 +5,15 @@ import { EmbedBuilder } from 'discord.js';
  * Designed for easy extension as new actions are added server-side.
  */
 export class QueueDispatcher {
-  constructor({ client, logger }) {
+  constructor({ client, logger, guildId }) {
     this.client = client;
     this.logger = logger;
+    this.guildId = guildId;
 
     this.handlers = {
       WAR_ALERT: (command) => this.#handleWarAlert(command),
       ALLIANCE_DEPARTURE: (command) => this.#handleAllianceDeparture(command),
+      ALLIANCE_ROLE_REMOVAL: (command) => this.#handleAllianceRoleRemoval(command),
     };
   }
 
@@ -99,6 +101,68 @@ export class QueueDispatcher {
     }
   }
 
+  async #handleAllianceRoleRemoval(command) {
+    const payload = command?.payload ?? {};
+    const discordId = payload.discord_id;
+
+    if (!discordId) {
+      this.logger.warn('ALLIANCE_ROLE_REMOVAL payload missing discord_id', command?.id ?? 'unknown');
+      return { success: false, reason: 'missing_discord_id' };
+    }
+
+    const guild = await this.#resolveGuild();
+
+    if (!guild) {
+      this.logger.warn('ALLIANCE_ROLE_REMOVAL guild missing or inaccessible', {
+        commandId: command?.id,
+        guildId: this.guildId,
+      });
+      return { success: false, reason: 'guild_unavailable' };
+    }
+
+    let member;
+    try {
+      member = await guild.members.fetch(discordId);
+    } catch (error) {
+      this.logger.warn('ALLIANCE_ROLE_REMOVAL unable to fetch member', {
+        commandId: command?.id,
+        discordId,
+        error: error?.message ?? error,
+      });
+      return { success: false, reason: 'member_unavailable' };
+    }
+
+    const rolesToRemove = member.roles.cache.filter((role) => role.id !== guild.id);
+    const roleIds = rolesToRemove.map((role) => role.id);
+
+    if (roleIds.length === 0) {
+      this.logger.info('ALLIANCE_ROLE_REMOVAL member had no removable roles', {
+        commandId: command?.id,
+        discordId,
+      });
+      return { success: true };
+    }
+
+    try {
+      await member.roles.remove(roleIds, 'Nexus AMS alliance role removal');
+      this.logger.info('ALLIANCE_ROLE_REMOVAL removed roles from member', {
+        commandId: command?.id,
+        discordId,
+        removedCount: roleIds.length,
+        nationId: payload.nation_id ?? null,
+        leftAt: payload.left_at ?? null,
+      });
+      return { success: true };
+    } catch (error) {
+      this.logger.error('ALLIANCE_ROLE_REMOVAL failed to remove roles', {
+        commandId: command?.id,
+        discordId,
+        error: error?.message ?? error,
+      });
+      return { success: false, reason: 'role_removal_failed' };
+    }
+  }
+
   async #resolveChannel(channelId) {
     const cached = this.client.channels.cache.get(channelId);
     if (cached?.isTextBased?.()) {
@@ -114,6 +178,29 @@ export class QueueDispatcher {
       return null;
     } catch (error) {
       this.logger.warn('Channel fetch failed or inaccessible', { channelId, error: error?.message ?? error });
+      return null;
+    }
+  }
+
+  async #resolveGuild() {
+    if (!this.guildId) {
+      this.logger.warn('Queue dispatcher missing guildId; cannot resolve guild.');
+      return null;
+    }
+
+    const cached = this.client.guilds.cache.get(this.guildId);
+    if (cached) {
+      return cached;
+    }
+
+    try {
+      const fetched = await this.client.guilds.fetch(this.guildId);
+      return fetched ?? null;
+    } catch (error) {
+      this.logger.warn('Guild fetch failed or inaccessible', {
+        guildId: this.guildId,
+        error: error?.message ?? error,
+      });
       return null;
     }
   }
