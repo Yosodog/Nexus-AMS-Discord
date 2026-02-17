@@ -12,6 +12,7 @@ export class QueueDispatcher {
     this.handlers = {
       WAR_ALERT: (command) => this.#handleWarAlert(command),
       ALLIANCE_DEPARTURE: (command) => this.#handleAllianceDeparture(command),
+      INACTIVITY_ALERT: (command) => this.#handleInactivityAlert(command),
     };
   }
 
@@ -95,6 +96,38 @@ export class QueueDispatcher {
       return { success: true };
     } catch (error) {
       this.logger.error('Failed to send WAR_ALERT embed to Discord', error?.message ?? error);
+      return { success: false, reason: 'discord_send_failed' };
+    }
+  }
+
+  async #handleInactivityAlert(command) {
+    const payload = command?.payload ?? {};
+    const channelId = payload.channel_id;
+
+    if (!channelId) {
+      this.logger.warn('INACTIVITY_ALERT payload missing channel_id', command?.id ?? 'unknown');
+      return { success: false, reason: 'missing_channel' };
+    }
+
+    const channel = await this.#resolveChannel(channelId);
+
+    if (!channel) {
+      this.logger.warn('INACTIVITY_ALERT channel missing or inaccessible', { channelId, commandId: command?.id });
+      return { success: false, reason: 'channel_unavailable' };
+    }
+
+    const embed = this.#buildInactivityAlertEmbed(command);
+    const mention = this.#buildInactivityAlertMention(payload);
+
+    try {
+      await channel.send({
+        content: mention ?? undefined,
+        embeds: [embed],
+      });
+      this.logger.info('Delivered INACTIVITY_ALERT message', { commandId: command?.id, channelId });
+      return { success: true };
+    } catch (error) {
+      this.logger.error('Failed to send INACTIVITY_ALERT message to Discord', error?.message ?? error);
       return { success: false, reason: 'discord_send_failed' };
     }
   }
@@ -286,6 +319,51 @@ ${linkLine}`;
 
     const seconds = Math.floor(date.getTime() / 1000);
     return `<t:${seconds}:${style}>`;
+  }
+
+  #buildInactivityAlertEmbed(command) {
+    const payload = command?.payload ?? {};
+    const leader = payload.leader_name ?? 'Unknown leader';
+    const nationName = payload.nation_name ?? 'Unknown nation';
+    const nationId = payload.nation_id ? `, #${payload.nation_id}` : '';
+    const lastActiveAt = this.#parseDate(payload.last_active_at);
+    const createdAt = this.#parseDate(command?.created_at) ?? new Date();
+    const threshold = payload.threshold_hours ?? this.#extractThresholdFromMessage(payload.message);
+
+    const embed = new EmbedBuilder()
+      .setTitle('⏰ Inactivity Alert')
+      .setColor(0xe67700)
+      .setDescription(`**${leader}** (${nationName}${nationId}) has exceeded inactivity limits.`)
+      .addFields({
+        name: 'Last Active',
+        value: lastActiveAt
+          ? `${this.#formatDiscordTime(lastActiveAt, 'f')} (${this.#formatDiscordTime(lastActiveAt, 'R')})`
+          : 'Unknown',
+      })
+      .setTimestamp(lastActiveAt ?? createdAt);
+
+    if (threshold) {
+      embed.addFields({ name: 'Threshold', value: `${threshold}h`, inline: true });
+    }
+
+    return embed;
+  }
+
+  #buildInactivityAlertMention(payload = {}) {
+    if (!payload.discord_user_id) {
+      return null;
+    }
+
+    return `<@${payload.discord_user_id}>`;
+  }
+
+  #extractThresholdFromMessage(message) {
+    if (typeof message !== 'string') {
+      return null;
+    }
+
+    const match = message.match(/threshold:\s*(\d+)h/i);
+    return match?.[1] ?? null;
   }
 
   #parseDate(input) {

@@ -7,7 +7,7 @@ Discord bot scaffolding for the Nexus AMS project. It currently ships a simple `
 - Guild-scoped slash command registration script.
 - Structured logging with basic secret scrubbing.
 - Nexus API REST client with retries and queue polling worker.
-- WAR_ALERT dispatcher that builds rich embeds and reports outcomes to Nexus.
+- Queue dispatcher handlers for `WAR_ALERT`, `ALLIANCE_DEPARTURE`, and `INACTIVITY_ALERT` with status reporting to Nexus.
 
 ## Project Structure
 - `src/bot.js` — bootstraps the client, wiring listeners and services.
