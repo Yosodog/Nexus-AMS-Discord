@@ -47,6 +47,7 @@ const bootstrap = async () => {
   const queueDispatcher = new QueueDispatcher({
     client,
     logger: new Logger('QueueDispatcher'),
+    guildId: config.discord.guildId,
   });
 
   const queueWorker = new QueueWorker({
