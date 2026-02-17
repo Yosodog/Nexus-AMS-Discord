@@ -15,6 +15,7 @@ export class QueueDispatcher {
       ALLIANCE_DEPARTURE: (command) => this.#handleAllianceDeparture(command),
       INACTIVITY_ALERT: (command) => this.#handleInactivityAlert(command),
       ALLIANCE_ROLE_REMOVAL: (command) => this.#handleAllianceRoleRemoval(command),
+      BEIGE_ALERT: (command) => this.#handleBeigeAlert(command),
     };
   }
 
@@ -193,6 +194,61 @@ export class QueueDispatcher {
         error: error?.message ?? error,
       });
       return { success: false, reason: 'role_removal_failed' };
+    }
+  }
+
+  async #handleBeigeAlert(command) {
+    const payload = command?.payload ?? {};
+    const channelId = payload.channel_id;
+
+    if (!channelId) {
+      this.logger.warn('BEIGE_ALERT payload missing channel_id', command?.id ?? 'unknown');
+      return { success: false, reason: 'missing_channel' };
+    }
+
+    const channel = await this.#resolveChannel(channelId);
+
+    if (!channel) {
+      this.logger.warn('BEIGE_ALERT channel missing or inaccessible', { channelId, commandId: command?.id });
+      return { success: false, reason: 'channel_unavailable' };
+    }
+
+    try {
+      if (Array.isArray(payload.nations) && payload.nations.length > 0) {
+        const messages = this.#buildBeigeTurnMessages(command);
+
+        for (const content of messages) {
+          await channel.send({ content });
+        }
+
+        this.logger.info('Delivered BEIGE_ALERT turn-summary messages', {
+          commandId: command?.id,
+          channelId,
+          messagesSent: messages.length,
+          nationCount: payload.nations.length,
+        });
+
+        return { success: true };
+      }
+
+      if (payload.nation && typeof payload.nation === 'object') {
+        const embed = this.#buildBeigeExitEmbed(command);
+        await channel.send({ embeds: [embed] });
+
+        this.logger.info('Delivered BEIGE_ALERT single-exit embed', {
+          commandId: command?.id,
+          channelId,
+          eventType: payload.event_type ?? null,
+        });
+
+        return { success: true };
+      }
+
+      this.logger.warn('BEIGE_ALERT payload missing nation/nations data', command?.id ?? 'unknown');
+      return { success: false, reason: 'invalid_payload' };
+    } catch (error) {
+      this.logger.error('Failed to send BEIGE_ALERT message to Discord', error?.message ?? error);
+      return { success: false, reason: 'discord_send_failed' };
     }
   }
 
@@ -460,5 +516,193 @@ ${linkLine}`;
 
     const date = input instanceof Date ? input : new Date(input);
     return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  #buildBeigeTurnMessages(command) {
+    const payload = command?.payload ?? {};
+    const nations = Array.isArray(payload.nations) ? payload.nations : [];
+    const turnTime = this.#parseDate(payload.turn_change_at);
+    const createdAt = this.#parseDate(command?.created_at);
+
+    const eventLabel = this.#describeBeigeEvent(payload.event_type, payload.window);
+    const count = payload.nation_count ?? nations.length;
+    const headerParts = [`🟨 **Beige Watch**`, eventLabel, `Nations: **${this.#formatNumber(count)}**`];
+
+    if (turnTime) {
+      headerParts.push(
+        `Turn: ${this.#formatDiscordTime(turnTime, 'f')} (${this.#formatDiscordTime(turnTime, 'R')})`,
+      );
+    } else if (createdAt) {
+      headerParts.push(`Updated: ${this.#formatDiscordTime(createdAt, 'R')}`);
+    }
+
+    const lines = nations.map((nation, index) => {
+      const nationName = nation?.nation_name ?? 'Unknown nation';
+      const leader = nation?.leader_name ?? 'Unknown leader';
+      const nationLink = nation?.links?.nation ?? null;
+      const allianceName = nation?.alliance?.name ?? 'No alliance';
+      const allianceLink = nation?.links?.alliance ?? null;
+      const score = this.#formatNumber(nation?.score);
+      const cities = this.#formatNumber(nation?.cities);
+      const beigeTurns = this.#formatNumber(nation?.beige_turns);
+      const military = nation?.military ?? {};
+      const declareWarUrl = this.#buildDeclareWarUrl(nation?.id);
+
+      const nationLabel = nationLink ? `[${nationName}](${nationLink})` : nationName;
+      const allianceLabel = allianceLink ? `[${allianceName}](${allianceLink})` : allianceName;
+      const declareWarLabel = declareWarUrl ? `[Declare War](${declareWarUrl})` : 'Declare War: —';
+
+      return `${index + 1}. ${nationLabel} (${leader}) | ${allianceLabel} | ${declareWarLabel} | Score: ${score} | Cities: ${cities} | Beige: ${beigeTurns} | Mil: 🪖 ${this.#formatNumber(military.soldiers)} • 🛡️ ${this.#formatNumber(military.tanks)} • ✈️ ${this.#formatNumber(military.aircraft)} • 🚢 ${this.#formatNumber(military.ships)} • 🕵️ ${this.#formatNumber(military.spies)} • 🎯 ${this.#formatNumber(military.missiles)} • ☢️ ${this.#formatNumber(military.nukes)}`;
+    });
+
+    return this.#chunkDiscordMessage([headerParts.join(' | '), ...lines].join('\n'));
+  }
+
+  #buildBeigeExitEmbed(command) {
+    const payload = command?.payload ?? {};
+    const nation = payload.nation ?? {};
+    const createdAt = this.#parseDate(command?.created_at) ?? new Date();
+    const detectedAt = this.#parseDate(payload.detected_at) ?? createdAt;
+    const nationLabel = nation.nation_name ?? 'Unknown nation';
+    const leader = nation.leader_name ?? 'Unknown leader';
+    const declareWarUrl = this.#buildDeclareWarUrl(nation.id);
+    const declareWarLink = declareWarUrl ? `[Open Declare War Page](${declareWarUrl})` : 'Unavailable';
+
+    const embed = new EmbedBuilder()
+      .setTitle('🟨 Beige Exit Alert')
+      .setColor(0xd4b06a)
+      .setDescription(`**${leader}** of **${nationLabel}** is no longer beige.`)
+      .setTimestamp(detectedAt)
+      .addFields(
+        {
+          name: 'Nation',
+          value: `${nation.links?.nation ? `[${nationLabel}](${nation.links.nation})` : nationLabel}\nLeader: ${leader}`,
+          inline: true,
+        },
+        {
+          name: 'Alliance',
+          value: this.#formatAllianceWithLink(nation),
+          inline: true,
+        },
+        {
+          name: 'Stats',
+          value: `Score: ${this.#formatNumber(nation.score)}\nCities: ${this.#formatNumber(nation.cities)}\nPrevious Beige Turns: ${this.#formatNumber(payload.previous_beige_turns ?? 0)}`,
+          inline: true,
+        },
+        {
+          name: 'Military Snapshot',
+          value: this.#formatMilitaryMultiline(nation.military),
+        },
+        {
+          name: 'Detected',
+          value: `${this.#formatDiscordTime(detectedAt, 'f')} (${this.#formatDiscordTime(detectedAt, 'R')})`,
+        },
+        {
+          name: 'War Link',
+          value: `⚔️ ${declareWarLink}`,
+        },
+      )
+      .setFooter({ text: `Event: ${payload.event_type ?? 'beige_exit'}` });
+
+    if (nation.links?.nation) {
+      embed.setURL(nation.links.nation);
+    }
+
+    return embed;
+  }
+
+  #formatAllianceWithLink(nation = {}) {
+    const alliance = nation.alliance ?? {};
+    const name = alliance.name ?? 'No alliance';
+    const link = nation.links?.alliance ?? null;
+
+    return link ? `[${name}](${link})` : name;
+  }
+
+  #formatMilitaryMultiline(military = {}) {
+    return [
+      `🪖 Soldiers: ${this.#formatNumber(military.soldiers)}`,
+      `🛡️ Tanks: ${this.#formatNumber(military.tanks)}`,
+      `✈️ Aircraft: ${this.#formatNumber(military.aircraft)}`,
+      `🚢 Ships: ${this.#formatNumber(military.ships)}`,
+      `🕵️ Spies: ${this.#formatNumber(military.spies)}`,
+      `🎯 Missiles: ${this.#formatNumber(military.missiles)}`,
+      `☢️ Nukes: ${this.#formatNumber(military.nukes)}`,
+    ].join('\n');
+  }
+
+  #describeBeigeEvent(eventType, window) {
+    if (eventType === 'upcoming_turn_exit') {
+      return 'Expected exits this turn';
+    }
+
+    if (eventType === 'turn_exit') {
+      return 'Exited this turn';
+    }
+
+    if (eventType === 'early_exit') {
+      return 'Early beige exits';
+    }
+
+    if (window === 'pre_turn') {
+      return 'Pre-turn beige status';
+    }
+
+    if (window === 'post_turn') {
+      return 'Post-turn beige status';
+    }
+
+    return 'Beige status update';
+  }
+
+  #chunkDiscordMessage(text, maxLength = 1900) {
+    if (typeof text !== 'string' || text.length <= maxLength) {
+      return [text];
+    }
+
+    const lines = text.split('\n');
+    const chunks = [];
+    let currentChunk = '';
+
+    for (const line of lines) {
+      if (!line) {
+        continue;
+      }
+
+      const withNewline = currentChunk ? `${currentChunk}\n${line}` : line;
+      if (withNewline.length <= maxLength) {
+        currentChunk = withNewline;
+        continue;
+      }
+
+      if (currentChunk) {
+        chunks.push(currentChunk);
+      }
+
+      if (line.length > maxLength) {
+        for (let i = 0; i < line.length; i += maxLength) {
+          chunks.push(line.slice(i, i + maxLength));
+        }
+        currentChunk = '';
+      } else {
+        currentChunk = line;
+      }
+    }
+
+    if (currentChunk) {
+      chunks.push(currentChunk);
+    }
+
+    return chunks;
+  }
+
+  #buildDeclareWarUrl(nationId) {
+    const normalizedId = Number(nationId);
+
+    if (!Number.isInteger(normalizedId) || normalizedId <= 0) {
+      return null;
+    }
+
+    return `https://politicsandwar.com/nation/war/declare/id=${normalizedId}`;
   }
 }
