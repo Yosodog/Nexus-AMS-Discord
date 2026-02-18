@@ -16,6 +16,7 @@ export class QueueDispatcher {
       INACTIVITY_ALERT: (command) => this.#handleInactivityAlert(command),
       ALLIANCE_ROLE_REMOVAL: (command) => this.#handleAllianceRoleRemoval(command),
       BEIGE_ALERT: (command) => this.#handleBeigeAlert(command),
+      WAR_ROOM_CREATE: (command) => this.#handleWarRoomCreate(command),
     };
   }
 
@@ -252,6 +253,76 @@ export class QueueDispatcher {
     }
   }
 
+  async #handleWarRoomCreate(command) {
+    const payload = command?.payload ?? {};
+    const forumChannelId = payload.forum_channel_id ?? payload.channel_id;
+
+    if (!forumChannelId) {
+      this.logger.warn('WAR_ROOM_CREATE payload missing forum_channel_id', command?.id ?? 'unknown');
+      return { success: false, reason: 'missing_channel' };
+    }
+
+    const forum = await this.#resolveAnyChannel(forumChannelId);
+
+    if (!forum || !forum.isThreadOnly?.()) {
+      this.logger.warn('WAR_ROOM_CREATE forum channel missing/inaccessible or not a forum', {
+        channelId: forumChannelId,
+        commandId: command?.id,
+      });
+      return { success: false, reason: 'channel_unavailable' };
+    }
+
+    const roomName = this.#buildWarRoomName(payload);
+    const mentions = this.#buildWarRoomMentions(payload.assigned_members);
+    const mentionMessages = this.#buildWarRoomMentionMessages(mentions);
+    const embed = this.#buildWarRoomEmbed(command);
+    const assignmentMessages = this.#buildWarRoomAssignmentMessages(payload.assigned_members);
+
+    try {
+      const starterContentParts = ['## War Room Opened', 'Target briefing below. Assignments and pings follow.'];
+
+      const thread = await this.#withDiscordRetry(
+        () =>
+          forum.threads.create({
+            name: roomName,
+            message: {
+              content: starterContentParts.join('\n'),
+              embeds: [embed],
+            },
+          }),
+        `create WAR_ROOM_CREATE forum thread ${roomName}`,
+      );
+
+      for (const content of mentionMessages) {
+        await this.#withDiscordRetry(
+          () =>
+            thread.send({
+              content,
+              allowedMentions: { parse: ['users'] },
+            }),
+          'send WAR_ROOM_CREATE mention message',
+        );
+      }
+
+      for (const content of assignmentMessages) {
+        await this.#withDiscordRetry(() => thread.send({ content }), 'send WAR_ROOM_CREATE assignment message');
+      }
+
+      this.logger.info('Delivered WAR_ROOM_CREATE thread', {
+        commandId: command?.id,
+        forumChannelId,
+        threadId: thread.id,
+        targetNationId: payload?.target?.id ?? null,
+        assignedCount: Array.isArray(payload.assigned_members) ? payload.assigned_members.length : 0,
+      });
+
+      return { success: true };
+    } catch (error) {
+      this.logger.error('Failed to create/send WAR_ROOM_CREATE thread in Discord', error?.message ?? error);
+      return { success: false, reason: 'discord_send_failed' };
+    }
+  }
+
   async #resolveChannel(channelId) {
     const cached = this.client.channels.cache.get(channelId);
     if (cached?.isTextBased?.()) {
@@ -265,6 +336,21 @@ export class QueueDispatcher {
       }
 
       return null;
+    } catch (error) {
+      this.logger.warn('Channel fetch failed or inaccessible', { channelId, error: error?.message ?? error });
+      return null;
+    }
+  }
+
+  async #resolveAnyChannel(channelId) {
+    const cached = this.client.channels.cache.get(channelId);
+    if (cached) {
+      return cached;
+    }
+
+    try {
+      const fetched = await this.client.channels.fetch(channelId);
+      return fetched ?? null;
     } catch (error) {
       this.logger.warn('Channel fetch failed or inaccessible', { channelId, error: error?.message ?? error });
       return null;
@@ -704,5 +790,208 @@ ${linkLine}`;
     }
 
     return `https://politicsandwar.com/nation/war/declare/id=${normalizedId}`;
+  }
+
+  #buildWarRoomName(payload = {}) {
+    const suggested = typeof payload.room_name_suggestion === 'string' ? payload.room_name_suggestion : null;
+    const leader = payload?.target?.leader_name ?? null;
+    const sourceType = payload?.source?.type ?? 'war';
+    const sourceId = payload?.source?.id ?? null;
+
+    let base = suggested ?? `${sourceType}-${sourceId ?? 'target'}-${leader ?? payload?.target?.id ?? 'room'}`;
+
+    base = base
+      .toLowerCase()
+      .replace(/[^a-z0-9-_ ]/g, '')
+      .trim()
+      .replace(/\s+/g, '-')
+      .replace(/-+/g, '-');
+
+    if (!base) {
+      base = `war-room-${Date.now()}`;
+    }
+
+    return base.slice(0, 100);
+  }
+
+  #buildWarRoomMentions(assignedMembers) {
+    if (!Array.isArray(assignedMembers) || assignedMembers.length === 0) {
+      return [];
+    }
+
+    const unique = new Set();
+
+    for (const member of assignedMembers) {
+      const mention =
+        member?.mention ??
+        (member?.discord_id && `${member.discord_id}`.trim() !== '' ? `<@${member.discord_id}>` : null);
+
+      if (mention) {
+        unique.add(mention);
+      }
+    }
+
+    return Array.from(unique);
+  }
+
+  #buildWarRoomEmbed(command) {
+    const payload = command?.payload ?? {};
+    const target = payload.target ?? {};
+    const links = payload.links ?? {};
+    const createdAt = this.#parseDate(command?.created_at) ?? new Date();
+    const attackType = payload?.attack_type?.label ?? payload?.attack_type?.key ?? 'Unspecified';
+    const sourceType = payload?.source?.type ?? 'war_plan';
+    const sourceId = payload?.source?.id ?? null;
+
+    const sourceLabel = sourceId ? `${sourceType} #${sourceId}` : sourceType;
+    const sourceLink = payload?.source?.url ? `[${sourceLabel}](${payload.source.url})` : sourceLabel;
+    const targetNationName = target.nation_name ?? 'Unknown nation';
+    const targetLeader = target.leader_name ?? 'Unknown leader';
+    const targetNationLink = links.target_nation
+      ? `[${targetNationName}](${links.target_nation})`
+      : targetNationName;
+
+    const objectiveLines = [];
+    if (links.declare_war) {
+      objectiveLines.push(`⚔️ [Declare War](${links.declare_war})`);
+    }
+    if (links.war_simulators) {
+      objectiveLines.push(`🧪 [War Simulators](${links.war_simulators})`);
+    }
+    if (payload.source?.url) {
+      objectiveLines.push(`🧭 [Source Plan](${payload.source.url})`);
+    }
+
+    const embed = new EmbedBuilder()
+      .setTitle(`⚔️ Target Brief: ${targetLeader}`)
+      .setColor(0xb02e26)
+      .setDescription(
+        [
+          `**Target:** ${targetNationLink} (${targetLeader})`,
+          `**Attack Type:** ${attackType}`,
+          `**Source:** ${sourceLink}`,
+          objectiveLines.length > 0 ? `\n${objectiveLines.join(' • ')}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      )
+      .addFields(
+        {
+          name: 'Alliance',
+          value: this.#formatWarRoomAlliance(target.alliance),
+          inline: true,
+        },
+        {
+          name: 'Score / Cities',
+          value: `${this.#formatNumber(target.score)} / ${this.#formatNumber(target.cities)}`,
+          inline: true,
+        },
+        {
+          name: 'War Loadout',
+          value: `Off: ${this.#formatNumber(target.offensive_wars)} | Def: ${this.#formatNumber(
+            target.defensive_wars,
+          )} | Beige Turns: ${this.#formatNumber(target.beige_turns)}`,
+          inline: true,
+        },
+        {
+          name: 'Military Snapshot',
+          value: this.#formatMilitaryMultiline(target.military),
+        },
+      )
+      .setFooter({ text: 'Nexus AMS War Room' })
+      .setTimestamp(createdAt);
+
+    if (links.target_nation) {
+      embed.setURL(links.target_nation);
+    }
+
+    return embed;
+  }
+
+  #formatWarRoomAlliance(alliance = {}) {
+    const name = alliance?.name ?? 'No alliance';
+    const acronym = alliance?.acronym ? ` (${alliance.acronym})` : '';
+
+    return `${name}${acronym}`;
+  }
+
+  #buildWarRoomAssignmentMessages(assignedMembers) {
+    if (!Array.isArray(assignedMembers) || assignedMembers.length === 0) {
+      return ['No assigned friendly nations were provided for this target.'];
+    }
+
+    const header = '### Friendly Assignments';
+    const lines = assignedMembers.map((member, index) => {
+      const leader = member?.leader_name ?? 'Unknown leader';
+      const nationName = member?.nation_name ?? 'Unknown nation';
+      const nationLink = member?.links?.nation ? `[${nationName}](${member.links.nation})` : nationName;
+      const mention =
+        member?.mention ??
+        (member?.discord_id && `${member.discord_id}`.trim() !== '' ? `<@${member.discord_id}>` : null) ??
+        'No Discord link';
+
+      return `${index + 1}. ${mention} | ${nationLink} (${leader}) | Match: ${this.#formatNumber(
+        member?.match_score,
+      )} | Score: ${this.#formatNumber(member?.score)} | Cities: ${this.#formatNumber(
+        member?.cities,
+      )} | Wars O/D: ${this.#formatNumber(member?.offensive_wars)}/${this.#formatNumber(member?.defensive_wars)}`;
+    });
+
+    return this.#chunkDiscordMessage([header, ...lines].join('\n'));
+  }
+
+  #buildWarRoomMentionMessages(mentions = []) {
+    if (!Array.isArray(mentions) || mentions.length === 0) {
+      return ['### Assigned Friendlies\nNo Discord mentions available for this target.'];
+    }
+
+    const messages = [];
+    let current = '### Assigned Friendlies\n';
+
+    for (const mention of mentions) {
+      const token = `${mention} `;
+      if ((current + token).length <= 1900) {
+        current += token;
+        continue;
+      }
+
+      messages.push(current.trimEnd());
+      current = `### Assigned Friendlies\n${token}`;
+    }
+
+    if (current.trim().length > 0) {
+      messages.push(current.trimEnd());
+    }
+
+    return messages;
+  }
+
+  async #withDiscordRetry(operation, label, maxAttempts = 3) {
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        return await operation();
+      } catch (error) {
+        const retryAfterSeconds =
+          Number(error?.retry_after ?? error?.rawError?.retry_after ?? error?.data?.retry_after ?? NaN);
+        const shouldRetry = attempt < maxAttempts && !Number.isNaN(retryAfterSeconds);
+
+        if (!shouldRetry) {
+          throw error;
+        }
+
+        const waitMs = Math.max(Math.ceil(retryAfterSeconds * 1000), 1000);
+        this.logger.warn(`Rate-limited while trying to ${label}; retrying in ${waitMs}ms`, {
+          attempt,
+          maxAttempts,
+        });
+        await this.#sleep(waitMs);
+      }
+    }
+
+    return null;
+  }
+
+  #sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }
