@@ -277,7 +277,7 @@ export class QueueDispatcher {
     const mentions = this.#buildWarRoomMentions(participants);
     const mentionMessages = this.#buildWarRoomMentionMessages(mentions);
     const embed = this.#buildWarRoomEmbed(command);
-    const assignmentMessages = this.#buildWarRoomAssignmentMessages(payload.assigned_members);
+    const assignmentMessages = this.#buildWarRoomAssignmentMessages(payload);
     const attackedMemberMention = this.#buildWarRoomMemberMention(payload.attacked_member);
 
     try {
@@ -899,22 +899,17 @@ ${linkLine}`;
     const target = payload?.target ?? {};
     const targetNationName = target?.nation_name ?? 'Unknown nation';
     const targetLeader = target?.leader_name ?? 'Unknown leader';
-    const attackType = payload?.attack_type?.label ?? payload?.attack_type?.key ?? 'Unspecified';
-    const reason =
-      typeof payload?.reason === 'string' && payload.reason.trim() !== '' ? payload.reason.trim() : 'Unspecified';
     const defenderName = payload?.attacked_member?.nation_name ?? 'Unknown nation';
     const defenderValue = attackedMemberMention ?? defenderName;
 
     const lines = [
       '## War Room Opened',
       `Target: ${targetNationName} (${targetLeader})`,
-      `Attack Type: ${attackType}`,
-      `Reason: ${reason}`,
       'Target briefing below. Assignments and pings follow.',
     ];
 
     if (payload?.attacked_member) {
-      lines.splice(4, 0, `Defender: ${defenderValue}`);
+      lines.splice(2, 0, `Defender: ${defenderValue}`);
     }
 
     return lines;
@@ -1001,29 +996,55 @@ ${linkLine}`;
     return `${name}${acronym}`;
   }
 
-  #buildWarRoomAssignmentMessages(assignedMembers) {
-    if (!Array.isArray(assignedMembers) || assignedMembers.length === 0) {
-      return ['No assigned friendly nations were provided for this target.'];
-    }
-
+  #buildWarRoomAssignmentMessages(payload = {}) {
+    const assignedMembers = Array.isArray(payload?.assigned_members) ? payload.assigned_members : [];
+    const counterMembers = assignedMembers.filter((member) => `${member?.role ?? 'counter'}` !== 'defender');
+    const assignedDefenders = assignedMembers.filter((member) => `${member?.role ?? 'counter'}` === 'defender');
+    const defendingMembers = this.#buildWarRoomParticipants(assignedDefenders, payload?.attacked_member);
     const header = '### Friendly Assignments';
-    const lines = assignedMembers.map((member, index) => {
-      const leader = member?.leader_name ?? 'Unknown leader';
-      const nationName = member?.nation_name ?? 'Unknown nation';
-      const nationLink = member?.links?.nation ? `[${nationName}](${member.links.nation})` : nationName;
-      const mention = this.#buildWarRoomMemberMention(member) ?? 'No Discord link';
-      const role = member?.role ?? 'counter';
+    const friendlyLines =
+      counterMembers.length > 0
+        ? counterMembers.map((member, index) => this.#formatWarRoomMemberLine(member, index))
+        : ['No assigned friendly nations were provided for this target.'];
+    const defendingHeader = '### Defending Nation';
+    const defendingLines =
+      defendingMembers.length > 0
+        ? defendingMembers.map((member, index) => this.#formatWarRoomMemberLine(member, index))
+        : ['No defending nation was provided for this target.'];
+    const warInstructionsHeader = '### War Instructions';
+    const attackType = payload?.attack_type?.label ?? payload?.attack_type?.key ?? 'Unspecified';
+    const reason =
+      typeof payload?.reason === 'string' && payload.reason.trim() !== '' ? payload.reason.trim() : 'Unspecified';
+    const instructionLines = [`Attack Type: ${attackType}`, `Reason: ${reason}`];
 
-      return `${index + 1}. ${mention} | ${nationLink} (${leader}) | Match: ${this.#formatNumber(
-        member?.match_score,
-      )} | Score: ${this.#formatNumber(member?.score)} | Cities: ${this.#formatNumber(
-        member?.cities,
-      )} | Role: ${role} | Wars O/D: ${this.#formatNumber(member?.offensive_wars)}/${this.#formatNumber(
-        member?.defensive_wars,
-      )}`;
-    });
+    return this.#chunkDiscordMessage(
+      [
+        header,
+        ...friendlyLines,
+        '',
+        defendingHeader,
+        ...defendingLines,
+        '',
+        warInstructionsHeader,
+        ...instructionLines,
+      ].join('\n'),
+    );
+  }
 
-    return this.#chunkDiscordMessage([header, ...lines].join('\n'));
+  #formatWarRoomMemberLine(member, index) {
+    const leader = member?.leader_name ?? 'Unknown leader';
+    const nationName = member?.nation_name ?? 'Unknown nation';
+    const nationLink = member?.links?.nation ? `[${nationName}](${member.links.nation})` : nationName;
+    const mention = this.#buildWarRoomMemberMention(member) ?? 'No Discord link';
+    const role = member?.role ?? 'counter';
+
+    return `${index + 1}. ${mention} | ${nationLink} (${leader}) | Match: ${this.#formatNumber(
+      member?.match_score,
+    )} | Score: ${this.#formatNumber(member?.score)} | Cities: ${this.#formatNumber(
+      member?.cities,
+    )} | Role: ${role} | Wars O/D: ${this.#formatNumber(member?.offensive_wars)}/${this.#formatNumber(
+      member?.defensive_wars,
+    )}`;
   }
 
   #buildWarRoomMentionMessages(mentions = []) {
