@@ -273,13 +273,15 @@ export class QueueDispatcher {
     }
 
     const roomName = this.#buildWarRoomName(payload);
-    const mentions = this.#buildWarRoomMentions(payload.assigned_members);
+    const participants = this.#buildWarRoomParticipants(payload.assigned_members, payload.attacked_member);
+    const mentions = this.#buildWarRoomMentions(participants);
     const mentionMessages = this.#buildWarRoomMentionMessages(mentions);
     const embed = this.#buildWarRoomEmbed(command);
     const assignmentMessages = this.#buildWarRoomAssignmentMessages(payload.assigned_members);
+    const attackedMemberMention = this.#buildWarRoomMemberMention(payload.attacked_member);
 
     try {
-      const starterContentParts = ['## War Room Opened', 'Target briefing below. Assignments and pings follow.'];
+      const starterContentParts = this.#buildWarRoomIntroLines(payload, attackedMemberMention);
 
       const thread = await this.#withDiscordRetry(
         () =>
@@ -288,6 +290,7 @@ export class QueueDispatcher {
             message: {
               content: starterContentParts.join('\n'),
               embeds: [embed],
+              allowedMentions: { parse: ['users'] },
             },
           }),
         `create WAR_ROOM_CREATE forum thread ${roomName}`,
@@ -793,12 +796,19 @@ ${linkLine}`;
   }
 
   #buildWarRoomName(payload = {}) {
-    const suggested = typeof payload.room_name_suggestion === 'string' ? payload.room_name_suggestion : null;
+    const suggested =
+      typeof payload.room_name_suggestion === 'string' && payload.room_name_suggestion.trim() !== ''
+        ? payload.room_name_suggestion.trim()
+        : null;
     const leader = payload?.target?.leader_name ?? null;
     const sourceType = payload?.source?.type ?? 'war';
     const sourceId = payload?.source?.id ?? null;
 
-    let base = suggested ?? `${sourceType}-${sourceId ?? 'target'}-${leader ?? payload?.target?.id ?? 'room'}`;
+    if (suggested) {
+      return suggested.slice(0, 100);
+    }
+
+    let base = `${sourceType}-${sourceId ?? 'target'}-${leader ?? payload?.target?.id ?? 'room'}`;
 
     base = base
       .toLowerCase()
@@ -814,17 +824,68 @@ ${linkLine}`;
     return base.slice(0, 100);
   }
 
-  #buildWarRoomMentions(assignedMembers) {
-    if (!Array.isArray(assignedMembers) || assignedMembers.length === 0) {
+  #buildWarRoomParticipants(assignedMembers, attackedMember) {
+    const participants = [];
+
+    if (attackedMember && typeof attackedMember === 'object') {
+      participants.push(attackedMember);
+    }
+
+    if (Array.isArray(assignedMembers)) {
+      participants.push(...assignedMembers);
+    }
+
+    const unique = new Map();
+    for (const member of participants) {
+      if (!member || typeof member !== 'object') {
+        continue;
+      }
+
+      const key =
+        member?.nation_id !== undefined && member?.nation_id !== null ? `nation:${member.nation_id}` : null;
+
+      if (key) {
+        if (!unique.has(key)) {
+          unique.set(key, member);
+        } else {
+          const existing = unique.get(key);
+          if (!this.#buildWarRoomMemberMention(existing) && this.#buildWarRoomMemberMention(member)) {
+            unique.set(key, member);
+          }
+        }
+        continue;
+      }
+
+      const fallbackKey = this.#buildWarRoomMemberMention(member) ?? member?.nation_name ?? member?.leader_name ?? null;
+      if (fallbackKey && !unique.has(`fallback:${fallbackKey}`)) {
+        unique.set(`fallback:${fallbackKey}`, member);
+      }
+    }
+
+    return Array.from(unique.values());
+  }
+
+  #buildWarRoomMemberMention(member) {
+    if (!member || typeof member !== 'object') {
+      return null;
+    }
+
+    const mention =
+      member?.mention ??
+      (member?.discord_id && `${member.discord_id}`.trim() !== '' ? `<@${member.discord_id}>` : null);
+
+    return mention && `${mention}`.trim() !== '' ? mention : null;
+  }
+
+  #buildWarRoomMentions(members) {
+    if (!Array.isArray(members) || members.length === 0) {
       return [];
     }
 
     const unique = new Set();
 
-    for (const member of assignedMembers) {
-      const mention =
-        member?.mention ??
-        (member?.discord_id && `${member.discord_id}`.trim() !== '' ? `<@${member.discord_id}>` : null);
+    for (const member of members) {
+      const mention = this.#buildWarRoomMemberMention(member);
 
       if (mention) {
         unique.add(mention);
@@ -832,6 +893,31 @@ ${linkLine}`;
     }
 
     return Array.from(unique);
+  }
+
+  #buildWarRoomIntroLines(payload = {}, attackedMemberMention = null) {
+    const target = payload?.target ?? {};
+    const targetNationName = target?.nation_name ?? 'Unknown nation';
+    const targetLeader = target?.leader_name ?? 'Unknown leader';
+    const attackType = payload?.attack_type?.label ?? payload?.attack_type?.key ?? 'Unspecified';
+    const reason =
+      typeof payload?.reason === 'string' && payload.reason.trim() !== '' ? payload.reason.trim() : 'Unspecified';
+    const defenderName = payload?.attacked_member?.nation_name ?? 'Unknown nation';
+    const defenderValue = attackedMemberMention ?? defenderName;
+
+    const lines = [
+      '## War Room Opened',
+      `Target: ${targetNationName} (${targetLeader})`,
+      `Attack Type: ${attackType}`,
+      `Reason: ${reason}`,
+      'Target briefing below. Assignments and pings follow.',
+    ];
+
+    if (payload?.attacked_member) {
+      lines.splice(4, 0, `Defender: ${defenderValue}`);
+    }
+
+    return lines;
   }
 
   #buildWarRoomEmbed(command) {
@@ -925,16 +1011,16 @@ ${linkLine}`;
       const leader = member?.leader_name ?? 'Unknown leader';
       const nationName = member?.nation_name ?? 'Unknown nation';
       const nationLink = member?.links?.nation ? `[${nationName}](${member.links.nation})` : nationName;
-      const mention =
-        member?.mention ??
-        (member?.discord_id && `${member.discord_id}`.trim() !== '' ? `<@${member.discord_id}>` : null) ??
-        'No Discord link';
+      const mention = this.#buildWarRoomMemberMention(member) ?? 'No Discord link';
+      const role = member?.role ?? 'counter';
 
       return `${index + 1}. ${mention} | ${nationLink} (${leader}) | Match: ${this.#formatNumber(
         member?.match_score,
       )} | Score: ${this.#formatNumber(member?.score)} | Cities: ${this.#formatNumber(
         member?.cities,
-      )} | Wars O/D: ${this.#formatNumber(member?.offensive_wars)}/${this.#formatNumber(member?.defensive_wars)}`;
+      )} | Role: ${role} | Wars O/D: ${this.#formatNumber(member?.offensive_wars)}/${this.#formatNumber(
+        member?.defensive_wars,
+      )}`;
     });
 
     return this.#chunkDiscordMessage([header, ...lines].join('\n'));

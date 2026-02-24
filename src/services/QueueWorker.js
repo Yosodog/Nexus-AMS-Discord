@@ -7,7 +7,7 @@ export class QueueWorker {
     apiService,
     dispatcher,
     logger,
-    pollIntervalMs = 30000,
+    pollIntervalMs = 5000,
     maxBackoffMs = 5 * 60 * 1000,
     statusBackoffBaseMs = 10000,
   }) {
