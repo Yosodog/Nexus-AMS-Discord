@@ -260,6 +260,7 @@ export class QueueDispatcher {
   async #handleWarRoomCreate(command) {
     const payload = command?.payload ?? {};
     const forumChannelId = payload.forum_channel_id ?? payload.channel_id;
+    const defenseRoleId = this.#normalizeRoleId(payload.defense_role_id);
 
     if (!forumChannelId) {
       this.logger.warn('WAR_ROOM_CREATE payload missing forum_channel_id', command?.id ?? 'unknown');
@@ -299,6 +300,26 @@ export class QueueDispatcher {
           }),
         `create WAR_ROOM_CREATE forum thread ${roomName}`,
       );
+
+      if (this.#isWarCounterSource(payload?.source) && defenseRoleId) {
+        try {
+          await this.#withDiscordRetry(
+            () =>
+              thread.send({
+                content: `<@&${defenseRoleId}>`,
+                allowedMentions: { roles: [defenseRoleId] },
+              }),
+            'send WAR_ROOM_CREATE defense role ping',
+          );
+        } catch (error) {
+          this.logger.warn('Failed to send WAR_ROOM_CREATE defense role ping; continuing', {
+            commandId: command?.id,
+            defenseRoleId,
+            threadId: thread.id,
+            error: error?.message ?? error,
+          });
+        }
+      }
 
       for (const content of mentionMessages) {
         await this.#withDiscordRetry(
@@ -948,6 +969,15 @@ ${linkLine}`;
     }
 
     return Array.from(unique);
+  }
+
+  #normalizeRoleId(roleId) {
+    if (typeof roleId !== 'string') {
+      return null;
+    }
+
+    const normalized = roleId.trim();
+    return normalized !== '' ? normalized : null;
   }
 
   #buildWarRoomIntroLines(payload = {}, attackedMemberMention = null) {
