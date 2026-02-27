@@ -43,11 +43,14 @@ const bootstrap = async () => {
     apiKey: config.nexusApi.apiKey,
     logger,
   });
+  const sourceChannelMap = new Map();
 
   const queueDispatcher = new QueueDispatcher({
     client,
     logger: new Logger('QueueDispatcher'),
     guildId: config.discord.guildId,
+    apiService,
+    sourceChannelMap,
   });
 
   const queueWorker = new QueueWorker({
@@ -56,7 +59,7 @@ const bootstrap = async () => {
     logger: new Logger('QueueWorker'),
   });
 
-  const commandContext = { apiService };
+  const commandContext = { apiService, sourceChannelMap };
 
   registerInteractionListener(client, client.commands, logger, commandContext);
   registerMessageListener(client, apiService, new Logger('MessageListener'));

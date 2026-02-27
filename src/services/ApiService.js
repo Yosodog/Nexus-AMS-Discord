@@ -130,6 +130,42 @@ export class ApiService {
   }
 
   /**
+   * Attach a Discord channel/thread to a war counter.
+   * @param {{ war_counter_id: number|string, discord_channel_id: string }} payload association payload
+   * @returns {Promise<any>} Nexus response
+   */
+  async attachWarCounterChannel(payload) {
+    const endpointUrl = new URL('/api/v1/discord/war-counters/attach-channel', this.baseUrl).toString();
+
+    return this.request({
+      method: 'post',
+      url: endpointUrl,
+      data: payload,
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+    });
+  }
+
+  /**
+   * Archive a war counter in Nexus.
+   * @param {{ war_counter_id: number|string, moderator_discord_id: string }} payload archive request payload
+   * @returns {Promise<{ counter?: any, archived?: boolean, already_archived?: boolean }>} Nexus response
+   */
+  async archiveWarCounter(payload) {
+    const endpointUrl = new URL('/api/v1/discord/war-counters/archive', this.baseUrl).toString();
+
+    return this.request({
+      method: 'post',
+      url: endpointUrl,
+      data: payload,
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+    });
+  }
+
+  /**
    * Log a Discord message to Nexus for transcript storage.
    * @param {{ discord_channel_id: string, discord_message_id: string, discord_user_id: string, discord_username: string, content: string, sent_at: number, is_staff: boolean }} payload message payload
    * @returns {Promise<any>} Nexus response indicating logging status

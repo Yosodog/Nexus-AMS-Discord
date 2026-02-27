@@ -1,14 +1,17 @@
 import { EmbedBuilder } from 'discord.js';
+import { archiveWarCounterRoom, buildSourceChannelKey } from '../utils/warCounterRooms.js';
 
 /**
  * Dispatches queued Nexus Discord commands to the appropriate handler.
  * Designed for easy extension as new actions are added server-side.
  */
 export class QueueDispatcher {
-  constructor({ client, logger, guildId }) {
+  constructor({ client, logger, guildId, apiService = null, sourceChannelMap = new Map() }) {
     this.client = client;
     this.logger = logger;
     this.guildId = guildId;
+    this.apiService = apiService;
+    this.sourceChannelMap = sourceChannelMap;
 
     this.handlers = {
       WAR_ALERT: (command) => this.#handleWarAlert(command),
@@ -17,6 +20,7 @@ export class QueueDispatcher {
       ALLIANCE_ROLE_REMOVAL: (command) => this.#handleAllianceRoleRemoval(command),
       BEIGE_ALERT: (command) => this.#handleBeigeAlert(command),
       WAR_ROOM_CREATE: (command) => this.#handleWarRoomCreate(command),
+      WAR_ROOM_ARCHIVE: (command) => this.#handleWarRoomArchive(command),
     };
   }
 
@@ -319,11 +323,62 @@ export class QueueDispatcher {
         assignedCount: Array.isArray(payload.assigned_members) ? payload.assigned_members.length : 0,
       });
 
+      this.#rememberSourceChannel(payload?.source, thread.id);
+
+      if (this.#isWarCounterSource(payload?.source)) {
+        await this.#attachWarCounterChannel(payload.source.id, thread.id, command?.id);
+      }
+
       return { success: true };
     } catch (error) {
       this.logger.error('Failed to create/send WAR_ROOM_CREATE thread in Discord', error?.message ?? error);
       return { success: false, reason: 'discord_send_failed' };
     }
+  }
+
+  async #handleWarRoomArchive(command) {
+    const payload = command?.payload ?? {};
+    const source = payload?.source ?? {};
+    const titlePrefix =
+      typeof payload?.archive?.title_prefix === 'string' && payload.archive.title_prefix !== ''
+        ? payload.archive.title_prefix
+        : '[Archived] ';
+
+    const sourceKey = buildSourceChannelKey(source?.type, source?.id);
+    const mappedChannelId = sourceKey ? this.sourceChannelMap.get(sourceKey) ?? null : null;
+    const channelId =
+      typeof payload?.discord_channel_id === 'string' && payload.discord_channel_id.trim() !== ''
+        ? payload.discord_channel_id.trim()
+        : mappedChannelId;
+
+    if (!channelId) {
+      this.logger.warn('WAR_ROOM_ARCHIVE missing channel id and no source mapping found', {
+        commandId: command?.id,
+        sourceType: source?.type ?? null,
+        sourceId: source?.id ?? null,
+      });
+      return { success: false, reason: 'missing_channel' };
+    }
+
+    if (sourceKey && !this.sourceChannelMap.has(sourceKey)) {
+      this.sourceChannelMap.set(sourceKey, channelId);
+    }
+
+    const archiveResult = await archiveWarCounterRoom({
+      client: this.client,
+      logger: this.logger,
+      channelId,
+      titlePrefix,
+      lock: payload?.archive?.lock !== false,
+      reason: `Nexus queue ${command?.id ?? 'unknown'} WAR_ROOM_ARCHIVE`,
+      logContext: {
+        commandId: command?.id ?? null,
+        sourceType: source?.type ?? null,
+        sourceId: source?.id ?? null,
+      },
+    });
+
+    return archiveResult.success ? { success: true } : { success: false, reason: archiveResult.reason };
   }
 
   async #resolveChannel(channelId) {
@@ -1071,6 +1126,64 @@ ${linkLine}`;
     }
 
     return messages;
+  }
+
+  #isWarCounterSource(source) {
+    return `${source?.type ?? ''}`.toLowerCase() === 'war_counter';
+  }
+
+  #rememberSourceChannel(source, channelId) {
+    const key = buildSourceChannelKey(source?.type, source?.id);
+    const normalizedChannelId = `${channelId ?? ''}`.trim();
+
+    if (!key || !normalizedChannelId) {
+      return;
+    }
+
+    this.sourceChannelMap.set(key, normalizedChannelId);
+  }
+
+  async #attachWarCounterChannel(warCounterId, discordChannelId, commandId) {
+    const normalizedCounterId = Number(warCounterId);
+    const normalizedChannelId = `${discordChannelId ?? ''}`.trim();
+
+    if (!Number.isInteger(normalizedCounterId) || normalizedCounterId <= 0 || !normalizedChannelId) {
+      this.logger.warn('Skipping war-counter attach due to invalid payload', {
+        commandId,
+        warCounterId,
+        discordChannelId: normalizedChannelId || null,
+      });
+      return;
+    }
+
+    if (!this.apiService?.attachWarCounterChannel) {
+      this.logger.warn('ApiService unavailable; cannot attach war-counter channel', {
+        commandId,
+        warCounterId: normalizedCounterId,
+        discordChannelId: normalizedChannelId,
+      });
+      return;
+    }
+
+    try {
+      await this.apiService.attachWarCounterChannel({
+        war_counter_id: normalizedCounterId,
+        discord_channel_id: normalizedChannelId,
+      });
+
+      this.logger.info('Attached war-counter channel to Nexus', {
+        commandId,
+        warCounterId: normalizedCounterId,
+        discordChannelId: normalizedChannelId,
+      });
+    } catch (error) {
+      this.logger.warn('Failed attaching war-counter channel to Nexus', {
+        commandId,
+        warCounterId: normalizedCounterId,
+        discordChannelId: normalizedChannelId,
+        error: error?.message ?? error,
+      });
+    }
   }
 
   async #withDiscordRetry(operation, label, maxAttempts = 3) {
