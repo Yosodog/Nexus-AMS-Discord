@@ -17,7 +17,7 @@ export const registerInteractionListener = (client, commands, logger, context = 
 
     if (!command) {
       logger.warn(`Received unknown command: ${interaction.commandName}`);
-      await interaction.reply({ content: 'Command not recognized.', ephemeral: false }).catch(() => {});
+      await interaction.reply({ content: 'Command not recognized.', ephemeral: true }).catch(() => {});
       return;
     }
 
@@ -29,11 +29,11 @@ export const registerInteractionListener = (client, commands, logger, context = 
       if (interaction.replied || interaction.deferred) {
         await interaction.followUp({
           content: 'Something went wrong while executing that command.',
-          ephemeral: false,
+          ephemeral: true,
         }).catch(() => {});
       } else {
         await interaction
-          .reply({ content: 'Something went wrong while executing that command.', ephemeral: false })
+          .reply({ content: 'Something went wrong while executing that command.', ephemeral: true })
           .catch(() => {});
       }
     }

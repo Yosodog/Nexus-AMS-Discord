@@ -37,7 +37,7 @@ export const execute = async (interaction, { logger, apiService }) => {
       logger.error('ApiService is not available to /verify command', logContext);
       await interaction.reply({
         content: 'Verification service is unavailable. Please try again later.',
-        ephemeral: false,
+        ephemeral: true,
       });
       return;
     }
@@ -49,7 +49,7 @@ export const execute = async (interaction, { logger, apiService }) => {
     if (!verificationCode) {
       await interaction.reply({
         embeds: [buildErrorEmbed('Please provide the verification code you received from Nexus AMS.')],
-        ephemeral: false,
+        ephemeral: true,
       });
       return;
     }
@@ -57,7 +57,7 @@ export const execute = async (interaction, { logger, apiService }) => {
     if (verificationCode.length < 4) {
       await interaction.reply({
         embeds: [buildErrorEmbed('That code looks too short. Please copy the full code from Nexus AMS.')],
-        ephemeral: false,
+        ephemeral: true,
       });
       return;
     }
@@ -65,7 +65,7 @@ export const execute = async (interaction, { logger, apiService }) => {
     if (verificationCode.length > 128) {
       await interaction.reply({
         embeds: [buildErrorEmbed('That code looks too long. Please double-check and try again.')],
-        ephemeral: false,
+        ephemeral: true,
       });
       return;
     }
@@ -73,7 +73,7 @@ export const execute = async (interaction, { logger, apiService }) => {
     if (/\s/.test(verificationCode)) {
       await interaction.reply({
         embeds: [buildErrorEmbed('Verification codes should not contain spaces. Please try again without spaces.')],
-        ephemeral: false,
+        ephemeral: true,
       });
       return;
     }
@@ -107,7 +107,7 @@ export const execute = async (interaction, { logger, apiService }) => {
     logger.info('Processing /verify command', logContext);
 
     // Defer to give Nexus time to respond without hitting Discord interaction timeouts.
-    await interaction.deferReply({ ephemeral: false });
+    await interaction.deferReply({ ephemeral: true });
 
     const apiResult = await apiService.verifyUser(payload);
 
@@ -160,9 +160,9 @@ export const execute = async (interaction, { logger, apiService }) => {
       .setTimestamp();
 
     if (interaction.deferred || interaction.replied) {
-      await interaction.followUp({ embeds: [fallbackEmbed], ephemeral: false }).catch(() => {});
+      await interaction.followUp({ embeds: [fallbackEmbed], ephemeral: true }).catch(() => {});
     } else {
-      await interaction.reply({ embeds: [fallbackEmbed], ephemeral: false }).catch(() => {});
+      await interaction.reply({ embeds: [fallbackEmbed], ephemeral: true }).catch(() => {});
     }
   }
 };
