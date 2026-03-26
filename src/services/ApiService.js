@@ -44,12 +44,19 @@ export class ApiService {
         return response.data;
       } catch (error) {
         const isLastAttempt = attempt === this.maxRetries;
+        const retryable = this.#isRetryableError(error);
         this.logger.warn(
           `API request failed (attempt ${attempt}/${this.maxRetries})`,
-          error?.message ?? error,
+          {
+            url: options?.url,
+            method: options?.method,
+            status: error?.response?.status ?? null,
+            retryable,
+            message: error?.message ?? error,
+          },
         );
 
-        if (isLastAttempt) {
+        if (isLastAttempt || !retryable) {
           this.logger.error('Exhausted retries for API request', options?.url);
           throw error;
         }
@@ -154,6 +161,24 @@ export class ApiService {
    */
   async archiveWarCounter(payload) {
     const endpointUrl = new URL('/api/v1/discord/war-counters/archive', this.baseUrl).toString();
+
+    return this.request({
+      method: 'post',
+      url: endpointUrl,
+      data: payload,
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+    });
+  }
+
+  /**
+   * Sweep the main bank into the primary enabled offshore.
+   * @param {{ moderator_discord_id: string, note?: string }} payload sweep request payload
+   * @returns {Promise<any>} Nexus response
+   */
+  async sweepPrimaryOffshore(payload) {
+    const endpointUrl = new URL('/api/v1/discord/offshores/sweep-primary', this.baseUrl).toString();
 
     return this.request({
       method: 'post',
@@ -341,6 +366,22 @@ export class ApiService {
 
   async #delay(durationMs) {
     await new Promise((resolve) => setTimeout(resolve, durationMs));
+  }
+
+  #isRetryableError(error) {
+    if (!error) {
+      return false;
+    }
+
+    if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
+      return true;
+    }
+
+    if (!error.response) {
+      return true;
+    }
+
+    return error.response.status >= 500;
   }
 
   #backoffDuration(attempt) {

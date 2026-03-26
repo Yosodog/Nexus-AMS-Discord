@@ -7,6 +7,7 @@ Discord bot scaffolding for the Nexus AMS project. It currently ships a simple `
 - Guild-scoped slash command registration script.
 - Structured logging with basic secret scrubbing.
 - Nexus API REST client with retries and queue polling worker.
+- Finance/admin `/sweepbank` command for sweeping the main bank into the primary offshore.
 - Queue dispatcher handlers for `WAR_ALERT`, `ALLIANCE_DEPARTURE`, `INACTIVITY_ALERT`, and `BEIGE_ALERT` with status reporting to Nexus.
 
 ## Project Structure
