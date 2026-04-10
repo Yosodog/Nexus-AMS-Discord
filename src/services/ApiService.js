@@ -228,7 +228,7 @@ export class ApiService {
 
   /**
    * Approve an applicant via Nexus.
-   * @param {{ applicant_discord_id: string, moderator_discord_id: string }} payload approval payload
+   * @param {{ applicant_discord_id: string, moderator_discord_id: string, approval_request_id?: string }} payload approval payload
    * @returns {Promise<any>} Nexus response containing config for post-approval actions
    */
   async approveApplication(payload) {
@@ -246,7 +246,7 @@ export class ApiService {
 
   /**
    * Deny an applicant via Nexus.
-   * @param {{ applicant_discord_id: string, moderator_discord_id: string }} payload denial payload
+   * @param {{ applicant_discord_id: string, moderator_discord_id: string, denial_request_id?: string }} payload denial payload
    * @returns {Promise<any>} Nexus response
    */
   async denyApplication(payload) {

@@ -49,6 +49,7 @@ export const execute = async (interaction, { logger, apiService }) => {
     response = await apiService.denyApplication({
       applicant_discord_id: applicant.id,
       moderator_discord_id: moderator.id,
+      denial_request_id: interaction.id,
     });
   } catch (error) {
     const { data, status } = error?.response ?? {};
