@@ -116,7 +116,12 @@ test('WAR_ROOM_CREATE without defense_role_id does not attempt role ping', async
   );
 });
 
-test('WAR_ALERT retries once when Discord returns retry_after metadata', async () => {
+test('WAR_ALERT retries once when Discord returns retry_after metadata', async (t) => {
+  t.mock.method(globalThis, 'setTimeout', (callback, _delay, ...args) => {
+    callback(...args);
+    return 0;
+  });
+
   const logger = createLogger();
   let sendAttempts = 0;
 
