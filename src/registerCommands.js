@@ -24,6 +24,7 @@ const register = async () => {
     logger.info('Successfully registered guild commands.');
   } catch (error) {
     logger.error('Failed to register commands', error);
+    process.exit(1);
   }
 };
 

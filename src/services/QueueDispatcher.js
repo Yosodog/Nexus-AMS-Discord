@@ -71,7 +71,10 @@ export class QueueDispatcher {
     const embed = this.#buildAllianceDepartureEmbed(command);
 
     try {
-      await channel.send({ embeds: [embed] });
+      await this.#withDiscordRetry(
+        () => channel.send({ embeds: [embed] }),
+        'send ALLIANCE_DEPARTURE embed',
+      );
       this.logger.info('Delivered ALLIANCE_DEPARTURE embed', { commandId: command?.id, channelId });
       return { success: true };
     } catch (error) {
@@ -99,7 +102,10 @@ export class QueueDispatcher {
     const embed = this.#buildWarAlertEmbed(command);
 
     try {
-      await channel.send({ embeds: [embed] });
+      await this.#withDiscordRetry(
+        () => channel.send({ embeds: [embed] }),
+        'send WAR_ALERT embed',
+      );
       this.logger.info('Delivered WAR_ALERT embed', { commandId: command?.id, channelId });
       return { success: true };
     } catch (error) {
@@ -128,10 +134,14 @@ export class QueueDispatcher {
     const mention = this.#buildInactivityAlertMention(payload);
 
     try {
-      await channel.send({
-        content: mention ?? undefined,
-        embeds: [embed],
-      });
+      await this.#withDiscordRetry(
+        () =>
+          channel.send({
+            content: mention ?? undefined,
+            embeds: [embed],
+          }),
+        'send INACTIVITY_ALERT message',
+      );
       this.logger.info('Delivered INACTIVITY_ALERT message', { commandId: command?.id, channelId });
       return { success: true };
     } catch (error) {
@@ -183,7 +193,10 @@ export class QueueDispatcher {
     }
 
     try {
-      await member.roles.remove(roleIds, 'Nexus AMS alliance role removal');
+      await this.#withDiscordRetry(
+        () => member.roles.remove(roleIds, 'Nexus AMS alliance role removal'),
+        'remove ALLIANCE_ROLE_REMOVAL roles',
+      );
       this.logger.info('ALLIANCE_ROLE_REMOVAL removed roles from member', {
         commandId: command?.id,
         discordId,
@@ -223,7 +236,10 @@ export class QueueDispatcher {
         const messages = this.#buildBeigeTurnMessages(command);
 
         for (const content of messages) {
-          await channel.send({ content });
+          await this.#withDiscordRetry(
+            () => channel.send({ content }),
+            'send BEIGE_ALERT turn-summary message',
+          );
         }
 
         this.logger.info('Delivered BEIGE_ALERT turn-summary messages', {
@@ -238,7 +254,10 @@ export class QueueDispatcher {
 
       if (payload.nation && typeof payload.nation === 'object') {
         const embed = this.#buildBeigeExitEmbed(command);
-        await channel.send({ embeds: [embed] });
+        await this.#withDiscordRetry(
+          () => channel.send({ embeds: [embed] }),
+          'send BEIGE_ALERT single-exit embed',
+        );
 
         this.logger.info('Delivered BEIGE_ALERT single-exit embed', {
           commandId: command?.id,

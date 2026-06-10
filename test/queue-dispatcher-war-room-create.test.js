@@ -115,3 +115,56 @@ test('WAR_ROOM_CREATE without defense_role_id does not attempt role ping', async
     false,
   );
 });
+
+test('WAR_ALERT retries once when Discord returns retry_after metadata', async () => {
+  const logger = createLogger();
+  let sendAttempts = 0;
+
+  const channel = {
+    isTextBased: () => true,
+    send: async () => {
+      sendAttempts += 1;
+
+      if (sendAttempts === 1) {
+        const error = new Error('Rate limited');
+        error.retry_after = 0.001;
+        throw error;
+      }
+
+      return { id: 'message-1' };
+    },
+  };
+
+  const dispatcher = new QueueDispatcher({
+    client: {
+      channels: {
+        cache: new Map([['channel-1', channel]]),
+        fetch: async () => null,
+      },
+      guilds: {
+        cache: new Map(),
+        fetch: async () => null,
+      },
+    },
+    logger,
+    guildId: 'guild-1',
+  });
+
+  const result = await dispatcher.dispatch({
+    id: 'cmd-3',
+    action: 'WAR_ALERT',
+    created_at: '2026-02-27T00:00:00Z',
+    payload: {
+      channel_id: 'channel-1',
+      attacker: { nation_name: 'Attacker Nation' },
+      defender: { nation_name: 'Defender Nation' },
+    },
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(sendAttempts, 2);
+  assert.equal(
+    logger.entries.warn.some(([message]) => String(message).startsWith('Rate-limited while trying to send WAR_ALERT embed')),
+    true,
+  );
+});
