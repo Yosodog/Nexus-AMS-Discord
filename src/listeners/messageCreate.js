@@ -1,7 +1,11 @@
 import { Events } from 'discord.js';
+import {
+  LEGACY_APPLICATION_CHANNEL_REGEX,
+  parseApplicationChannelIdentity,
+} from '../utils/applicationChannels.js';
 import { config } from '../utils/config.js';
 
-export const APPLICATION_CHANNEL_REGEX = /^app-[0-9]+-[0-9]+/i;
+export const APPLICATION_CHANNEL_REGEX = LEGACY_APPLICATION_CHANNEL_REGEX;
 export const INTEL_REPORT_REGEX = /^(?:\s*)[A-Za-z]{0,3}\s*successfully gather(?:ed)? intelligence about .+?The operation cost you \$[0-9,]+\.[0-9]{2} and \d+ of your spies were captured and executed\.?(?:\s*)$/is;
 
 /**
@@ -10,14 +14,19 @@ export const INTEL_REPORT_REGEX = /^(?:\s*)[A-Za-z]{0,3}\s*successfully gather(?
  * @param {import('../services/ApiService.js').ApiService} apiService Nexus API service
  * @param {import('../services/Logger.js').Logger} logger structured logger
  */
-export const registerMessageListener = (client, apiService, logger) => {
+export const registerMessageListener = (
+  client,
+  apiService,
+  logger,
+  guildId = config.discord.guildId,
+) => {
   if (!apiService) {
     logger.warn('ApiService missing; skipping message listener registration.');
     return;
   }
 
   client.on(Events.MessageCreate, async (message) => {
-    if (!message.guild || !message.channel?.name) {
+    if (!guildId || message.guild?.id !== guildId || !message.channel) {
       return;
     }
 
@@ -27,12 +36,12 @@ export const registerMessageListener = (client, apiService, logger) => {
       await handleIntelReport(message, content, apiService, logger);
     }
 
-    if (!APPLICATION_CHANNEL_REGEX.test(message.channel.name)) {
+    if (!parseApplicationChannelIdentity(message.channel)) {
       return;
     }
 
-    // Skip logging if there is no textual content and no attachments to avoid noisy errors for embed-only messages.
-    if (!content && (!message.attachments || message.attachments.size === 0)) {
+    // Application transcripts are deliberately text-only. Attachments remain in Discord.
+    if (content.trim().length === 0) {
       return;
     }
 
@@ -43,7 +52,6 @@ export const registerMessageListener = (client, apiService, logger) => {
       discord_username: message.author?.tag ?? message.author?.username ?? 'unknown',
       content,
       sent_at: Math.floor(message.createdTimestamp / 1000),
-      is_staff: false,
     };
 
     try {
@@ -55,7 +63,7 @@ export const registerMessageListener = (client, apiService, logger) => {
       logger.warn('Failed to log application message to Nexus', {
         channelId: message.channelId,
         messageId: message.id,
-        error: error?.message ?? error,
+        errorMessage: error?.message ?? String(error),
       });
     }
   });
@@ -75,16 +83,22 @@ async function handleIntelReport(message, content, apiService, logger) {
     const intelUrl = new URL('/defense/intel', config.nexusApi.baseUrl).toString();
     const replyMessage = `Intel report saved. View it at ${intelUrl}`;
 
-    await message.reply(replyMessage).catch((error) => {
-      logger.warn('Failed to send intel confirmation message', error?.message ?? error);
+    await message.reply({
+      content: replyMessage,
+      allowedMentions: { parse: [], repliedUser: false },
+    }).catch((error) => {
+      logger.warn('Failed to send intel confirmation message', {
+        errorMessage: error?.message ?? String(error),
+      });
     });
   } catch (error) {
     const { status, data } = error?.response ?? {};
     logger.warn('Failed to submit intel report to Nexus', {
       channelId: message.channelId,
       messageId: message.id,
-      status,
-      error: data ?? error?.message ?? error,
+      status: status ?? null,
+      backendErrorCode: data?.error ?? null,
+      backendMessage: data?.message ?? error?.message ?? null,
     });
   }
 }

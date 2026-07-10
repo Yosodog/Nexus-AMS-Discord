@@ -1,5 +1,7 @@
 import { EmbedBuilder, SlashCommandBuilder } from 'discord.js';
-import { APPLICATION_CHANNEL_REGEX } from '../listeners/messageCreate.js';
+import { cleanupApplicationInterviewChannel } from '../utils/applicationChannels.js';
+import { isDiscordSnowflake } from '../utils/boundaryValidators.js';
+import { config as runtimeConfig } from '../utils/config.js';
 
 /**
  * /approve command to approve an applicant and perform the required guild actions.
@@ -17,7 +19,10 @@ export const data = new SlashCommandBuilder()
  * @param {import('discord.js').ChatInputCommandInteraction} interaction command interaction
  * @param {{ logger: import('../services/Logger.js').Logger, apiService: import('../services/ApiService.js').ApiService }} context dependencies
  */
-export const execute = async (interaction, { logger, apiService }) => {
+export const execute = async (
+  interaction,
+  { logger, apiService, guildId = runtimeConfig.discord.guildId },
+) => {
   const applicant = interaction.options.getUser('user', true);
   const moderator = interaction.user;
 
@@ -28,7 +33,7 @@ export const execute = async (interaction, { logger, apiService }) => {
     guildId: interaction.guildId,
   };
 
-  if (!interaction.guild) {
+  if (!interaction.guild || !guildId || interaction.guildId !== guildId) {
     await interaction.reply({ embeds: [buildErrorEmbed('This command must be used in a server.')], ephemeral: false });
     return;
   }
@@ -53,7 +58,12 @@ export const execute = async (interaction, { logger, apiService }) => {
     });
   } catch (error) {
     const { data, status } = error?.response ?? {};
-    logger.warn('Nexus rejected /approve', { ...logContext, status, error: data ?? error?.message ?? error });
+    logger.warn('Nexus rejected /approve', {
+      ...logContext,
+      status: status ?? null,
+      backendErrorCode: data?.error ?? null,
+      backendMessage: data?.message ?? error?.message ?? null,
+    });
 
     const embed = buildErrorEmbed(data?.message ?? 'Unable to approve this application right now.', data?.error);
     await interaction.editReply({ embeds: [embed] });
@@ -63,94 +73,90 @@ export const execute = async (interaction, { logger, apiService }) => {
   const config = response?.config ?? {};
   const application = response?.application ?? {};
 
-  await handleRoleChanges(interaction.guild, applicant.id, config, logger);
-  await deleteInterviewChannel(interaction.guild, interaction.channel, application, logger);
-  await announceApproval(interaction.client, config, logger);
+  const roleResult = await handleRoleChanges(interaction.guild, applicant.id, config, logger);
+  const cleanupResult = await cleanupApplicationInterviewChannel({
+    guild: interaction.guild,
+    guildId,
+    application,
+    logger,
+    reason: 'Nexus AMS application approved',
+  });
+  const announcementResult = await announceApproval(interaction.client, guildId, config, logger);
+  const cleanupPending = !roleResult.success || !cleanupResult.success || !announcementResult.success;
 
   const successEmbed = new EmbedBuilder()
-    .setTitle('Applicant Approved')
-    .setColor(0x57f287)
-    .setDescription(`${applicant} has been approved.`)
+    .setTitle(cleanupPending ? 'Applicant Approved — Cleanup Pending' : 'Applicant Approved')
+    .setColor(cleanupPending ? 0xfaa61a : 0x57f287)
+    .setDescription(
+      cleanupPending
+        ? `${applicant} has been approved in Nexus, but Discord cleanup is pending. Staff should review the applicant roles, interview channel, and announcement.`
+        : `${applicant} has been approved.`,
+    )
     .setTimestamp();
 
   await interaction.editReply({ embeds: [successEmbed] });
 };
 
 async function handleRoleChanges(guild, applicantId, config, logger) {
+  const issues = [];
   let member;
   try {
     member = await guild.members.fetch(applicantId);
   } catch (error) {
-    logger.warn('Unable to fetch applicant for role changes', error?.message ?? error);
-    return;
+    logger.warn('Unable to fetch applicant for role changes', { errorMessage: error?.message ?? String(error) });
+    return { success: false, issues: ['member_unavailable'] };
   }
 
-  if (config?.applicant_role_id) {
+  if (isDiscordSnowflake(config?.applicant_role_id)) {
     try {
       await member.roles.remove(config.applicant_role_id, 'Nexus AMS approval');
     } catch (error) {
-      logger.warn('Failed to remove applicant role during approval', error?.message ?? error);
+      logger.warn('Failed to remove applicant role during approval', { errorMessage: error?.message ?? String(error) });
+      issues.push('applicant_role_removal_failed');
     }
+  } else {
+    issues.push('invalid_applicant_role');
   }
 
-  if (config?.member_role_id) {
+  if (isDiscordSnowflake(config?.member_role_id)) {
     try {
       await member.roles.add(config.member_role_id, 'Nexus AMS approval');
     } catch (error) {
-      logger.warn('Failed to grant member role during approval', error?.message ?? error);
+      logger.warn('Failed to grant member role during approval', { errorMessage: error?.message ?? String(error) });
+      issues.push('member_role_add_failed');
     }
+  } else {
+    issues.push('invalid_member_role');
   }
+
+  return { success: issues.length === 0, issues };
 }
 
-async function deleteInterviewChannel(guild, currentChannel, application, logger) {
-  const channelId =
-    application?.discord_channel_id ?? application?.channel_id ?? application?.interview_channel_id ?? null;
-
-  let channel = null;
-
-  if (channelId) {
-    try {
-      channel = await guild.channels.fetch(channelId);
-    } catch (error) {
-      channel = null;
-    }
-  }
-
-  if (!channel && currentChannel && APPLICATION_CHANNEL_REGEX.test(currentChannel.name)) {
-    channel = currentChannel;
-  }
-
-  if (!channel) {
-    const fallback = guild.channels.cache.find(
-      (c) => c.isTextBased?.() && APPLICATION_CHANNEL_REGEX.test(c.name),
-    );
-    channel = fallback ?? null;
-  }
-
-  if (channel) {
-    try {
-      await channel.delete('Nexus AMS application approved');
-    } catch (error) {
-      logger.warn('Failed to delete interview channel after approval', error?.message ?? error);
-    }
-  }
-}
-
-async function announceApproval(client, config, logger) {
+async function announceApproval(client, guildId, config, logger) {
   const channelId = config?.approval_announcement_channel_id;
   if (!channelId || !config?.approval_message_template) {
-    return;
+    return { success: true, skipped: true };
+  }
+
+  if (!isDiscordSnowflake(channelId)) {
+    logger.warn('Approval announcement channel id is invalid', { channelId });
+    return { success: false, reason: 'invalid_channel_id' };
   }
 
   try {
     const channel = await client.channels.fetch(channelId);
-    if (!channel?.isTextBased?.()) {
-      return;
+    if (!channel?.isTextBased?.() || channel.guildId !== guildId) {
+      return { success: false, reason: 'invalid_announcement_channel' };
     }
 
-    await channel.send({ content: config.approval_message_template });
+    await channel.send({
+      content: config.approval_message_template,
+      allowedMentions: { parse: [], repliedUser: false },
+    });
+    return { success: true };
   } catch (error) {
-    logger.warn('Failed to publish approval announcement', error?.message ?? error);
+    logger.warn('Failed to publish approval announcement', { errorMessage: error?.message ?? String(error) });
+    return { success: false, reason: 'discord_announcement_failed' };
   }
 }
 

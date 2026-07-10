@@ -20,7 +20,9 @@ export const execute = async (interaction, { logger }) => {
       ephemeral: false,
     });
   } catch (error) {
-    logger.error('Failed to respond to /ping command', error);
+    logger.error('Failed to respond to /ping command', {
+      errorMessage: error?.message ?? String(error),
+    });
     // Best-effort follow-up so the user is not left hanging; ignore errors because Discord may block duplicates.
     if (!interaction.replied) {
       await interaction.reply({ content: 'Something went wrong handling /ping.', ephemeral: false }).catch(() => {});

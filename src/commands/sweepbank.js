@@ -48,20 +48,12 @@ export const execute = async (interaction, { logger, apiService }) => {
     return;
   }
 
-  if (!memberHasSweepAccess(interaction)) {
-    logger.warn('Discord-side sweep access denied', logContext);
-    await interaction.reply({
-      embeds: [buildErrorEmbed('You are not allowed to run this command.')],
-      ephemeral: true,
-    });
-    return;
-  }
-
   await interaction.deferReply({ ephemeral: true });
 
   try {
     const response = await apiService.sweepPrimaryOffshore({
       moderator_discord_id: interaction.user.id,
+      request_id: interaction.id,
       ...(noteValue ? { note: noteValue } : {}),
     });
 
@@ -86,7 +78,6 @@ export const execute = async (interaction, { logger, apiService }) => {
       status,
       backendErrorCode: data?.error ?? null,
       backendMessage: data?.message ?? null,
-      error,
     });
 
     if (status === 403 && data?.error === 'moderator_not_found') {
@@ -103,6 +94,13 @@ export const execute = async (interaction, { logger, apiService }) => {
       return;
     }
 
+    if (status === 409 && data?.error === 'sweep_reconciliation_required') {
+      await interaction.editReply({
+        embeds: [buildErrorEmbed('Nexus could not safely determine the prior sweep result. Staff must reconcile it before retrying.')],
+      });
+      return;
+    }
+
     if (status === 422) {
       await interaction.editReply({
         embeds: [buildErrorEmbed(`The sweep request failed: ${data?.message ?? 'Unknown error.'}`)],
@@ -115,33 +113,6 @@ export const execute = async (interaction, { logger, apiService }) => {
     });
   }
 };
-
-function memberHasSweepAccess(interaction) {
-  const roleIds = getInteractionRoleIds(interaction.member);
-  const everyoneRoleId = interaction.guildId ?? null;
-
-  if (!everyoneRoleId) {
-    return false;
-  }
-
-  return Array.from(roleIds).some((roleId) => roleId !== everyoneRoleId);
-}
-
-function getInteractionRoleIds(member) {
-  if (!member?.roles) {
-    return new Set();
-  }
-
-  if (Array.isArray(member.roles)) {
-    return new Set(member.roles);
-  }
-
-  if (member.roles.cache) {
-    return new Set(member.roles.cache.keys());
-  }
-
-  return new Set();
-}
 
 function buildSuccessEmbed(response) {
   const offshoreName = response?.offshore?.name ?? 'Primary Offshore';

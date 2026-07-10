@@ -1,4 +1,5 @@
 import { Events } from 'discord.js';
+import { config } from '../utils/config.js';
 
 /**
  * Register the interactionCreate listener responsible for dispatching slash commands.
@@ -7,9 +8,23 @@ import { Events } from 'discord.js';
  * @param {import('../services/Logger.js').Logger} logger structured logger
  * @param {object} context shared dependency container injected into commands
  */
-export const registerInteractionListener = (client, commands, logger, context = {}) => {
+export const registerInteractionListener = (
+  client,
+  commands,
+  logger,
+  context = {},
+  guildId = context.guildId ?? config.discord.guildId,
+) => {
   client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isChatInputCommand()) {
+      return;
+    }
+
+    if (!guildId || interaction.guildId !== guildId) {
+      logger.warn('Ignored command interaction outside the configured guild', {
+        command: interaction.commandName,
+        guildId: interaction.guildId ?? null,
+      });
       return;
     }
 
@@ -22,9 +37,13 @@ export const registerInteractionListener = (client, commands, logger, context = 
     }
 
     try {
-      await command.execute(interaction, { logger, ...context });
+      await command.execute(interaction, { logger, ...context, guildId });
     } catch (error) {
-      logger.error('Unhandled error executing command', error);
+      logger.error('Unhandled error executing command', {
+        command: interaction.commandName,
+        guildId: interaction.guildId,
+        errorMessage: error?.message ?? String(error),
+      });
 
       if (interaction.replied || interaction.deferred) {
         await interaction.followUp({

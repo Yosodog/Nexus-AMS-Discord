@@ -1,9 +1,9 @@
 import { EmbedBuilder, SlashCommandBuilder } from 'discord.js';
 import {
   archiveWarCounterRoom,
-  buildSourceChannelKey,
   resolveWarCounterChannelIdFromCounter,
 } from '../utils/warCounterRooms.js';
+import { config as runtimeConfig } from '../utils/config.js';
 
 export const data = new SlashCommandBuilder()
   .setName('archivecounter')
@@ -18,9 +18,12 @@ export const data = new SlashCommandBuilder()
 
 /**
  * @param {import('discord.js').ChatInputCommandInteraction} interaction
- * @param {{ logger: import('../services/Logger.js').Logger, apiService: import('../services/ApiService.js').ApiService, sourceChannelMap?: Map<string, string> }} context
+ * @param {{ logger: import('../services/Logger.js').Logger, apiService: import('../services/ApiService.js').ApiService, guildId?: string }} context
  */
-export const execute = async (interaction, { logger, apiService, sourceChannelMap }) => {
+export const execute = async (
+  interaction,
+  { logger, apiService, guildId = runtimeConfig.discord.guildId },
+) => {
   const warCounterId = interaction.options.getInteger('war_counter_id', true);
   const logContext = {
     command: 'archivecounter',
@@ -28,6 +31,14 @@ export const execute = async (interaction, { logger, apiService, sourceChannelMa
     moderatorId: interaction.user?.id ?? null,
     guildId: interaction.guildId ?? null,
   };
+
+  if (!interaction.guild || !guildId || interaction.guildId !== guildId) {
+    await interaction.reply({
+      embeds: [buildErrorEmbed('This command must be used in the configured server.')],
+      ephemeral: true,
+    });
+    return;
+  }
 
   if (!apiService?.archiveWarCounter) {
     logger.error('ApiService unavailable for /archivecounter', logContext);
@@ -48,7 +59,12 @@ export const execute = async (interaction, { logger, apiService, sourceChannelMa
     });
   } catch (error) {
     const { data, status } = error?.response ?? {};
-    logger.warn('Nexus rejected /archivecounter', { ...logContext, status, error: data ?? error?.message ?? error });
+    logger.warn('Nexus rejected /archivecounter', {
+      ...logContext,
+      status: status ?? null,
+      backendErrorCode: data?.error ?? null,
+      backendMessage: data?.message ?? error?.message ?? null,
+    });
 
     if (status === 403 && data?.error === 'moderator_not_found') {
       await interaction.editReply({
@@ -80,15 +96,7 @@ export const execute = async (interaction, { logger, apiService, sourceChannelMa
     return;
   }
 
-  const sourceKey = buildSourceChannelKey('war_counter', warCounterId);
-  const mappedChannelId = sourceKey ? sourceChannelMap?.get(sourceKey) ?? null : null;
-  const responseChannelId = resolveWarCounterChannelIdFromCounter(response?.counter);
-  const fallbackCurrentThreadId = interaction.channel?.isThread?.() ? interaction.channelId : null;
-  const channelId = responseChannelId ?? mappedChannelId ?? fallbackCurrentThreadId;
-
-  if (sourceKey && channelId && sourceChannelMap instanceof Map) {
-    sourceChannelMap.set(sourceKey, channelId);
-  }
+  const channelId = resolveWarCounterChannelIdFromCounter(response?.counter);
 
   let archiveResult = { success: false, reason: 'missing_channel' };
   if (channelId) {
@@ -96,6 +104,7 @@ export const execute = async (interaction, { logger, apiService, sourceChannelMa
       client: interaction.client,
       logger,
       channelId,
+      guildId,
       titlePrefix: '[Archived] ',
       reason: `Nexus direct archive for war_counter ${warCounterId}`,
       logContext,

@@ -1,5 +1,11 @@
 import axios from 'axios';
 
+export const RetryMode = Object.freeze({
+  SAFE: 'safe',
+  IDEMPOTENT: 'idempotent',
+  NEVER: 'never',
+});
+
 /**
  * REST API client wrapper for Nexus AMS backend.
  * Only scaffolds shared concerns (base configuration, retries, headers) for future expansion.
@@ -13,11 +19,21 @@ export class ApiService {
    * @param {number} [options.timeoutMs=10000] request timeout in milliseconds
    * @param {number} [options.maxRetries=3] number of retry attempts for transient failures
    */
-  constructor({ baseUrl, apiKey, logger, timeoutMs = 10000, maxRetries = 3 }) {
+  constructor({
+    baseUrl,
+    apiKey,
+    logger,
+    timeoutMs = 10000,
+    maxRetries = 3,
+    random = Math.random,
+    sleep = null,
+  }) {
     this.baseUrl = baseUrl;
     this.apiKey = apiKey;
     this.logger = logger;
     this.maxRetries = maxRetries;
+    this.random = random;
+    this.sleep = sleep ?? ((durationMs) => new Promise((resolve) => setTimeout(resolve, durationMs)));
 
     this.http = axios.create({
       baseURL: this.baseUrl,
@@ -37,31 +53,42 @@ export class ApiService {
    * @param {object} options axios-compatible request options
    * @returns {Promise<any>} parsed JSON response body
    */
-  async request(options) {
+  async request(options, retryMode = RetryMode.NEVER) {
+    if (!Object.values(RetryMode).includes(retryMode)) {
+      throw new TypeError(`Unknown API retry mode: ${retryMode}`);
+    }
+
     for (let attempt = 1; attempt <= this.maxRetries; attempt += 1) {
       try {
         const response = await this.http.request(options);
         return response.data;
       } catch (error) {
         const isLastAttempt = attempt === this.maxRetries;
-        const retryable = this.#isRetryableError(error);
+        const retryable = retryMode !== RetryMode.NEVER && this.#isRetryableError(error);
         this.logger.warn(
           `API request failed (attempt ${attempt}/${this.maxRetries})`,
           {
             url: options?.url,
             method: options?.method,
             status: error?.response?.status ?? null,
+            retryMode,
             retryable,
-            message: error?.message ?? error,
+            errorCode: error?.code ?? null,
           },
         );
 
         if (isLastAttempt || !retryable) {
-          this.logger.error('Exhausted retries for API request', options?.url);
+          this.logger.error('API request failed permanently', {
+            url: options?.url,
+            method: options?.method,
+            status: error?.response?.status ?? null,
+            retryMode,
+            errorCode: error?.code ?? null,
+          });
           throw error;
         }
 
-        await this.#delay(this.#backoffDuration(attempt));
+        await this.#delay(this.#retryDelay(error, attempt));
       }
     }
 
@@ -81,7 +108,40 @@ export class ApiService {
     return this.request({
       method: 'get',
       url: endpointUrl.toString(),
-    });
+    }, RetryMode.SAFE);
+  }
+
+  /** Claim one queue item with an idempotent request identifier. */
+  async claimDiscordQueue(workerId, requestId) {
+    const endpointUrl = new URL('/api/v1/discord/queue/claim', this.baseUrl).toString();
+
+    return this.request({
+      method: 'post',
+      url: endpointUrl,
+      data: { worker_id: workerId, request_id: requestId },
+    }, RetryMode.IDEMPOTENT);
+  }
+
+  /** Renew an active queue lease. */
+  async renewDiscordQueueLease(id, leaseToken) {
+    const endpointUrl = new URL(`/api/v1/discord/queue/${id}/lease`, this.baseUrl).toString();
+
+    return this.request({
+      method: 'post',
+      url: endpointUrl,
+      data: { lease_token: leaseToken },
+    }, RetryMode.IDEMPOTENT);
+  }
+
+  /** Persist an action-specific durable checkpoint. */
+  async checkpointDiscordQueue(id, leaseToken, result) {
+    const endpointUrl = new URL(`/api/v1/discord/queue/${id}/checkpoint`, this.baseUrl).toString();
+
+    return this.request({
+      method: 'patch',
+      url: endpointUrl,
+      data: { lease_token: leaseToken, result },
+    }, RetryMode.IDEMPOTENT);
   }
 
   /**
@@ -90,14 +150,31 @@ export class ApiService {
    * @param {'complete' | 'failed'} status processing status to report
    * @returns {Promise<any>} response payload
    */
-  async updateDiscordQueueStatus(id, status) {
+  async updateDiscordQueueStatus(id, status, leaseToken = null, errorDetails = {}) {
     const endpointUrl = new URL(`/api/v1/discord/queue/${id}/status`, this.baseUrl);
+
+    const data = { status };
+    if (leaseToken) {
+      data.lease_token = leaseToken;
+    }
+    if (status === 'failed' && errorDetails?.error_code) {
+      data.error_code = errorDetails.error_code;
+    }
+    if (status === 'failed' && errorDetails?.error_message) {
+      data.error_message = errorDetails.error_message;
+    }
 
     return this.request({
       method: 'post',
       url: endpointUrl.toString(),
-      data: { status },
-    });
+      data,
+    }, leaseToken ? RetryMode.IDEMPOTENT : RetryMode.NEVER);
+  }
+
+  /** Fetch the current persisted war-counter record. */
+  async getWarCounter(id) {
+    const endpointUrl = new URL(`/api/v1/discord/war-counters/${id}`, this.baseUrl).toString();
+    return this.request({ method: 'get', url: endpointUrl }, RetryMode.SAFE);
   }
 
   /**
@@ -115,7 +192,7 @@ export class ApiService {
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
       },
-    });
+    }, RetryMode.NEVER);
   }
 
   /**
@@ -133,7 +210,7 @@ export class ApiService {
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
       },
-    });
+    }, RetryMode.IDEMPOTENT);
   }
 
   /**
@@ -151,7 +228,7 @@ export class ApiService {
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
       },
-    });
+    }, RetryMode.IDEMPOTENT);
   }
 
   /**
@@ -169,7 +246,7 @@ export class ApiService {
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
       },
-    });
+    }, RetryMode.IDEMPOTENT);
   }
 
   /**
@@ -187,12 +264,12 @@ export class ApiService {
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
       },
-    });
+    }, RetryMode.IDEMPOTENT);
   }
 
   /**
    * Log a Discord message to Nexus for transcript storage.
-   * @param {{ discord_channel_id: string, discord_message_id: string, discord_user_id: string, discord_username: string, content: string, sent_at: number, is_staff: boolean }} payload message payload
+   * @param {{ discord_channel_id: string, discord_message_id: string, discord_user_id: string, discord_username: string, content: string, sent_at: number }} payload message payload; Nexus derives staff status
    * @returns {Promise<any>} Nexus response indicating logging status
    */
   async logApplicationMessage(payload) {
@@ -205,7 +282,7 @@ export class ApiService {
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
       },
-    });
+    }, RetryMode.IDEMPOTENT);
   }
 
   /**
@@ -223,7 +300,7 @@ export class ApiService {
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
       },
-    });
+    }, RetryMode.IDEMPOTENT);
   }
 
   /**
@@ -241,7 +318,7 @@ export class ApiService {
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
       },
-    });
+    }, RetryMode.IDEMPOTENT);
   }
 
   /**
@@ -259,7 +336,7 @@ export class ApiService {
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
       },
-    });
+    }, RetryMode.IDEMPOTENT);
   }
 
   /**
@@ -284,7 +361,10 @@ export class ApiService {
       token: '[REDACTED]',
     };
 
-    this.logger.info('Sending verification request to Nexus', { url: endpointUrl, payload: maskedPayload });
+    this.logger.info('Sending verification request to Nexus', {
+      url: endpointUrl,
+      discordId: maskedPayload.discord_id ?? null,
+    });
 
     try {
       const response = await this.http.post(endpointUrl, payload, {
@@ -296,7 +376,6 @@ export class ApiService {
       this.logger.info('Verification request succeeded', {
         status: response.status,
         endpoint: endpointUrl,
-        response: this.#sanitizeErrorData(response.data),
       });
 
       return { success: true, data: response.data };
@@ -326,7 +405,7 @@ export class ApiService {
         this.logger.warn('Verification request failed with API response', {
           status,
           endpoint: endpointUrl,
-          error: normalized,
+          code: errorCode,
         });
 
         return normalized;
@@ -365,7 +444,7 @@ export class ApiService {
   }
 
   async #delay(durationMs) {
-    await new Promise((resolve) => setTimeout(resolve, durationMs));
+    await this.sleep(durationMs);
   }
 
   #isRetryableError(error) {
@@ -381,13 +460,40 @@ export class ApiService {
       return true;
     }
 
-    return error.response.status >= 500;
+    const status = error.response.status;
+    return status === 408 || status === 429 || status >= 500;
   }
 
-  #backoffDuration(attempt) {
-    // Exponential backoff with a modest base to keep retries responsive during development.
+  #retryDelay(error, attempt) {
+    const headers = error?.response?.headers;
+    const retryAfterHeader = headers?.get?.('retry-after') ?? headers?.['retry-after'];
+    const retryAfter = this.#parseRetryAfter(retryAfterHeader);
+    if (retryAfter !== null) {
+      return retryAfter;
+    }
+
     const base = 500;
-    return base * 2 ** (attempt - 1);
+    const exponential = base * 2 ** (attempt - 1);
+    const jitter = Math.floor(this.random() * Math.min(exponential * 0.25, 1000));
+    return exponential + jitter;
+  }
+
+  #parseRetryAfter(value) {
+    if (value === undefined || value === null || value === '') {
+      return null;
+    }
+
+    const seconds = Number(value);
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      return Math.min(Math.ceil(seconds * 1000), 5 * 60 * 1000);
+    }
+
+    const date = Date.parse(String(value));
+    if (Number.isNaN(date)) {
+      return null;
+    }
+
+    return Math.min(Math.max(date - Date.now(), 0), 5 * 60 * 1000);
   }
 
   #mapStatusToErrorCode(status, data) {

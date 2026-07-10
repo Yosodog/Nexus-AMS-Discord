@@ -151,7 +151,10 @@ export const execute = async (interaction, { logger, apiService }) => {
 
     await interaction.editReply({ embeds: [errorEmbed] });
   } catch (error) {
-    logger.error('Unhandled error while executing /verify', { ...logContext, error: error?.message ?? error });
+    logger.error('Unhandled error while executing /verify', {
+      ...logContext,
+      errorMessage: error?.message ?? String(error),
+    });
 
     const fallbackEmbed = new EmbedBuilder()
       .setTitle('Verification Error')

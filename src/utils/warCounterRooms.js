@@ -1,19 +1,4 @@
-/**
- * Build a stable in-memory key for source-to-channel mapping.
- * @param {string} sourceType
- * @param {number|string} sourceId
- * @returns {string|null}
- */
-export const buildSourceChannelKey = (sourceType, sourceId) => {
-  const type = typeof sourceType === 'string' ? sourceType.trim().toLowerCase() : '';
-  const id = `${sourceId ?? ''}`.trim();
-
-  if (!type || !id) {
-    return null;
-  }
-
-  return `${type}:${id}`;
-};
+import { isDiscordSnowflake } from './boundaryValidators.js';
 
 /**
  * Extract a Discord channel/thread id from a war-counter response object.
@@ -25,25 +10,10 @@ export const resolveWarCounterChannelIdFromCounter = (counter) => {
     return null;
   }
 
-  const candidates = [
-    counter.discord_channel_id,
-    counter.discord_thread_id,
-    counter.channel_id,
-    counter.thread_id,
-  ];
-
-  for (const candidate of candidates) {
-    if (candidate === null || candidate === undefined) {
-      continue;
-    }
-
-    const value = `${candidate}`.trim();
-    if (value !== '') {
-      return value;
-    }
-  }
-
-  return null;
+  const value = typeof counter.discord_channel_id === 'string'
+    ? counter.discord_channel_id.trim()
+    : '';
+  return isDiscordSnowflake(value) ? value : null;
 };
 
 /**
@@ -53,6 +23,7 @@ export const resolveWarCounterChannelIdFromCounter = (counter) => {
  * @param {import('discord.js').Client} options.client
  * @param {import('../services/Logger.js').Logger} options.logger
  * @param {string} options.channelId
+ * @param {string} options.guildId configured Discord guild id
  * @param {string} [options.titlePrefix='[Archived] ']
  * @param {boolean} [options.lock=true]
  * @param {string} [options.reason='Nexus AMS war counter archive']
@@ -63,17 +34,29 @@ export const archiveWarCounterRoom = async ({
   client,
   logger,
   channelId,
+  guildId,
   titlePrefix = '[Archived] ',
   lock = true,
   reason = 'Nexus AMS war counter archive',
   logContext = {},
 }) => {
-  const normalizedChannelId = `${channelId ?? ''}`.trim();
+  const normalizedChannelId = typeof channelId === 'string' ? channelId.trim() : '';
+  const normalizedGuildId = typeof guildId === 'string' ? guildId.trim() : '';
   const prefix = typeof titlePrefix === 'string' ? titlePrefix : '[Archived] ';
 
-  if (!normalizedChannelId) {
+  if (!isDiscordSnowflake(normalizedChannelId)) {
     logger.warn('Cannot archive war counter room without a channel id', logContext);
-    return { success: false, reason: 'missing_channel' };
+    return {
+      success: false,
+      reason: channelId === undefined || channelId === null || channelId === ''
+        ? 'missing_channel'
+        : 'invalid_channel_id',
+    };
+  }
+
+  if (!isDiscordSnowflake(normalizedGuildId)) {
+    logger.warn('Cannot archive war counter room without a valid guild id', logContext);
+    return { success: false, reason: 'invalid_guild_id' };
   }
 
   let channel = client.channels.cache.get(normalizedChannelId) ?? null;
@@ -85,7 +68,7 @@ export const archiveWarCounterRoom = async ({
       logger.warn('Unable to fetch war counter channel', {
         ...logContext,
         channelId: normalizedChannelId,
-        error: error?.message ?? error,
+        errorMessage: error?.message ?? String(error),
       });
       return { success: false, reason: 'channel_unavailable' };
     }
@@ -98,6 +81,15 @@ export const archiveWarCounterRoom = async ({
       type: channel?.type ?? 'unknown',
     });
     return { success: false, reason: 'not_thread' };
+  }
+
+  if (`${channel.guildId ?? channel.guild?.id ?? ''}` !== normalizedGuildId) {
+    logger.warn('War counter archive target belongs to another guild', {
+      ...logContext,
+      channelId: normalizedChannelId,
+      guildId: channel.guildId ?? channel.guild?.id ?? null,
+    });
+    return { success: false, reason: 'wrong_guild' };
   }
 
   const currentName = typeof channel.name === 'string' ? channel.name : '';
@@ -121,7 +113,7 @@ export const archiveWarCounterRoom = async ({
     logger.error('Failed to archive/lock war counter thread', {
       ...logContext,
       channelId: normalizedChannelId,
-      error: error?.message ?? error,
+      errorMessage: error?.message ?? String(error),
     });
     return { success: false, reason: 'discord_archive_failed' };
   }

@@ -27,7 +27,7 @@ test('message listener logs text messages from application channels', async () =
     sendIntelReport: async () => assert.fail('non-intel message should not be sent as intel'),
   };
 
-  registerMessageListener(client, apiService, logger);
+  registerMessageListener(client, apiService, logger, 'guild-1');
   const handler = client.handlers.get(Events.MessageCreate);
 
   await handler({
@@ -48,8 +48,30 @@ test('message listener logs text messages from application channels', async () =
     discord_username: 'User#1234',
     content: 'Application answer',
     sent_at: 1_700_000_000,
-    is_staff: false,
   });
+});
+
+test('message listener recognizes metadata-marked channels after a safe rename', async () => {
+  const client = createEventClient();
+  const logger = createLogger();
+  let loggedPayload = null;
+  const apiService = {
+    logApplicationMessage: async (payload) => { loggedPayload = payload; },
+    sendIntelReport: async () => assert.fail('non-intel message should not be sent as intel'),
+  };
+
+  registerMessageListener(client, apiService, logger, 'guild-1');
+  await client.handlers.get(Events.MessageCreate)({
+    guild: { id: 'guild-1' },
+    channel: { name: 'interview-renamed-by-staff', topic: 'nexus-application:123;nation:456' },
+    channelId: 'channel-1',
+    id: 'message-1',
+    author: { id: 'user-1', username: 'User' },
+    content: 'Application answer',
+    createdTimestamp: 1_700_000_000_000,
+  });
+
+  assert.equal(loggedPayload.content, 'Application answer');
 });
 
 test('message listener ignores empty app-channel messages without attachments', async () => {
@@ -60,7 +82,7 @@ test('message listener ignores empty app-channel messages without attachments', 
     sendIntelReport: async () => assert.fail('empty message should not be sent as intel'),
   };
 
-  registerMessageListener(client, apiService, logger);
+  registerMessageListener(client, apiService, logger, 'guild-1');
   const handler = client.handlers.get(Events.MessageCreate);
 
   await handler({
@@ -72,6 +94,47 @@ test('message listener ignores empty app-channel messages without attachments', 
     content: '',
     createdTimestamp: Date.now(),
     attachments: new Map(),
+  });
+});
+
+test('message listener ignores attachment-only application messages', async () => {
+  const client = createEventClient();
+  const logger = createLogger();
+  const apiService = {
+    logApplicationMessage: async () => assert.fail('attachment-only message should not be logged'),
+    sendIntelReport: async () => assert.fail('attachment-only message should not be sent as intel'),
+  };
+
+  registerMessageListener(client, apiService, logger, 'guild-1');
+  const handler = client.handlers.get(Events.MessageCreate);
+
+  await handler({
+    guild: { id: 'guild-1' },
+    channel: { name: 'app-123-456-target' },
+    channelId: 'channel-1',
+    id: 'message-1',
+    author: { id: 'user-1', username: 'User' },
+    content: '',
+    createdTimestamp: Date.now(),
+    attachments: new Map([['attachment-1', { url: 'https://example.test/file' }]]),
+  });
+});
+
+test('message listener ignores all messages from a foreign guild', async () => {
+  const client = createEventClient();
+  const logger = createLogger();
+  const apiService = {
+    logApplicationMessage: async () => assert.fail('foreign message should not be logged'),
+    sendIntelReport: async () => assert.fail('foreign message should not be sent as intel'),
+  };
+
+  registerMessageListener(client, apiService, logger, 'guild-1');
+  const handler = client.handlers.get(Events.MessageCreate);
+
+  await handler({
+    guild: { id: 'guild-2' },
+    channel: { name: 'app-123-456-target' },
+    content: 'Application answer',
   });
 });
 
@@ -91,7 +154,7 @@ test('message listener forwards intel reports and replies with the Nexus intel U
       },
     };
 
-    registerMessageListener(client, apiService, logger);
+    registerMessageListener(client, apiService, logger, 'guild-1');
     const handler = client.handlers.get(Events.MessageCreate);
     const content =
       'ABC successfully gathered intelligence about Test Nation. The operation cost you $1,234.00 and 0 of your spies were captured and executed.';
@@ -111,7 +174,10 @@ test('message listener forwards intel reports and replies with the Nexus intel U
     });
 
     assert.deepEqual(intelPayload, { report: content, source: 'discord' });
-    assert.equal(replyPayload, 'Intel report saved. View it at https://nexus.example/defense/intel');
+    assert.deepEqual(replyPayload, {
+      content: 'Intel report saved. View it at https://nexus.example/defense/intel',
+      allowedMentions: { parse: [], repliedUser: false },
+    });
   } finally {
     config.nexusApi.baseUrl = originalBaseUrl;
   }

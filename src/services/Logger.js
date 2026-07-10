@@ -1,5 +1,7 @@
 import util from 'util';
 
+const LEVELS = Object.freeze({ DEBUG: 10, INFO: 20, WARN: 30, ERROR: 40 });
+
 /**
  * Structured logger with simple secret scrubbing.
  * Keeps output consistent and avoids leaking sensitive environment variables.
@@ -8,9 +10,14 @@ export class Logger {
   /**
    * @param {string} context human-readable context to prefix every log line with
    */
-  constructor(context = 'App') {
+  constructor(context = 'App', { level = process.env.LOG_LEVEL } = {}) {
     this.context = context;
     this.secrets = this.#collectSecrets();
+    const defaultLevel = process.env.NODE_ENV === 'production' ? 'INFO' : 'DEBUG';
+    this.level = `${level ?? defaultLevel}`.trim().toUpperCase();
+    if (!(this.level in LEVELS)) {
+      this.level = defaultLevel;
+    }
   }
 
   info(...args) {
@@ -30,6 +37,10 @@ export class Logger {
   }
 
   #log(level, ...args) {
+    if (LEVELS[level] < LEVELS[this.level]) {
+      return;
+    }
+
     const timestamp = new Date().toISOString();
     const payload = args.map((arg) => this.#sanitize(arg)).join(' ');
     const message = `[${timestamp}] [${level}] [${this.context}] ${payload}`;
@@ -44,6 +55,15 @@ export class Logger {
   }
 
   #sanitize(input) {
+    if (input instanceof Error) {
+      input = {
+        name: input.name,
+        message: input.message,
+        code: input.code ?? null,
+        status: input.response?.status ?? null,
+      };
+    }
+
     const serialized =
       typeof input === 'string' ? input : util.inspect(input, { depth: 3, colors: false });
 
@@ -54,9 +74,6 @@ export class Logger {
   #collectSecrets() {
     const secretKeys = [
       'DISCORD_BOT_TOKEN',
-      'DISCORD_CLIENT_ID',
-      'DISCORD_GUILD_ID',
-      'NEXUS_API_URL',
       'NEXUS_API_KEY',
     ];
 

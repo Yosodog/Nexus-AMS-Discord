@@ -12,34 +12,66 @@ const __dirname = path.dirname(__filename);
  * @param {import('../services/Logger.js').Logger} logger structured logger instance
  * @returns {Promise<{ commands: import('discord.js').Collection<string, any>, commandData: any[] }>}
  */
-export const loadCommands = async (logger) => {
+export const loadCommands = async (logger, { directory = __dirname, importer = (url) => import(url) } = {}) => {
   const commands = new Collection();
   const commandData = [];
+  const errors = [];
 
-  const entries = await readdir(__dirname);
+  const entries = (await readdir(directory)).sort();
 
   for (const file of entries) {
     if (!file.endsWith('.js') || file === 'index.js') {
       continue;
     }
 
-    const filePath = path.join(__dirname, file);
+    const filePath = path.join(directory, file);
 
     try {
-      const commandModule = await import(pathToFileURL(filePath).href);
+      const commandModule = await importer(pathToFileURL(filePath).href);
 
-      if (!commandModule?.data || !commandModule?.execute) {
-        logger.warn(`Skipping command ${file} because it does not export both data and execute.`);
+      if (!commandModule?.data || typeof commandModule?.execute !== 'function') {
+        errors.push(new Error(`${file} must export command data and an execute function.`));
         continue;
       }
 
-      const commandName = commandModule.data.name;
+      if (typeof commandModule.data.toJSON !== 'function') {
+        errors.push(new Error(`${file} command data must provide toJSON().`));
+        continue;
+      }
+
+      let serialized;
+      try {
+        serialized = commandModule.data.toJSON();
+        JSON.stringify(serialized);
+      } catch (error) {
+        errors.push(new Error(`${file} command data could not be serialized.`, { cause: error }));
+        continue;
+      }
+
+      const commandName = serialized?.name;
+      if (typeof commandName !== 'string' || commandName.trim() === '') {
+        errors.push(new Error(`${file} command data is missing a valid name.`));
+        continue;
+      }
+
+      if (commands.has(commandName)) {
+        errors.push(new Error(`${file} duplicates the command name "${commandName}".`));
+        continue;
+      }
+
       commands.set(commandName, commandModule);
-      commandData.push(commandModule.data.toJSON());
+      commandData.push(serialized);
       logger.debug(`Loaded command module`, commandName);
     } catch (error) {
-      logger.error(`Failed to load command file ${file}`, error);
+      errors.push(new Error(`Failed to load command file ${file}.`, { cause: error }));
     }
+  }
+
+  if (errors.length > 0) {
+    for (const error of errors) {
+      logger.error('Command validation failed', { message: error.message, cause: error.cause?.message ?? null });
+    }
+    throw new AggregateError(errors, `Unable to load ${errors.length} command module(s).`);
   }
 
   // Summarize loaded commands for easier debugging/registration confirmation.

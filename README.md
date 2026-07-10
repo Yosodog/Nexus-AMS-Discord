@@ -1,52 +1,122 @@
 # Nexus AMS Discord Bot
 
-Discord bot scaffolding for the Nexus AMS project. It currently ships a simple `/ping` check, `/verify` to link Nexus accounts, and a queue worker that polls Nexus for Discord-bound actions like war alerts.
+Discord integration for Nexus AMS. The bot provides account verification, application workflows, moderation and finance commands, and leased delivery of Nexus-generated Discord actions.
 
 ## Features
-- Slash command loader with a health-check `/ping`.
-- Guild-scoped slash command registration script.
-- Structured logging with basic secret scrubbing.
-- Nexus API REST client with retries and queue polling worker.
-- Finance/admin `/sweepbank` command for sweeping the main bank into the primary offshore.
-- Queue dispatcher handlers for `WAR_ALERT`, `ALLIANCE_DEPARTURE`, `INACTIVITY_ALERT`, and `BEIGE_ALERT` with status reporting to Nexus.
+
+- Guild-scoped slash commands including `/ping`, `/verify`, `/apply`, `/approve`, `/deny`, `/archivecounter`, and `/sweepbank`.
+- Nexus-backed authorization for sensitive commands; Nexus remains the permission authority.
+- Application interview channels with recoverable Nexus metadata and text-only transcript forwarding.
+- Leased queue delivery for alerts, member departures, role removal, and war-room creation/archive.
+- Structured logging, bounded API retries, durable war-room checkpoints, and Discord nonce deduplication.
+- Graceful process shutdown and fail-closed command loading/registration.
 
 ## Project Structure
-- `src/bot.js` — bootstraps the client, wiring listeners and services.
-- `src/commands/` — individual slash commands; add new files here.
-- `src/listeners/` — Discord event listeners (e.g., `interactionCreate`).
-- `src/services/` — shared services (API client, queue worker/dispatcher, logger).
-- `src/utils/` — configuration and environment validation helpers.
-- `src/registerCommands.js` — registers slash commands to a guild.
 
-## Prerequisites
-- Node.js 18+
-- Discord application with a bot user and a test guild to deploy commands.
+- `src/bot.js` — boots Discord, services, listeners, and graceful shutdown handling.
+- `src/commands/` — slash command modules.
+- `src/listeners/` — Discord interaction and message listeners.
+- `src/services/` — Nexus API transport, leased queue worker, stable dispatcher, and logging.
+- `src/services/queueActions/` — validated action modules; each exports `validate(payload)` and `execute(command, context)`.
+- `src/utils/` — configuration, boundary validation, and channel identity helpers.
+- `src/registerCommands.js` — publishes the complete command set to the configured guild.
 
-## Setup
-1. Install dependencies:
-   ```bash
-   npm install
-   ```
-2. Create a `.env` file based on `.env.example`:
-   ```bash
-   cp .env.example .env
-   ```
-3. Populate the environment variables:
-   - `DISCORD_BOT_TOKEN`, `DISCORD_CLIENT_ID`, `DISCORD_GUILD_ID`
-   - `NEXUS_API_URL`, `NEXUS_API_KEY`
+## Requirements and Configuration
 
-## Running
-- Start the bot:
-  ```bash
-  npm start
-  ```
-- Register slash commands to your configured guild (run after adding/updating commands):
-  ```bash
-  npm run register
-  ```
+- Node.js 22 or newer.
+- A Discord application, bot user, and guild.
+- A compatible Nexus deployment with the leased Discord queue APIs and migrations.
+
+Create the local environment file:
+
+```bash
+cp .env.example .env
+npm ci
+```
+
+Configure:
+
+- `NODE_ENV`: use `production` on the production host.
+- `LOG_LEVEL`: optional `DEBUG`, `INFO`, `WARN`, or `ERROR` threshold.
+- `DISCORD_BOT_TOKEN`: bot token.
+- `DISCORD_CLIENT_ID`: Discord application snowflake.
+- `DISCORD_GUILD_ID`: the only guild the bot is permitted to process.
+- `NEXUS_API_URL`: Nexus base URL. Development may use HTTP; production startup requires HTTPS.
+- `NEXUS_API_KEY`: shared bot credential issued by Nexus.
+
+Startup rejects malformed URLs and Discord snowflakes. Message events, interactions, queue targets, announcements, and archive actions are constrained to `DISCORD_GUILD_ID`.
+
+## Running and Commands
+
+Register the validated command set after adding or changing commands:
+
+```bash
+npm run register
+```
+
+Start the bot:
+
+```bash
+npm start
+```
+
+Command loading is atomic. An import failure, malformed command export, serialization error, or duplicate command name aborts startup/registration; the registration script never replaces Discord commands with a partial set.
+
+## Application Transcripts
+
+Application channels are identified by Nexus application/nation metadata, with exact legacy channel-name support during migration. Only messages from the configured guild and verified application channels are forwarded.
+
+Transcripts are intentionally text-only:
+
+- Attachment-only and embed-only messages are ignored.
+- Attachments are not uploaded or persisted by the bot.
+- The bot sends message and author identifiers; Nexus derives staff status and deduplicates Discord message IDs.
+
+## Queue Delivery and Recovery
+
+The bot claims one queue item at a time through the leased Nexus queue API. Nexus issues a five-minute lease, and the bot renews active leases every 60 seconds. The worker does not claim another item until the current Discord work and completion/failure acknowledgement are resolved or the lease is no longer safe to use.
+
+War-room creation checkpoints the Discord thread ID in Nexus before follow-up messages. Stable Discord nonces reduce duplicate messages when an acknowledged request is replayed. Delivery remains at-least-once: operators should investigate reconciliation logs after crashes or ambiguous Discord/API failures.
+
+Nexus reaps expired leases every minute on one scheduler instance. Failed attempts retry after one and two minutes; the third failed/expired attempt becomes terminal. Keep the Nexus scheduler running in production.
+
+Legacy rows already marked `processing` without a lease are never replayed automatically. Inspect them from the Nexus application first:
+
+```bash
+php artisan discord-queue:recover-legacy
+```
+
+After reviewing possible Discord side effects, explicitly requeue selected IDs only:
+
+```bash
+php artisan discord-queue:recover-legacy 550e8400-e29b-41d4-a716-446655440000 --requeue
+```
+
+Deploy Nexus queue migrations/APIs before deploying this bot version.
+
+## Shutdown Behavior
+
+`SIGTERM` or `SIGINT` stops new queue claims, gives the active item up to 25 seconds to finish and acknowledge, closes the Discord client, and exits. A second signal forces immediate termination. Process managers should allow at least a 30-second termination grace period.
+
+## Development and CI
+
+```bash
+npm run lint          # syntax-check src/ and test/
+npm test              # run the Node test suite
+npm run check         # lint, then run tests
+npm run test:coverage # full src/**/*.js coverage with enforced gates
+npm audit --omit=dev --audit-level=high
+```
+
+Coverage gates are 80% lines, 65% branches, and 80% functions. GitHub Actions runs Node 22 with `npm ci`, lint, tests, coverage, and the high-severity production dependency audit on pushes to `main` and pull requests.
 
 ## Adding Commands
-Create a new file in `src/commands/` exporting `data` (a `SlashCommandBuilder`) and `execute`. The loader auto-registers any `.js` file in that folder except `index.js`.
 
-## Notes
-- Logging redacts known secrets; still avoid logging sensitive payloads directly.
+Create a `.js` file in `src/commands/` exporting:
+
+- `data`: a serializable `SlashCommandBuilder` definition.
+- `execute(interaction, context)`: the command handler.
+
+Command names must be unique. Do not add Discord role allowlists for Nexus-authorized operations; keep Nexus as the authoritative permission boundary.
+
+Logging redacts configured secrets, but code must still avoid logging credentials, raw API response bodies, or sensitive payloads.

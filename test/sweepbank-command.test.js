@@ -5,6 +5,7 @@ import { createLogger, embedJson } from './helpers.js';
 
 function createSweepInteraction({ inGuild = true, roles = ['guild-1'], note = null } = {}) {
   const interaction = {
+    id: '123456789012345678',
     user: { id: 'moderator-1' },
     guildId: 'guild-1',
     channelId: 'channel-1',
@@ -30,18 +31,24 @@ function createSweepInteraction({ inGuild = true, roles = ['guild-1'], note = nu
   return interaction;
 }
 
-test('/sweepbank denies users without a non-everyone role before calling Nexus', async () => {
+test('/sweepbank delegates authorization to Nexus even without a local Discord role', async () => {
   const interaction = createSweepInteraction({ roles: ['guild-1'] });
   const logger = createLogger();
+  let called = false;
   const apiService = {
-    sweepPrimaryOffshore: async () => assert.fail('unauthorized user should not call Nexus'),
+    sweepPrimaryOffshore: async () => {
+      called = true;
+      const error = new Error('Forbidden');
+      error.response = { status: 403, data: { error: 'forbidden' } };
+      throw error;
+    },
   };
 
   await executeSweepbank(interaction, { logger, apiService });
 
-  assert.equal(interaction.replies[0].ephemeral, true);
-  assert.equal(embedJson(interaction.replies[0]).title, 'Sweep Failed');
-  assert.match(embedJson(interaction.replies[0]).description, /not allowed/i);
+  assert.equal(called, true);
+  assert.equal(interaction.defers[0].ephemeral, true);
+  assert.match(embedJson(interaction.edits[0]).description, /not authorized/i);
 });
 
 test('/sweepbank sends moderator id and trimmed note, then renders swept resources', async () => {
@@ -65,7 +72,11 @@ test('/sweepbank sends moderator id and trimmed note, then renders swept resourc
 
   await executeSweepbank(interaction, { logger, apiService });
 
-  assert.deepEqual(apiPayload, { moderator_discord_id: 'moderator-1', note: 'after audit' });
+  assert.deepEqual(apiPayload, {
+    moderator_discord_id: 'moderator-1',
+    request_id: '123456789012345678',
+    note: 'after audit',
+  });
   assert.equal(interaction.defers[0].ephemeral, true);
 
   const embed = embedJson(interaction.edits[0]);
@@ -74,6 +85,22 @@ test('/sweepbank sends moderator id and trimmed note, then renders swept resourc
   assert.match(embed.fields[0].value, /Money: \$1,234,567/);
   assert.match(embed.fields[0].value, /Food: 50/);
   assert.doesNotMatch(embed.fields[0].value, /Uranium/);
+});
+
+test('/sweepbank stops ambiguous idempotent retries for manual reconciliation', async () => {
+  const interaction = createSweepInteraction();
+  const logger = createLogger();
+  const apiService = {
+    sweepPrimaryOffshore: async () => {
+      const error = new Error('Conflict');
+      error.response = { status: 409, data: { error: 'sweep_reconciliation_required' } };
+      throw error;
+    },
+  };
+
+  await executeSweepbank(interaction, { logger, apiService });
+
+  assert.match(embedJson(interaction.edits[0]).description, /reconcile/i);
 });
 
 test('/sweepbank maps Nexus moderator_not_found errors to a link-account response', async () => {

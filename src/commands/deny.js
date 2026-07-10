@@ -1,5 +1,7 @@
 import { EmbedBuilder, SlashCommandBuilder } from 'discord.js';
-import { APPLICATION_CHANNEL_REGEX } from '../listeners/messageCreate.js';
+import { cleanupApplicationInterviewChannel } from '../utils/applicationChannels.js';
+import { isDiscordSnowflake } from '../utils/boundaryValidators.js';
+import { config as runtimeConfig } from '../utils/config.js';
 
 /**
  * /deny command to deny an applicant and clean up their interview channel.
@@ -17,7 +19,10 @@ export const data = new SlashCommandBuilder()
  * @param {import('discord.js').ChatInputCommandInteraction} interaction command interaction
  * @param {{ logger: import('../services/Logger.js').Logger, apiService: import('../services/ApiService.js').ApiService }} context dependencies
  */
-export const execute = async (interaction, { logger, apiService }) => {
+export const execute = async (
+  interaction,
+  { logger, apiService, guildId = runtimeConfig.discord.guildId },
+) => {
   const applicant = interaction.options.getUser('user', true);
   const moderator = interaction.user;
 
@@ -28,7 +33,7 @@ export const execute = async (interaction, { logger, apiService }) => {
     guildId: interaction.guildId,
   };
 
-  if (!interaction.guild) {
+  if (!interaction.guild || !guildId || interaction.guildId !== guildId) {
     await interaction.reply({ embeds: [buildErrorEmbed('This command must be used in a server.')], ephemeral: false });
     return;
   }
@@ -53,7 +58,12 @@ export const execute = async (interaction, { logger, apiService }) => {
     });
   } catch (error) {
     const { data, status } = error?.response ?? {};
-    logger.warn('Nexus rejected /deny', { ...logContext, status, error: data ?? error?.message ?? error });
+    logger.warn('Nexus rejected /deny', {
+      ...logContext,
+      status: status ?? null,
+      backendErrorCode: data?.error ?? null,
+      backendMessage: data?.message ?? error?.message ?? null,
+    });
 
     const embed = buildErrorEmbed(data?.message ?? 'Unable to deny this application right now.', data?.error);
     await interaction.editReply({ embeds: [embed] });
@@ -63,69 +73,49 @@ export const execute = async (interaction, { logger, apiService }) => {
   const config = response?.config ?? {};
   const application = response?.application ?? {};
 
-  await handleRoleRemoval(interaction.guild, applicant.id, config, logger);
-  await deleteInterviewChannel(interaction.guild, interaction.channel, application, logger);
+  const roleResult = await handleRoleRemoval(interaction.guild, applicant.id, config, logger);
+  const cleanupResult = await cleanupApplicationInterviewChannel({
+    guild: interaction.guild,
+    guildId,
+    application,
+    logger,
+    reason: 'Nexus AMS application denied',
+  });
+  const cleanupPending = !roleResult.success || !cleanupResult.success;
 
   const successEmbed = new EmbedBuilder()
-    .setTitle('Applicant Denied')
-    .setColor(0xed4245)
-    .setDescription(`${applicant} has been denied.`)
+    .setTitle(cleanupPending ? 'Applicant Denied — Cleanup Pending' : 'Applicant Denied')
+    .setColor(cleanupPending ? 0xfaa61a : 0xed4245)
+    .setDescription(
+      cleanupPending
+        ? `${applicant} has been denied in Nexus, but Discord cleanup is pending. Staff should review the applicant role and interview channel.`
+        : `${applicant} has been denied.`,
+    )
     .setTimestamp();
 
   await interaction.editReply({ embeds: [successEmbed] });
 };
 
 async function handleRoleRemoval(guild, applicantId, config, logger) {
-  if (!config?.applicant_role_id) {
-    return;
+  if (!isDiscordSnowflake(config?.applicant_role_id)) {
+    logger.warn('Applicant role id is missing or invalid during denial');
+    return { success: false, issues: ['invalid_applicant_role'] };
   }
 
   let member;
   try {
     member = await guild.members.fetch(applicantId);
   } catch (error) {
-    logger.warn('Unable to fetch applicant for role removal', error?.message ?? error);
-    return;
+    logger.warn('Unable to fetch applicant for role removal', { errorMessage: error?.message ?? String(error) });
+    return { success: false, issues: ['member_unavailable'] };
   }
 
   try {
     await member.roles.remove(config.applicant_role_id, 'Nexus AMS denial');
+    return { success: true, issues: [] };
   } catch (error) {
-    logger.warn('Failed to remove applicant role during denial', error?.message ?? error);
-  }
-}
-
-async function deleteInterviewChannel(guild, currentChannel, application, logger) {
-  const channelId =
-    application?.discord_channel_id ?? application?.channel_id ?? application?.interview_channel_id ?? null;
-
-  let channel = null;
-
-  if (channelId) {
-    try {
-      channel = await guild.channels.fetch(channelId);
-    } catch (error) {
-      channel = null;
-    }
-  }
-
-  if (!channel && currentChannel && APPLICATION_CHANNEL_REGEX.test(currentChannel.name)) {
-    channel = currentChannel;
-  }
-
-  if (!channel) {
-    const fallback = guild.channels.cache.find(
-      (c) => c.isTextBased?.() && APPLICATION_CHANNEL_REGEX.test(c.name),
-    );
-    channel = fallback ?? null;
-  }
-
-  if (channel) {
-    try {
-      await channel.delete('Nexus AMS application denied');
-    } catch (error) {
-      logger.warn('Failed to delete interview channel after denial', error?.message ?? error);
-    }
+    logger.warn('Failed to remove applicant role during denial', { errorMessage: error?.message ?? String(error) });
+    return { success: false, issues: ['applicant_role_removal_failed'] };
   }
 }
 

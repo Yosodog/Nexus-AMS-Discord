@@ -2,6 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { QueueDispatcher } from '../src/services/QueueDispatcher.js';
 
+const GUILD_ID = '123456789012345678';
+const FORUM_ID = '223456789012345678';
+const THREAD_ID = '323456789012345678';
+const ROLE_ID = '423456789012345678';
+
 function createLogger() {
   const entries = { info: [], warn: [], error: [], debug: [] };
 
@@ -14,12 +19,15 @@ function createLogger() {
   };
 }
 
-function createWarRoomContext({ onThreadSend } = {}) {
+function createWarRoomContext({ onThreadSend, onThreadCreate, onCheckpoint, onAttach } = {}) {
   const logger = createLogger();
   const sentMessages = [];
 
   const thread = {
-    id: 'thread-123',
+    id: THREAD_ID,
+    guildId: GUILD_ID,
+    parentId: FORUM_ID,
+    isThread: () => true,
     send: async (payload) => {
       sentMessages.push(payload);
 
@@ -32,15 +40,20 @@ function createWarRoomContext({ onThreadSend } = {}) {
   };
 
   const forum = {
+    id: FORUM_ID,
+    guildId: GUILD_ID,
     isThreadOnly: () => true,
     threads: {
-      create: async () => thread,
+      create: async (payload) => {
+        if (onThreadCreate) return onThreadCreate(payload, thread);
+        return thread;
+      },
     },
   };
 
   const client = {
     channels: {
-      cache: new Map([['forum-1', forum]]),
+      cache: new Map([[FORUM_ID, forum], [THREAD_ID, thread]]),
       fetch: async () => null,
     },
     guilds: {
@@ -52,20 +65,136 @@ function createWarRoomContext({ onThreadSend } = {}) {
   const dispatcher = new QueueDispatcher({
     client,
     logger,
-    guildId: 'guild-1',
+    guildId: GUILD_ID,
     apiService: {
-      attachWarCounterChannel: async () => undefined,
+      attachWarCounterChannel: async (payload) => onAttach?.(payload),
+      checkpointDiscordQueue: async (...args) => onCheckpoint?.(...args),
     },
   });
 
-  return { dispatcher, logger, sentMessages };
+  return { dispatcher, logger, sentMessages, thread };
 }
 
-test('WAR_ROOM_CREATE with defense_role_id attempts role ping for war_counter and continues on ping failure', async () => {
+test('WAR_ROOM_CREATE checkpoints before attaching and sending follow-up steps', async () => {
+  const events = [];
+  const { dispatcher } = createWarRoomContext({
+    onThreadCreate: (_payload, thread) => {
+      events.push('create');
+      return thread;
+    },
+    onCheckpoint: () => events.push('checkpoint'),
+    onAttach: () => events.push('attach'),
+    onThreadSend: () => events.push('send'),
+  });
+
+  const result = await dispatcher.dispatch({
+    id: '723456789012345678',
+    action: 'WAR_ROOM_CREATE',
+    lease_token: 'lease-token',
+    payload: {
+      forum_channel_id: FORUM_ID,
+      source: { type: 'war_counter', id: 77 },
+      target: { nation_name: 'Target Nation' },
+    },
+  });
+
+  assert.equal(result.success, true);
+  assert.deepEqual(events.slice(0, 3), ['create', 'checkpoint', 'attach']);
+  assert.equal(events.includes('send'), true);
+});
+
+test('WAR_ROOM_CREATE resumes the checkpointed thread and rejects a wrong forum parent', async () => {
+  let creates = 0;
+  const { dispatcher } = createWarRoomContext({ onThreadCreate: () => { creates += 1; } });
+  const base = {
+    id: '723456789012345679',
+    action: 'WAR_ROOM_CREATE',
+    lease_token: 'lease-token',
+    result: { discord_channel_id: THREAD_ID },
+    payload: {
+      forum_channel_id: FORUM_ID,
+      source: { type: 'war_counter', id: 77 },
+      target: { nation_name: 'Target Nation' },
+    },
+  };
+
+  assert.equal((await dispatcher.dispatch(base)).success, true);
+  assert.equal(creates, 0);
+
+  const context = createWarRoomContext();
+  context.thread.parentId = '999999999999999999';
+  assert.deepEqual(await context.dispatcher.dispatch(base), { success: false, reason: 'invalid_checkpoint' });
+});
+
+test('WAR_ROOM_CREATE refuses a malformed persisted checkpoint instead of creating a duplicate', async () => {
+  let creates = 0;
+  const { dispatcher } = createWarRoomContext({ onThreadCreate: () => { creates += 1; } });
+  const result = await dispatcher.dispatch({
+    id: '723456789012345682',
+    action: 'WAR_ROOM_CREATE',
+    lease_token: 'lease-token',
+    result: { discord_channel_id: 323456789012345678 },
+    payload: {
+      forum_channel_id: FORUM_ID,
+      source: { type: 'war_counter', id: 77 },
+      target: { nation_name: 'Target Nation' },
+    },
+  });
+
+  assert.deepEqual(result, { success: false, reason: 'invalid_checkpoint' });
+  assert.equal(creates, 0);
+});
+
+test('WAR_ROOM_CREATE reports reconciliation when its durable checkpoint fails', async () => {
+  const { dispatcher, logger } = createWarRoomContext({
+    onCheckpoint: () => { throw new Error('Nexus unavailable'); },
+  });
+
+  const result = await dispatcher.dispatch({
+    id: '723456789012345680',
+    action: 'WAR_ROOM_CREATE',
+    lease_token: 'lease-token',
+    payload: {
+      forum_channel_id: FORUM_ID,
+      source: { type: 'war_counter', id: 77 },
+      target: { nation_name: 'Target Nation' },
+    },
+  });
+
+  assert.deepEqual(result, { success: false, reason: 'checkpoint_failed' });
+  assert.equal(
+    logger.entries.error.some(([, details]) => details?.reconciliationRequired === true),
+    true,
+  );
+});
+
+test('WAR_ROOM_CREATE fails after checkpoint when Nexus counter attachment fails', async () => {
+  let sends = 0;
+  const { dispatcher } = createWarRoomContext({
+    onAttach: () => { throw new Error('attach rejected'); },
+    onThreadSend: () => { sends += 1; },
+  });
+
+  const result = await dispatcher.dispatch({
+    id: '723456789012345681',
+    action: 'WAR_ROOM_CREATE',
+    lease_token: 'lease-token',
+    payload: {
+      forum_channel_id: FORUM_ID,
+      source: { type: 'war_counter', id: 77 },
+      target: { nation_name: 'Target Nation' },
+    },
+  });
+
+  assert.deepEqual(result, { success: false, reason: 'counter_attach_failed' });
+  assert.equal(sends, 0);
+});
+
+test('WAR_ROOM_CREATE fails for retry when the required defense role ping fails', async () => {
   let pingAttempts = 0;
   const { dispatcher, logger, sentMessages } = createWarRoomContext({
     onThreadSend: (payload) => {
-      if (payload?.content === '<@&987654321>') {
+      if (payload?.content === `<@&${ROLE_ID}>`) {
         pingAttempts += 1;
         throw new Error('Missing Permissions');
       }
@@ -74,42 +203,75 @@ test('WAR_ROOM_CREATE with defense_role_id attempts role ping for war_counter an
   });
 
   const result = await dispatcher.dispatch({
-    id: 'cmd-1',
+    id: '823456789012345678',
     action: 'WAR_ROOM_CREATE',
+    lease_token: 'lease-token',
     created_at: '2026-02-27T00:00:00Z',
     payload: {
-      forum_channel_id: 'forum-1',
+      forum_channel_id: FORUM_ID,
       source: { type: 'war_counter', id: 77 },
       target: { leader_name: 'Target Leader', nation_name: 'Target Nation' },
-      defense_role_id: '987654321',
+      defense_role_id: ROLE_ID,
     },
   });
 
-  assert.equal(result.success, true);
+  assert.equal(result.success, false);
   assert.equal(pingAttempts, 1);
-  assert.equal(sentMessages.some((message) => message?.content === '<@&987654321>'), true);
-  assert.equal(
-    logger.entries.warn.some(([message]) => message === 'Failed to send WAR_ROOM_CREATE defense role ping; continuing'),
-    true,
-  );
+  assert.equal(sentMessages.some((message) => message?.content === `<@&${ROLE_ID}>`), true);
 });
 
 test('WAR_ROOM_CREATE without defense_role_id does not attempt role ping', async () => {
   const { dispatcher, logger, sentMessages } = createWarRoomContext();
 
   const result = await dispatcher.dispatch({
-    id: 'cmd-2',
+    id: '923456789012345678',
     action: 'WAR_ROOM_CREATE',
+    lease_token: 'lease-token',
     created_at: '2026-02-27T00:00:00Z',
     payload: {
-      forum_channel_id: 'forum-1',
+      forum_channel_id: FORUM_ID,
       source: { type: 'war_counter', id: 88 },
-      target: { leader_name: 'Target Leader', nation_name: 'Target Nation' },
+      target: {
+        id: 99,
+        leader_name: 'Target Leader',
+        nation_name: 'Target Nation',
+        score: 1234,
+        cities: 20,
+        offensive_wars: 1,
+        defensive_wars: 2,
+        beige_turns: 0,
+        alliance: { name: 'Target Alliance', acronym: 'TA' },
+        military: { soldiers: 1000, tanks: 200, aircraft: 50, ships: 10, spies: 20, missiles: 1, nukes: 0 },
+      },
+      attacked_member: {
+        discord_id: '523456789012345678',
+        leader_name: 'Defending Leader',
+        nation_name: 'Defending Nation',
+        nation_id: 101,
+        links: { nation: 'https://politicsandwar.com/nation/id=101' },
+      },
+      assigned_members: [{
+        discord_id: '623456789012345678',
+        leader_name: 'Friendly Leader',
+        nation_name: 'Friendly Nation',
+        nation_id: 102,
+        score: 1100,
+        cities: 19,
+        match_score: 95,
+        offensive_wars: 0,
+        defensive_wars: 1,
+        role: 'counter',
+        links: { nation: 'https://politicsandwar.com/nation/id=102' },
+      }],
+      attack_type: { key: 'raid', label: 'Raid' },
+      reason: 'Defensive counter',
+      links: { target_nation: 'https://politicsandwar.com/nation/id=99' },
     },
   });
 
   assert.equal(result.success, true);
   assert.equal(sentMessages.some((message) => /^<@&/.test(message?.content ?? '')), false);
+  assert.equal(sentMessages.every((message) => message.enforceNonce === true && message.nonce.length <= 25), true);
   assert.equal(
     logger.entries.warn.some(([message]) => message === 'Failed to send WAR_ROOM_CREATE defense role ping; continuing'),
     false,
@@ -126,6 +288,7 @@ test('WAR_ALERT retries once when Discord returns retry_after metadata', async (
   let sendAttempts = 0;
 
   const channel = {
+    guildId: GUILD_ID,
     isTextBased: () => true,
     send: async () => {
       sendAttempts += 1;
@@ -143,7 +306,7 @@ test('WAR_ALERT retries once when Discord returns retry_after metadata', async (
   const dispatcher = new QueueDispatcher({
     client: {
       channels: {
-        cache: new Map([['channel-1', channel]]),
+        cache: new Map([['723456789012345678', channel]]),
         fetch: async () => null,
       },
       guilds: {
@@ -152,7 +315,7 @@ test('WAR_ALERT retries once when Discord returns retry_after metadata', async (
       },
     },
     logger,
-    guildId: 'guild-1',
+    guildId: GUILD_ID,
   });
 
   const result = await dispatcher.dispatch({
@@ -160,9 +323,27 @@ test('WAR_ALERT retries once when Discord returns retry_after metadata', async (
     action: 'WAR_ALERT',
     created_at: '2026-02-27T00:00:00Z',
     payload: {
-      channel_id: 'channel-1',
-      attacker: { nation_name: 'Attacker Nation' },
-      defender: { nation_name: 'Defender Nation' },
+      channel_id: '723456789012345678',
+      war_id: 123,
+      war_url: 'https://politicsandwar.com/nation/war/timeline/war=123',
+      counter: { id: 77, url: 'https://nexus.example/counters/77' },
+      attacker: {
+        leader_name: 'Attacker',
+        nation_name: 'Attacker Nation',
+        score: 1000,
+        cities: 20,
+        alliance: { name: 'Attackers', acronym: 'ATK' },
+        links: { nation: 'https://politicsandwar.com/nation/id=1' },
+        military: { soldiers: 1000, tanks: 100, aircraft: 50, ships: 10 },
+      },
+      defender: {
+        leader_name: 'Defender',
+        nation_name: 'Defender Nation',
+        score: 900,
+        cities: 18,
+        alliance: { name: 'Defenders' },
+        military: { soldiers: 900, tanks: 90, aircraft: 45, ships: 9 },
+      },
     },
   });
 

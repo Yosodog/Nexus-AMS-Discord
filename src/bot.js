@@ -31,6 +31,7 @@ const bootstrap = async () => {
       GatewayIntentBits.GuildMessages,
       GatewayIntentBits.MessageContent,
     ],
+    allowedMentions: { parse: [], repliedUser: false },
   });
 
   // Load commands and attach to the client for easy access by listeners.
@@ -43,14 +44,11 @@ const bootstrap = async () => {
     apiKey: config.nexusApi.apiKey,
     logger,
   });
-  const sourceChannelMap = new Map();
-
   const queueDispatcher = new QueueDispatcher({
     client,
     logger: new Logger('QueueDispatcher'),
     guildId: config.discord.guildId,
     apiService,
-    sourceChannelMap,
   });
 
   const queueWorker = new QueueWorker({
@@ -59,10 +57,28 @@ const bootstrap = async () => {
     logger: new Logger('QueueWorker'),
   });
 
-  const commandContext = { apiService, sourceChannelMap };
+  const commandContext = { apiService, guildId: config.discord.guildId };
 
-  registerInteractionListener(client, client.commands, logger, commandContext);
-  registerMessageListener(client, apiService, new Logger('MessageListener'));
+  registerInteractionListener(client, client.commands, logger, commandContext, config.discord.guildId);
+  registerMessageListener(client, apiService, new Logger('MessageListener'), config.discord.guildId);
+
+  let shutdownSignal = null;
+  const shutdown = async (signal) => {
+    if (shutdownSignal) {
+      logger.error('Second shutdown signal received; forcing exit', { firstSignal: shutdownSignal, signal });
+      process.exit(1);
+    }
+
+    shutdownSignal = signal;
+    logger.info('Graceful shutdown started', { signal });
+    const { drained } = await queueWorker.stop({ timeoutMs: 25_000 });
+    client.destroy();
+    logger.info('Graceful shutdown finished', { signal, drained });
+    process.exit(drained ? 0 : 1);
+  };
+
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
+  process.on('SIGINT', () => void shutdown('SIGINT'));
 
   client.once(Events.ClientReady, () => {
     logger.info('Bot Ready');

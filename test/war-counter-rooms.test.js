@@ -2,31 +2,25 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   archiveWarCounterRoom,
-  buildSourceChannelKey,
   resolveWarCounterChannelIdFromCounter,
 } from '../src/utils/warCounterRooms.js';
 import { createLogger } from './helpers.js';
 
-test('buildSourceChannelKey normalizes valid source data and rejects incomplete input', () => {
-  assert.equal(buildSourceChannelKey(' War_Counter ', ' 42 '), 'war_counter:42');
-  assert.equal(buildSourceChannelKey('war_plan', 17), 'war_plan:17');
-  assert.equal(buildSourceChannelKey('', 17), null);
-  assert.equal(buildSourceChannelKey('war_counter', ''), null);
-  assert.equal(buildSourceChannelKey(null, 17), null);
-});
+const GUILD_ID = '123456789012345678';
+const THREAD_ID = '223456789012345678';
 
-test('resolveWarCounterChannelIdFromCounter returns the first populated channel-like id', () => {
+test('resolveWarCounterChannelIdFromCounter accepts only the persisted Discord channel id', () => {
   assert.equal(
     resolveWarCounterChannelIdFromCounter({
-      discord_channel_id: ' ',
-      discord_thread_id: null,
-      channel_id: ' channel-123 ',
-      thread_id: 'thread-456',
+      discord_channel_id: ` ${THREAD_ID} `,
+      channel_id: '323456789012345678',
     }),
-    'channel-123',
+    THREAD_ID,
   );
 
-  assert.equal(resolveWarCounterChannelIdFromCounter({ thread_id: 987 }), '987');
+  assert.equal(resolveWarCounterChannelIdFromCounter({ thread_id: THREAD_ID }), null);
+  assert.equal(resolveWarCounterChannelIdFromCounter({ discord_channel_id: 'not-a-snowflake' }), null);
+  assert.equal(resolveWarCounterChannelIdFromCounter({ discord_channel_id: 123456789012345678 }), null);
   assert.equal(resolveWarCounterChannelIdFromCounter({}), null);
   assert.equal(resolveWarCounterChannelIdFromCounter(null), null);
 });
@@ -35,7 +29,8 @@ test('archiveWarCounterRoom renames, archives, and locks an active thread', asyn
   const logger = createLogger();
   const operations = [];
   const thread = {
-    id: 'thread-1',
+    id: THREAD_ID,
+    guildId: GUILD_ID,
     name: 'counter-room',
     archived: false,
     locked: false,
@@ -55,7 +50,7 @@ test('archiveWarCounterRoom renames, archives, and locks an active thread', asyn
   };
   const client = {
     channels: {
-      cache: new Map([['thread-1', thread]]),
+      cache: new Map([[THREAD_ID, thread]]),
       fetch: async () => assert.fail('cached thread should not be fetched'),
     },
   };
@@ -63,11 +58,12 @@ test('archiveWarCounterRoom renames, archives, and locks an active thread', asyn
   const result = await archiveWarCounterRoom({
     client,
     logger,
-    channelId: 'thread-1',
+    channelId: THREAD_ID,
+    guildId: GUILD_ID,
     reason: 'test archive',
   });
 
-  assert.deepEqual(result, { success: true, channelId: 'thread-1' });
+  assert.deepEqual(result, { success: true, channelId: THREAD_ID });
   assert.deepEqual(operations, [
     ['setName', '[Archived] counter-room', 'test archive'],
     ['setArchived', true, 'test archive'],
@@ -78,7 +74,8 @@ test('archiveWarCounterRoom renames, archives, and locks an active thread', asyn
 test('archiveWarCounterRoom is idempotent for an already archived and locked thread', async () => {
   const logger = createLogger();
   const thread = {
-    id: 'thread-1',
+    id: THREAD_ID,
+    guildId: GUILD_ID,
     name: '[Archived] counter-room',
     archived: true,
     locked: true,
@@ -89,14 +86,19 @@ test('archiveWarCounterRoom is idempotent for an already archived and locked thr
   };
   const client = {
     channels: {
-      cache: new Map([['thread-1', thread]]),
+      cache: new Map([[THREAD_ID, thread]]),
       fetch: async () => null,
     },
   };
 
-  const result = await archiveWarCounterRoom({ client, logger, channelId: 'thread-1' });
+  const result = await archiveWarCounterRoom({
+    client,
+    logger,
+    channelId: THREAD_ID,
+    guildId: GUILD_ID,
+  });
 
-  assert.deepEqual(result, { success: true, channelId: 'thread-1' });
+  assert.deepEqual(result, { success: true, channelId: THREAD_ID });
 });
 
 test('archiveWarCounterRoom reports missing, unavailable, and non-thread targets', async () => {
@@ -111,23 +113,43 @@ test('archiveWarCounterRoom reports missing, unavailable, and non-thread targets
   };
 
   assert.deepEqual(
-    await archiveWarCounterRoom({ client: unavailableClient, logger, channelId: '' }),
+    await archiveWarCounterRoom({ client: unavailableClient, logger, channelId: '', guildId: GUILD_ID }),
     { success: false, reason: 'missing_channel' },
   );
   assert.deepEqual(
-    await archiveWarCounterRoom({ client: unavailableClient, logger, channelId: 'thread-404' }),
+    await archiveWarCounterRoom({ client: unavailableClient, logger, channelId: THREAD_ID, guildId: GUILD_ID }),
     { success: false, reason: 'channel_unavailable' },
   );
 
   const nonThreadClient = {
     channels: {
-      cache: new Map([['text-1', { type: 'GuildText', isThread: () => false }]]),
+      cache: new Map([[THREAD_ID, { guildId: GUILD_ID, type: 'GuildText', isThread: () => false }]]),
       fetch: async () => null,
     },
   };
 
   assert.deepEqual(
-    await archiveWarCounterRoom({ client: nonThreadClient, logger, channelId: 'text-1' }),
+    await archiveWarCounterRoom({ client: nonThreadClient, logger, channelId: THREAD_ID, guildId: GUILD_ID }),
     { success: false, reason: 'not_thread' },
+  );
+});
+
+test('archiveWarCounterRoom rejects a thread from another guild', async () => {
+  const logger = createLogger();
+  const thread = {
+    guildId: '323456789012345678',
+    name: 'counter-room',
+    isThread: () => true,
+  };
+  const client = {
+    channels: {
+      cache: new Map([[THREAD_ID, thread]]),
+      fetch: async () => null,
+    },
+  };
+
+  assert.deepEqual(
+    await archiveWarCounterRoom({ client, logger, channelId: THREAD_ID, guildId: GUILD_ID }),
+    { success: false, reason: 'wrong_guild' },
   );
 });

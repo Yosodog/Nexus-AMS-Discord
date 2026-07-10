@@ -4,6 +4,13 @@ import {
   PermissionFlagsBits,
   SlashCommandBuilder,
 } from 'discord.js';
+import {
+  buildApplicationChannelTopic,
+  resolveApplicationIdentity,
+  validateApplicationInterviewChannel,
+} from '../utils/applicationChannels.js';
+import { isDiscordSnowflake } from '../utils/boundaryValidators.js';
+import { config as runtimeConfig } from '../utils/config.js';
 import { slugify } from '../utils/slugify.js';
 
 /**
@@ -26,13 +33,16 @@ export const data = new SlashCommandBuilder()
  * @param {import('discord.js').ChatInputCommandInteraction} interaction incoming command
  * @param {{ logger: import('../services/Logger.js').Logger, apiService: import('../services/ApiService.js').ApiService }} context shared dependencies
  */
-export const execute = async (interaction, { logger, apiService }) => {
+export const execute = async (
+  interaction,
+  { logger, apiService, guildId = runtimeConfig.discord.guildId },
+) => {
   const nationId = interaction.options.getInteger('nationid', true);
   const user = interaction.user;
 
   const logContext = { command: 'apply', nationId, userId: user.id, guildId: interaction.guildId };
 
-  if (!interaction.guild) {
+  if (!interaction.guild || !guildId || interaction.guildId !== guildId) {
     await interaction.reply({
       embeds: [buildErrorEmbed('This command can only be used inside a server.')],
       ephemeral: false,
@@ -68,7 +78,12 @@ export const execute = async (interaction, { logger, apiService }) => {
     });
   } catch (error) {
     const { data, status } = error?.response ?? {};
-    logger.warn('Nexus rejected /apply', { ...logContext, status, error: data ?? error?.message ?? error });
+    logger.warn('Nexus rejected /apply', {
+      ...logContext,
+      status: status ?? null,
+      backendErrorCode: data?.error ?? null,
+      backendMessage: data?.message ?? error?.message ?? null,
+    });
 
     const description = data?.message ?? 'Unable to submit your application right now.';
     const embed = buildErrorEmbed(description);
@@ -82,7 +97,11 @@ export const execute = async (interaction, { logger, apiService }) => {
   }
 
   if (!response?.application || !response?.config) {
-    logger.warn('Unexpected /apply response shape', { ...logContext, response });
+    logger.warn('Unexpected /apply response shape', {
+      ...logContext,
+      hasApplication: Boolean(response?.application),
+      hasConfig: Boolean(response?.config),
+    });
     await interaction.editReply({
       embeds: [buildErrorEmbed('Received an unexpected response from Nexus. Please contact staff.')],
     });
@@ -93,18 +112,18 @@ export const execute = async (interaction, { logger, apiService }) => {
   const nation = response.nation ?? application?.nation ?? {};
   const config = response.config;
   const guild = interaction.guild;
+  const setupIssues = [];
 
-  try {
-    await assignApplicantRole(guild, user.id, config.applicant_role_id, logger);
-  } catch (error) {
-    // Proceed even if role assignment fails; notify applicant for transparency.
-    logger.warn('Failed to assign applicant role', { ...logContext, error: error?.message ?? error });
+  const roleResult = await assignApplicantRole(guild, user.id, config.applicant_role_id, logger);
+  if (!roleResult.success) {
+    setupIssues.push(roleResult.reason);
   }
 
   let channel = null;
   try {
-    channel = await createInterviewChannel({
+    const channelResult = await resolveOrCreateInterviewChannel({
       guild,
+      guildId,
       applicantId: user.id,
       application,
       nation,
@@ -112,30 +131,63 @@ export const execute = async (interaction, { logger, apiService }) => {
       botId: interaction.client.user.id,
       logger,
     });
+    channel = channelResult.channel;
   } catch (error) {
-    logger.error('Failed to create interview channel', { ...logContext, error: error?.message ?? error });
+    logger.error('Failed to resolve interview channel', {
+      ...logContext,
+      errorMessage: error?.message ?? String(error),
+    });
     await interaction.editReply({
-      embeds: [buildErrorEmbed('Application submitted, but failed to create the interview channel. Please contact staff.')],
+      embeds: [buildPartialEmbed('Your application was submitted in Nexus, but Discord setup is pending. Staff must resolve the interview channel before setup can continue.')],
     });
     return;
   }
 
   // Attach the channel to the application record for transcript correlation.
-  try {
-    await apiService.attachApplicationChannel({
-      application_id: application.id ?? application.application_id ?? application.nexus_id ?? application.id,
-      discord_channel_id: channel.id,
-    });
-  } catch (error) {
-    logger.warn('Failed to attach channel to Nexus application', { ...logContext, error: error?.message ?? error });
+  if (`${application.discord_channel_id ?? ''}` !== channel.id) {
+    try {
+      const identity = resolveApplicationIdentity(application, nation);
+      await apiService.attachApplicationChannel({
+        application_id: identity.applicationId,
+        discord_channel_id: channel.id,
+      });
+      application.discord_channel_id = channel.id;
+    } catch (error) {
+      logger.warn('Failed to attach channel to Nexus application', {
+        ...logContext,
+        errorMessage: error?.message ?? null,
+      });
+      await interaction.editReply({
+        embeds: [
+          buildPartialEmbed(
+            `Your application was submitted in Nexus and the interview channel ${channel} is ready in Discord, but Nexus could not attach it. Do not use the channel until staff complete setup.`,
+          ),
+        ],
+      });
+      return;
+    }
   }
 
-  await sendApplicationIntro(channel, application, nation, user.id, config);
+  try {
+    await sendApplicationIntro(channel, application, nation, user.id, config);
+  } catch (error) {
+    logger.warn('Failed to send application introduction', {
+      ...logContext,
+      errorMessage: error?.message ?? String(error),
+    });
+    setupIssues.push('intro_send_failed');
+  }
+
+  const setupPending = setupIssues.length > 0;
 
   const confirmationEmbed = new EmbedBuilder()
-    .setTitle('Application Submitted')
-    .setColor(0x57f287)
-    .setDescription(`Your application has been submitted. Please continue in ${channel}.`)
+    .setTitle(setupPending ? 'Application Submitted — Setup Pending' : 'Application Submitted')
+    .setColor(setupPending ? 0xfaa61a : 0x57f287)
+    .setDescription(
+      setupPending
+        ? `Your application was submitted in Nexus and your interview channel is ${channel}, but some Discord setup is pending. Staff have been asked to review it.`
+        : `Your application has been submitted. Please continue in ${channel}.`,
+    )
     .addFields({ name: 'Channel', value: `${channel}` })
     .setTimestamp();
 
@@ -146,13 +198,89 @@ export const execute = async (interaction, { logger, apiService }) => {
  * Assign the applicant role to the applicant if the role exists and is reachable.
  */
 async function assignApplicantRole(guild, userId, roleId, logger) {
-  if (!roleId) {
-    logger.warn('Applicant role id missing; skipping role assignment.');
-    return;
+  if (!isDiscordSnowflake(roleId)) {
+    logger.warn('Applicant role id missing or invalid; skipping role assignment.');
+    return { success: false, reason: 'invalid_applicant_role' };
   }
 
-  const member = await guild.members.fetch(userId);
-  await member.roles.add(roleId, 'Nexus application applicant role');
+  try {
+    const member = await guild.members.fetch(userId);
+    if (!member.roles.cache?.has?.(roleId)) {
+      await member.roles.add(roleId, 'Nexus application applicant role');
+    }
+    return { success: true };
+  } catch (error) {
+    logger.warn('Failed to assign applicant role', {
+      errorMessage: error?.message ?? String(error),
+    });
+    return { success: false, reason: 'applicant_role_add_failed' };
+  }
+}
+
+/**
+ * Resolve a persisted/recoverable interview channel before creating anything.
+ * Ambiguous matches fail closed so a retry cannot create or mutate the wrong room.
+ */
+async function resolveOrCreateInterviewChannel(options) {
+  const { guild, guildId, application, nation, logger } = options;
+  const identity = resolveApplicationIdentity(application, nation);
+  if (!identity) {
+    throw new Error('Nexus application response is missing a stable application or nation id.');
+  }
+
+  const attachedChannelId = `${application?.discord_channel_id ?? ''}`.trim();
+  if (attachedChannelId) {
+    if (!isDiscordSnowflake(attachedChannelId)) {
+      throw new Error('Nexus returned an invalid interview channel id.');
+    }
+
+    const channel = await guild.channels.fetch(attachedChannelId);
+    const validation = validateApplicationInterviewChannel({
+      channel,
+      application,
+      nation,
+      guildId,
+    });
+    if (!validation.valid) {
+      throw new Error(`Attached interview channel failed validation: ${validation.reason}`);
+    }
+
+    return { channel, reused: true, source: 'attached' };
+  }
+
+  let channels;
+  try {
+    channels = await guild.channels.fetch();
+  } catch (error) {
+    logger.warn('Unable to list guild channels for application recovery', {
+      errorMessage: error?.message ?? String(error),
+    });
+    throw new Error('Unable to verify whether an interview channel already exists.');
+  }
+
+  const candidates = Array.from(channels?.values?.() ?? []).filter((channel) =>
+    validateApplicationInterviewChannel({
+      channel,
+      application,
+      nation,
+      guildId,
+    }).valid,
+  );
+
+  if (candidates.length > 1) {
+    throw new Error('Multiple matching interview channels require manual resolution.');
+  }
+
+  if (candidates.length === 1) {
+    logger.info('Reusing verified interview channel', {
+      applicationId: identity.applicationId,
+      channelId: candidates[0].id,
+    });
+    return { channel: candidates[0], reused: true, source: 'recovered' };
+  }
+
+  const channel = await createInterviewChannel(options);
+  return { channel, reused: false, source: 'created' };
 }
 
 /**
@@ -168,10 +296,18 @@ async function createInterviewChannel({ guild, applicantId, application, nation,
     application?.nation_leader;
   const slug = slugify(leaderName ?? 'applicant');
 
-  const applicationId = application?.id ?? application?.application_id ?? application?.nexus_id ?? 0;
-  const nationId = nation?.id ?? application?.nation_id ?? application?.nation?.id ?? application?.nation?.nation_id ?? 0;
+  const identity = resolveApplicationIdentity(application, nation);
+  if (!identity) {
+    throw new Error('Cannot create an interview channel without application and nation ids.');
+  }
+  const { applicationId, nationId } = identity;
 
-  const channelName = `app-${applicationId ?? 'new'}-${nationId ?? 'na'}-${slug}`;
+  if (!isDiscordSnowflake(applicantId) || !isDiscordSnowflake(botId)) {
+    throw new Error('Cannot create an interview channel with invalid Discord user ids.');
+  }
+
+  const channelName = `app-${applicationId}-${nationId}-${slug}`;
+  const topic = buildApplicationChannelTopic(applicationId, nationId);
 
   const permissionOverwrites = [
     {
@@ -202,6 +338,10 @@ async function createInterviewChannel({ guild, applicantId, application, nation,
     },
   ];
 
+  if (config?.ia_role_id && !isDiscordSnowflake(config.ia_role_id)) {
+    throw new Error('Nexus returned an invalid IA role id.');
+  }
+
   if (config?.ia_role_id) {
     permissionOverwrites.push({
       id: config.ia_role_id,
@@ -220,10 +360,13 @@ async function createInterviewChannel({ guild, applicantId, application, nation,
 
   return guild.channels.create({
     name: channelName,
+    topic,
     type: ChannelType.GuildText,
     reason: 'Nexus AMS application interview channel',
     permissionOverwrites,
-    parent: config?.interview_category_id ?? undefined,
+    parent: isDiscordSnowflake(config?.interview_category_id)
+      ? config.interview_category_id
+      : undefined,
   });
 }
 
@@ -281,12 +424,38 @@ async function sendApplicationIntro(channel, application, nation, applicantId, c
     embed.setThumbnail(nation.flag);
   }
 
-  await channel.send({ embeds: [embed] });
+  const identity = resolveApplicationIdentity(application, nation);
+  const embedNonce = `nxa${identity.applicationId}intro`.slice(0, 25);
+  const mentionNonce = `nxa${identity.applicationId}ping`.slice(0, 25);
+  const iaRoleId = isDiscordSnowflake(config?.ia_role_id) ? config.ia_role_id : null;
+
   await channel.send({
-    content: `<@${applicantId}> ${config?.ia_role_id ? `<@&${config.ia_role_id}> ` : ''}Please standby, a member of the team will assist you shortly.`,
+    embeds: [embed],
+    nonce: embedNonce,
+    enforceNonce: true,
+    allowedMentions: { parse: [], repliedUser: false },
+  });
+  await channel.send({
+    content: `<@${applicantId}> ${iaRoleId ? `<@&${iaRoleId}> ` : ''}Please standby, a member of the team will assist you shortly.`,
+    nonce: mentionNonce,
+    enforceNonce: true,
+    allowedMentions: {
+      parse: [],
+      users: [applicantId],
+      roles: iaRoleId ? [iaRoleId] : [],
+      repliedUser: false,
+    },
   });
 }
 
 function buildErrorEmbed(message) {
   return new EmbedBuilder().setTitle('Application Error').setColor(0xed4245).setDescription(message).setTimestamp();
+}
+
+function buildPartialEmbed(message) {
+  return new EmbedBuilder()
+    .setTitle('Application Submitted — Setup Pending')
+    .setColor(0xfaa61a)
+    .setDescription(message)
+    .setTimestamp();
 }
