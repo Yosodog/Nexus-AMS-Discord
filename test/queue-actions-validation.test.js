@@ -18,7 +18,10 @@ test('every registered queue action exposes validate and execute boundaries', ()
     'ALLIANCE_DEPARTURE',
     'ALLIANCE_ROLE_REMOVAL',
     'BEIGE_ALERT',
+    'BLOCKADE_RELIEF_NOTIFICATION',
+    'CITY_TIER_SYNC',
     'INACTIVITY_ALERT',
+    'PRIVATE_NOTIFICATION',
     'WAR_ALERT',
     'WAR_ROOM_ARCHIVE',
     'WAR_ROOM_CREATE',
@@ -27,6 +30,52 @@ test('every registered queue action exposes validate and execute boundaries', ()
     assert.equal(typeof action.validate, 'function');
     assert.equal(typeof action.execute, 'function');
   }
+});
+
+test('PRIVATE_NOTIFICATION accepts only versioned structured events and reports DM delivery outcomes', async () => {
+  const action = queueActions.PRIVATE_NOTIFICATION;
+  const payload = {
+    contract_version: 1,
+    recipient_discord_id: USER_ID,
+    event_type: 'loan_approved',
+    notification_id: 'loan-42-approved',
+    subject: { type: 'loan', id: 42, label: 'Loan 42' },
+    occurred_at: '2026-07-10T12:00:00Z',
+    deep_link_path: '/loans',
+    summary: { status: 'approved' },
+  };
+  assert.deepEqual(action.validate(payload), { valid: true });
+  assert.deepEqual(action.validate({ ...payload, message: 'backend-controlled text' }), {
+    valid: false,
+    reason: 'unsafe_notification_payload',
+  });
+  assert.deepEqual(action.validate({ ...payload, event_type: 'arbitrary' }), {
+    valid: false,
+    reason: 'invalid_event_type',
+  });
+
+  let sentPayload;
+  const runtime = {
+    logger: createLogger(),
+    canContinue: () => true,
+    resolveUser: async (id) => ({ id }),
+    sendDirectMessage: async (_user, _command, _step, message) => {
+      sentPayload = message;
+      return { id: 'dm-1' };
+    },
+  };
+  const delivered = await action.execute({ id: 'queue-dm', payload }, runtime);
+  assert.deepEqual(delivered, {
+    success: true,
+    result: { delivery: 'delivered', discord_message_id: 'dm-1' },
+  });
+  assert.deepEqual(sentPayload.allowedMentions, { parse: [], repliedUser: false });
+
+  runtime.resolveUser = async () => null;
+  assert.deepEqual(await action.execute({ id: 'queue-dm-2', payload }, runtime), {
+    success: true,
+    result: { delivery: 'undeliverable', reason: 'user_unavailable' },
+  });
 });
 
 test('channel alert action validators distinguish absent, malformed, and valid targets', () => {
