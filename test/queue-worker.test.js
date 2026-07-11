@@ -45,6 +45,31 @@ test('QueueWorker drains one leased item at a time and sends tokenized outcomes'
   assert.equal(statuses[1][2], 'lease-queue-2');
 });
 
+test('QueueWorker propagates successful queue action results in completion acknowledgement', async () => {
+  const statuses = [];
+  let claimed = false;
+  const worker = new QueueWorker({
+    apiService: {
+      claimDiscordQueue: async () => {
+        if (claimed) return { data: null };
+        claimed = true;
+        return { data: leased('queue-result', 'PRIVATE_NOTIFICATION') };
+      },
+      renewDiscordQueueLease: async () => ({ data: { leased_until: futureLease() } }),
+      updateDiscordQueueStatus: async (...args) => statuses.push(args),
+    },
+    dispatcher: { dispatch: async () => ({ success: true, result: { delivery: 'undeliverable' } }) },
+    logger: createLogger(),
+    pollIntervalMs: 60_000,
+  });
+  worker.start();
+  await waitFor(() => statuses.length === 1);
+  await worker.stop();
+  assert.deepEqual(statuses[0], [
+    'queue-result', 'complete', 'lease-queue-result', { result: { delivery: 'undeliverable' } },
+  ]);
+});
+
 test('QueueWorker rejects malformed claim responses without dispatching', async () => {
   const logger = createLogger();
   const apiService = {

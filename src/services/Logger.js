@@ -1,6 +1,7 @@
 import util from 'util';
 
 const LEVELS = Object.freeze({ DEBUG: 10, INFO: 20, WARN: 30, ERROR: 40 });
+const SENSITIVE_KEY = /token|secret|password|authorization|cookie|credential|api.?key|lease/i;
 
 /**
  * Structured logger with simple secret scrubbing.
@@ -55,20 +56,36 @@ export class Logger {
   }
 
   #sanitize(input) {
+    input = this.#redactKeys(input);
+
+    const serialized =
+      typeof input === 'string' ? input : util.inspect(input, { depth: 3, colors: false });
+
+    // Prevent accidental leakage of secrets by redacting known sensitive values.
+    const withoutCredentials = serialized
+      .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+/gi, 'Bearer [REDACTED]')
+      .replace(/([?&][^=\s]+)=([^&\s]+)/g, '$1=[REDACTED]');
+    return this.secrets.reduce((acc, secret) => acc.replaceAll(secret, '[REDACTED]'), withoutCredentials);
+  }
+
+  #redactKeys(input, seen = new WeakSet()) {
     if (input instanceof Error) {
-      input = {
+      return {
         name: input.name,
         message: input.message,
         code: input.code ?? null,
         status: input.response?.status ?? null,
       };
     }
-
-    const serialized =
-      typeof input === 'string' ? input : util.inspect(input, { depth: 3, colors: false });
-
-    // Prevent accidental leakage of secrets by redacting known sensitive values.
-    return this.secrets.reduce((acc, secret) => acc.replaceAll(secret, '[REDACTED]'), serialized);
+    if (!input || typeof input !== 'object') return input;
+    if (seen.has(input)) return '[Circular]';
+    seen.add(input);
+    if (Array.isArray(input)) return input.map((value) => this.#redactKeys(value, seen));
+    const clone = {};
+    for (const [key, value] of Object.entries(input)) {
+      clone[key] = SENSITIVE_KEY.test(key) ? '[REDACTED]' : this.#redactKeys(value, seen);
+    }
+    return clone;
   }
 
   #collectSecrets() {

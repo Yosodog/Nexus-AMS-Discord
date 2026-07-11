@@ -44,12 +44,12 @@ export const execute = async (
     logger.error('ApiService unavailable for /archivecounter', logContext);
     await interaction.reply({
       embeds: [buildErrorEmbed('Archive service unavailable. Please try again later.')],
-      ephemeral: false,
+      ephemeral: true,
     });
     return;
   }
 
-  await interaction.deferReply({ ephemeral: false });
+  await interaction.deferReply({ ephemeral: true });
 
   let response;
   try {

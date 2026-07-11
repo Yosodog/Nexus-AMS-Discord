@@ -86,9 +86,31 @@ export class QueueActionRuntime {
     }
   }
 
+  async resolveUser(userId) {
+    if (!isDiscordSnowflake(userId)) return null;
+    const cached = this.client.users?.cache?.get?.(userId);
+    if (cached) return cached;
+    try {
+      return (await this.client.users?.fetch?.(userId)) ?? null;
+    } catch (error) {
+      this.logger.warn('User fetch failed or inaccessible', {
+        userId,
+        errorCode: error?.code ?? null,
+      });
+      return null;
+    }
+  }
+
   async send(channel, command, stepKey, payload, label) {
     return this.withDiscordRetry(
       () => channel.send(this.messagePayload(command, stepKey, payload)),
+      label,
+    );
+  }
+
+  async sendDirectMessage(user, command, stepKey, payload, label) {
+    return this.withDiscordRetry(
+      () => user.send(this.messagePayload(command, stepKey, payload)),
       label,
     );
   }

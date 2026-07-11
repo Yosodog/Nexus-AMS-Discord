@@ -193,13 +193,13 @@ export class QueueWorker {
     while (this.#hasAcknowledgementTime()) {
       attempt += 1;
       try {
-        const errorDetails = status === 'failed'
+        const outcomeDetails = status === 'failed'
           ? {
               error_code: dispatchResult?.reason ?? undefined,
               error_message: dispatchResult?.message ?? undefined,
             }
-          : {};
-        await this.apiService.updateDiscordQueueStatus(item.id, status, item.lease_token, errorDetails);
+          : dispatchResult?.result !== undefined ? { result: dispatchResult.result } : {};
+        await this.apiService.updateDiscordQueueStatus(item.id, status, item.lease_token, outcomeDetails);
         return true;
       } catch (error) {
         if (error?.response?.status === 409) {

@@ -4,10 +4,10 @@ Discord integration for Nexus AMS. The bot provides account verification, applic
 
 ## Features
 
-- Guild-scoped slash commands including `/ping`, `/verify`, `/apply`, `/approve`, `/deny`, `/archivecounter`, and `/sweepbank`.
+- Guild-scoped, ephemeral slash commands for accounts, deposits, withdrawals, transactions, requests, grants, loans, war aid, rebuilding, raids, wars, spy assignments, and applications, plus the existing operational commands.
 - Nexus-backed authorization for sensitive commands; Nexus remains the permission authority.
 - Application interview channels with recoverable Nexus metadata and text-only transcript forwarding.
-- Leased queue delivery for alerts, member departures, role removal, and war-room creation/archive.
+- Leased queue delivery for alerts, private workflow DMs, member departures, role removal, and war-room creation/archive.
 - Structured logging, bounded API retries, durable war-room checkpoints, and Discord nonce deduplication.
 - Graceful process shutdown and fail-closed command loading/registration.
 
@@ -47,6 +47,8 @@ Configure:
 Startup rejects malformed URLs and Discord snowflakes. Message events, interactions, queue targets, announcements, and archive actions are constrained to `DISCORD_GUILD_ID`.
 
 ## Running and Commands
+
+The expanded user-facing commands are `/accounts`, `/deposit`, `/withdraw`, `/transactions`, `/requests`, `/grant`, `/loan`, `/waraid`, `/rebuild`, `/raid`, `/war`, `/spy`, and `/applications`. They are registered as normal top-level Discord commands; domain commands use subcommands where appropriate. Nexus resolves the linked actor and remains authoritative for ownership, permissions, balances, eligibility, limits, and all state changes.
 
 Register the validated command set after adding or changing commands:
 
@@ -93,6 +95,17 @@ php artisan discord-queue:recover-legacy 550e8400-e29b-41d4-a716-446655440000 --
 ```
 
 Deploy Nexus queue migrations/APIs before deploying this bot version.
+
+Private workflow notifications use the structured `PRIVATE_NOTIFICATION` queue action and are delivered only by DM. The bot accepts local allowlisted event templates, never arbitrary Nexus message text or URLs, and never falls back to a public channel. Nexus ships the alliance-wide notification master switch disabled; an administrator must enable it after both deployments are healthy. Linked users default to disabled and must opt in by category in Nexus.
+
+Recommended rollout order:
+
+1. Back up Nexus and deploy its code and migrations.
+2. Set matching `DISCORD_BOT_KEY`/`NEXUS_API_KEY` values and the same `DISCORD_GUILD_ID` in both services.
+3. Keep the Nexus private-notification master switch disabled.
+4. Deploy the bot, run `npm run register`, and restart the queue worker.
+5. Smoke-test account reads, a deposit code, a within-limit withdrawal, an above-limit review case, and DM failure handling.
+6. Enable private Discord notifications in Nexus when delivery results are healthy.
 
 ## Shutdown Behavior
 

@@ -34,7 +34,7 @@ export const execute = async (
   };
 
   if (!interaction.guild || !guildId || interaction.guildId !== guildId) {
-    await interaction.reply({ embeds: [buildErrorEmbed('This command must be used in a server.')], ephemeral: false });
+    await interaction.reply({ embeds: [buildErrorEmbed('This command must be used in a server.')], ephemeral: true });
     return;
   }
 
@@ -42,12 +42,12 @@ export const execute = async (
     logger.error('ApiService unavailable for /approve', logContext);
     await interaction.reply({
       embeds: [buildErrorEmbed('Approval service unavailable. Please try again later.')],
-      ephemeral: false,
+      ephemeral: true,
     });
     return;
   }
 
-  await interaction.deferReply({ ephemeral: false });
+  await interaction.deferReply({ ephemeral: true });
 
   let response;
   try {

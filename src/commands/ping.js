@@ -2,11 +2,12 @@ import { SlashCommandBuilder } from 'discord.js';
 
 /**
  * /ping command used solely to confirm the bot wiring is functional.
- * Replies publicly in the channel with a simple latency confirmation.
+ * Replies ephemerally with a simple latency confirmation.
  */
 export const data = new SlashCommandBuilder()
   .setName('ping')
-  .setDescription('Check whether the bot is alive and responding.');
+  .setDescription('Check whether the bot is alive and responding.')
+  .setDMPermission(false);
 
 /**
  * Execute handler for /ping.
@@ -17,7 +18,7 @@ export const execute = async (interaction, { logger }) => {
   try {
     await interaction.reply({
       content: 'Pong! The bot is online and reachable.',
-      ephemeral: false,
+      ephemeral: true,
     });
   } catch (error) {
     logger.error('Failed to respond to /ping command', {
@@ -25,7 +26,7 @@ export const execute = async (interaction, { logger }) => {
     });
     // Best-effort follow-up so the user is not left hanging; ignore errors because Discord may block duplicates.
     if (!interaction.replied) {
-      await interaction.reply({ content: 'Something went wrong handling /ping.', ephemeral: false }).catch(() => {});
+      await interaction.reply({ content: 'Something went wrong handling /ping.', ephemeral: true }).catch(() => {});
     }
   }
 };

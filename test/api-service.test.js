@@ -86,6 +86,67 @@ test('ApiService exposes all Nexus mutation endpoints through the shared transpo
   assert.equal(requests.every(({ headers }) => headers.Authorization === 'Bearer secret-key'), true);
 });
 
+test('ApiService routes the expanded actor command contract with strict headers and envelopes', async () => {
+  const service = createApiService();
+  const requests = [];
+  service.http.request = async (options) => {
+    requests.push(options);
+    return { data: { data: { ok: true }, meta: { contract_version: 1 } } };
+  };
+  const actor = {
+    discordUserId: '123456789012345678',
+    discordGuildId: '223456789012345678',
+    discordInteractionId: '323456789012345678',
+  };
+
+  const calls = [
+    () => service.getMyAccounts(actor, { query: 'main' }),
+    () => service.createDepositRequest(actor, '1', {}),
+    () => service.createWithdrawalDraft(actor, { account_id: 1, resources: {} }),
+    () => service.getWithdrawalIntent(actor, 'token'),
+    () => service.confirmWithdrawal(actor, 'token'),
+    () => service.cancelWithdrawal(actor, 'token'),
+    () => service.getMyTransactions(actor, { account: '1' }),
+    () => service.getMyRequests(actor),
+    () => service.getGrantPrograms(actor),
+    () => service.previewGrantApplication(actor, {}),
+    () => service.confirmGrantApplication(actor, {}),
+    () => service.previewCityGrantRequest(actor, {}),
+    () => service.confirmCityGrantRequest(actor, {}),
+    () => service.getMyGrantRequests(actor),
+    () => service.previewLoanApplication(actor, {}),
+    () => service.confirmLoanApplication(actor, {}),
+    () => service.getMyLoans(actor),
+    () => service.previewLoanPayment(actor, {}),
+    () => service.confirmLoanPayment(actor, {}),
+    () => service.createWarAidDraft(actor, {}),
+    () => service.reviewWarAidDraft(actor, {}),
+    () => service.confirmWarAidRequest(actor, {}),
+    () => service.getMyWarAidRequests(actor),
+    () => service.confirmRebuildRequest(actor, {}),
+    () => service.previewRebuildRequest(actor, {}),
+    () => service.getMyRebuildRequests(actor),
+    () => service.getMyRaidAssignments(actor),
+    () => service.getMyWarAssignments(actor),
+    () => service.getMyActiveWars(actor),
+    () => service.respondToWarAssignment(actor, 'plan', 7, { response: 'acknowledged' }),
+    () => service.getWarCounterRecommendation(actor, 9),
+    () => service.getWarSimulation(actor, '11'),
+    () => service.getMySpyAssignments(actor),
+    () => service.getStaffApplications(actor),
+    () => service.getMyApplications(actor),
+    () => service.getStaffApplicationReview(actor, { application: '12' }),
+    () => service.decideStaffApplication(actor, '12', 'approve'),
+    () => service.getStaffRequests(actor),
+  ];
+
+  for (const call of calls) assert.deepEqual(await call(), { ok: true });
+  assert.equal(requests.length, calls.length);
+  assert.equal(requests.every(({ headers }) => headers['X-Discord-User-ID'] === actor.discordUserId), true);
+  assert.equal(requests.filter(({ method }) => method !== 'get')
+    .every(({ headers }) => headers['X-Discord-Interaction-ID'] === actor.discordInteractionId), true);
+});
+
 test('ApiService does not retry non-retryable API responses', async () => {
   const service = createApiService({ maxRetries: 3 });
   let attempts = 0;

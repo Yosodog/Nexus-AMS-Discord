@@ -45,7 +45,7 @@ export const execute = async (
   if (!interaction.guild || !guildId || interaction.guildId !== guildId) {
     await interaction.reply({
       embeds: [buildErrorEmbed('This command can only be used inside a server.')],
-      ephemeral: false,
+      ephemeral: true,
     });
     return;
   }
@@ -54,7 +54,7 @@ export const execute = async (
     logger.error('ApiService unavailable for /apply', logContext);
     await interaction.reply({
       embeds: [buildErrorEmbed('Application service is unavailable. Please try again later.')],
-      ephemeral: false,
+      ephemeral: true,
     });
     return;
   }
@@ -62,12 +62,12 @@ export const execute = async (
   if (!Number.isInteger(nationId) || nationId <= 0) {
     await interaction.reply({
       embeds: [buildErrorEmbed('Please provide a valid nation ID (positive whole number).')],
-      ephemeral: false,
+      ephemeral: true,
     });
     return;
   }
 
-  await interaction.deferReply({ ephemeral: false });
+  await interaction.deferReply({ ephemeral: true });
 
   let response;
   try {

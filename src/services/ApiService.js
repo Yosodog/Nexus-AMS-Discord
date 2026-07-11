@@ -6,6 +6,16 @@ export const RetryMode = Object.freeze({
   NEVER: 'never',
 });
 
+export class ApiContractError extends Error {
+  constructor(message, { code = 'INVALID_RESPONSE', status = null, details = null } = {}) {
+    super(message);
+    this.name = 'ApiContractError';
+    this.code = code;
+    this.status = status;
+    this.details = details;
+  }
+}
+
 /**
  * REST API client wrapper for Nexus AMS backend.
  * Only scaffolds shared concerns (base configuration, retries, headers) for future expansion.
@@ -97,6 +107,255 @@ export class ApiService {
   }
 
   /**
+   * Call a versioned Discord actor endpoint and unwrap its strict response envelope.
+   * Nexus owns authorization and all financial/business calculations; the bot only
+   * forwards strings selected or entered by the Discord actor.
+   */
+  async requestDiscord(path, {
+    method = 'get',
+    data,
+    params,
+    actor,
+    retryMode = RetryMode.NEVER,
+  } = {}) {
+    const normalizedMethod = `${method}`.toLowerCase();
+    const isWrite = !['get', 'head', 'options'].includes(normalizedMethod);
+    const headers = this.#discordActorHeaders(actor, isWrite);
+    const endpointUrl = new URL(`/api/v1/discord/${`${path}`.replace(/^\/+/, '')}`, this.baseUrl);
+
+    for (const [key, value] of Object.entries(params ?? {})) {
+      if (value !== undefined && value !== null && `${value}` !== '') {
+        endpointUrl.searchParams.set(key, `${value}`);
+      }
+    }
+
+    let envelope;
+    try {
+      envelope = await this.request({
+        method: normalizedMethod,
+        url: endpointUrl.toString(),
+        data,
+        headers,
+      }, retryMode);
+    } catch (error) {
+      const apiError = error?.response?.data?.error;
+      if (apiError && typeof apiError.code === 'string' && apiError.code.trim() !== '') {
+        throw new ApiContractError(
+          typeof apiError.message === 'string' && apiError.message.trim() !== ''
+            ? apiError.message
+            : 'Nexus rejected the request.',
+          {
+            code: apiError.code,
+            status: error?.response?.status ?? null,
+            details: apiError.details ?? null,
+          },
+        );
+      }
+      throw error;
+    }
+
+    return this.#unwrapDiscordEnvelope(envelope);
+  }
+
+  getMyAccounts(actor, params = {}) {
+    return this.requestDiscord('me/accounts', { actor, params, retryMode: RetryMode.SAFE });
+  }
+
+  createDepositRequest(actor, accountToken, payload) {
+    return this.requestDiscord(`me/accounts/${encodeURIComponent(accountToken)}/deposit-requests`, {
+      method: 'post', actor, data: payload,
+    });
+  }
+
+  createWithdrawalDraft(actor, payload) {
+    return this.requestDiscord('me/withdrawals/drafts', { method: 'post', actor, data: payload });
+  }
+
+  getWithdrawalIntent(actor, intentToken) {
+    return this.requestDiscord(`me/withdrawals/${encodeURIComponent(intentToken)}`, {
+      actor, retryMode: RetryMode.SAFE,
+    });
+  }
+
+  confirmWithdrawal(actor, intentToken) {
+    return this.requestDiscord(`me/withdrawals/${encodeURIComponent(intentToken)}/confirm`, {
+      method: 'post', actor, data: {},
+    });
+  }
+
+  cancelWithdrawal(actor, intentToken) {
+    return this.requestDiscord(`me/withdrawals/${encodeURIComponent(intentToken)}/cancel`, {
+      method: 'post', actor, data: {},
+    });
+  }
+
+  getMyTransactions(actor, params = {}) {
+    const account = params.account;
+    if (!account) throw new TypeError('An opaque account token is required.');
+    const { account: _account, ...query } = params;
+    return this.requestDiscord(`me/accounts/${encodeURIComponent(account)}/transactions`, {
+      actor, params: query, retryMode: RetryMode.SAFE,
+    });
+  }
+
+  getMyRequests(actor, params = {}) {
+    return this.requestDiscord('me/requests', { actor, params, retryMode: RetryMode.SAFE });
+  }
+
+  getGrantPrograms(actor, params = {}) {
+    return this.requestDiscord('me/grants', { actor, params, retryMode: RetryMode.SAFE });
+  }
+
+  previewGrantApplication(actor, payload) {
+    return this.requestDiscord('me/grant-applications/preview', { method: 'post', actor, data: payload });
+  }
+
+  confirmGrantApplication(actor, payload) {
+    return this.requestDiscord('me/grant-applications/confirm', { method: 'post', actor, data: payload });
+  }
+
+  previewCityGrantRequest(actor, payload) {
+    return this.requestDiscord('me/city-grant-requests/preview', { method: 'post', actor, data: payload });
+  }
+
+  confirmCityGrantRequest(actor, payload) {
+    return this.requestDiscord('me/city-grant-requests/confirm', { method: 'post', actor, data: payload });
+  }
+
+  getMyGrantRequests(actor, params = {}) {
+    return this.requestDiscord('me/requests', { actor, params: { ...params, type: 'grant' }, retryMode: RetryMode.SAFE });
+  }
+
+  previewLoanApplication(actor, payload) {
+    return this.requestDiscord('me/loan-applications/preview', { method: 'post', actor, data: payload });
+  }
+
+  confirmLoanApplication(actor, payload) {
+    return this.requestDiscord('me/loan-applications/confirm', { method: 'post', actor, data: payload });
+  }
+
+  getMyLoans(actor, params = {}) {
+    return this.requestDiscord('me/loans', { actor, params, retryMode: RetryMode.SAFE });
+  }
+
+  previewLoanPayment(actor, payload) {
+    return this.requestDiscord('me/loan-payments/preview', { method: 'post', actor, data: payload });
+  }
+
+  confirmLoanPayment(actor, payload) {
+    return this.requestDiscord('me/loan-payments/confirm', { method: 'post', actor, data: payload });
+  }
+
+  createWarAidDraft(actor, payload) {
+    return this.requestDiscord('me/war-aid/draft', { method: 'post', actor, data: payload });
+  }
+
+  reviewWarAidDraft(actor, payload) {
+    return this.requestDiscord('me/war-aid/review', { method: 'post', actor, data: payload });
+  }
+
+  confirmWarAidRequest(actor, payload) {
+    return this.requestDiscord('me/war-aid/confirm', { method: 'post', actor, data: payload });
+  }
+
+  getMyWarAidRequests(actor, params = {}) {
+    return this.requestDiscord('me/war-aid', { actor, params, retryMode: RetryMode.SAFE });
+  }
+
+  confirmRebuildRequest(actor, payload) {
+    return this.requestDiscord('me/rebuilding/confirm', { method: 'post', actor, data: payload });
+  }
+
+  previewRebuildRequest(actor, payload) {
+    return this.requestDiscord('me/rebuilding/preview', { actor, params: payload, retryMode: RetryMode.SAFE });
+  }
+
+  getMyRebuildRequests(actor, params = {}) {
+    return this.requestDiscord('me/requests', { actor, params: { ...params, type: 'rebuilding' }, retryMode: RetryMode.SAFE });
+  }
+
+  getMyRaidAssignments(actor, params = {}) {
+    return this.requestDiscord('me/raids', { actor, params, retryMode: RetryMode.SAFE });
+  }
+
+  getMyWarAssignments(actor, params = {}) {
+    return this.requestDiscord('me/war-assignments', { actor, params, retryMode: RetryMode.SAFE });
+  }
+
+  getMyActiveWars(actor, params = {}) {
+    return this.requestDiscord('me/wars', { actor, params, retryMode: RetryMode.SAFE });
+  }
+
+  respondToWarAssignment(actor, type, id, payload) {
+    if (!['plan', 'counter'].includes(type)) throw new TypeError('War assignment type must be plan or counter.');
+    return this.requestDiscord(`me/war-assignments/${type}/${encodeURIComponent(id)}/response`, {
+      method: 'post', actor, data: payload,
+    });
+  }
+
+  getWarCounterRecommendation(actor, nationId) {
+    return this.requestDiscord('me/wars', {
+      actor, params: { view: 'counter', nation_id: nationId }, retryMode: RetryMode.SAFE,
+    });
+  }
+
+  getWarSimulation(actor, warToken) {
+    return this.requestDiscord('me/wars', {
+      actor, params: { view: 'simulate', war: warToken }, retryMode: RetryMode.SAFE,
+    });
+  }
+
+  getMySpyAssignments(actor, params = {}) {
+    return this.requestDiscord('me/spy-assignments', { actor, params, retryMode: RetryMode.SAFE });
+  }
+
+  getMyAuditFindings(actor) {
+    return this.requestDiscord('me/audits', { actor, retryMode: RetryMode.SAFE });
+  }
+
+  acknowledgeAuditFinding(actor, findingId, payload = {}) {
+    return this.requestDiscord(`me/audits/${encodeURIComponent(findingId)}/acknowledge`, {
+      method: 'post', actor, data: payload,
+    });
+  }
+
+  snoozeAuditFinding(actor, findingId, payload) {
+    return this.requestDiscord(`me/audits/${encodeURIComponent(findingId)}/snooze`, {
+      method: 'post', actor, data: payload,
+    });
+  }
+
+  getStaffApplications(actor, params = {}) {
+    return this.requestDiscord('staff/applications', { actor, params, retryMode: RetryMode.SAFE });
+  }
+
+  getMyApplications(actor, params = {}) {
+    return this.requestDiscord('me/applications', { actor, params, retryMode: RetryMode.SAFE });
+  }
+
+  getStaffApplicationReview(actor, params = {}) {
+    if (!params.application) throw new TypeError('An opaque application token is required.');
+    return this.requestDiscord(`staff/applications/${encodeURIComponent(params.application)}`, {
+      actor, retryMode: RetryMode.SAFE,
+    });
+  }
+
+  decideStaffApplication(actor, applicationToken, decision, payload = {}) {
+    if (!['approve', 'deny'].includes(decision)) {
+      throw new TypeError('Application decision must be approve or deny.');
+    }
+    return this.requestDiscord(`staff/applications/${encodeURIComponent(applicationToken)}/${decision}`, {
+      method: 'post',
+      actor,
+      data: payload,
+    });
+  }
+
+  getStaffRequests(actor, params = {}) {
+    return this.requestDiscord('staff/requests', { actor, params, retryMode: RetryMode.SAFE });
+  }
+
+  /**
    * Fetch pending Discord commands from the Nexus queue API.
    * @param {number} [limit=20] maximum number of items to fetch per poll
    * @returns {Promise<{ data: any[] }>} response payload from Nexus
@@ -150,18 +409,21 @@ export class ApiService {
    * @param {'complete' | 'failed'} status processing status to report
    * @returns {Promise<any>} response payload
    */
-  async updateDiscordQueueStatus(id, status, leaseToken = null, errorDetails = {}) {
+  async updateDiscordQueueStatus(id, status, leaseToken = null, outcomeDetails = {}) {
     const endpointUrl = new URL(`/api/v1/discord/queue/${id}/status`, this.baseUrl);
 
     const data = { status };
     if (leaseToken) {
       data.lease_token = leaseToken;
     }
-    if (status === 'failed' && errorDetails?.error_code) {
-      data.error_code = errorDetails.error_code;
+    if (status === 'complete' && outcomeDetails?.result !== undefined) {
+      data.result = outcomeDetails.result;
     }
-    if (status === 'failed' && errorDetails?.error_message) {
-      data.error_message = errorDetails.error_message;
+    if (status === 'failed' && outcomeDetails?.error_code) {
+      data.error_code = outcomeDetails.error_code;
+    }
+    if (status === 'failed' && outcomeDetails?.error_message) {
+      data.error_message = outcomeDetails.error_message;
     }
 
     return this.request({
@@ -445,6 +707,50 @@ export class ApiService {
 
   async #delay(durationMs) {
     await this.sleep(durationMs);
+  }
+
+  #discordActorHeaders(actor, requireInteractionId) {
+    const discordUserId = `${actor?.discordUserId ?? actor?.userId ?? ''}`.trim();
+    const discordGuildId = `${actor?.discordGuildId ?? actor?.guildId ?? ''}`.trim();
+    const discordInteractionId = `${actor?.discordInteractionId ?? actor?.interactionId ?? ''}`.trim();
+
+    if (!/^\d{17,20}$/.test(discordUserId) || !/^\d{17,20}$/.test(discordGuildId)) {
+      throw new TypeError('Discord actor context requires valid user and guild snowflakes.');
+    }
+    if (requireInteractionId && !/^\d{17,20}$/.test(discordInteractionId)) {
+      throw new TypeError('Discord write requests require a valid interaction snowflake.');
+    }
+
+    return {
+      'X-Discord-User-ID': discordUserId,
+      'X-Discord-Guild-ID': discordGuildId,
+      ...(discordInteractionId ? { 'X-Discord-Interaction-ID': discordInteractionId } : {}),
+    };
+  }
+
+  #unwrapDiscordEnvelope(envelope) {
+    if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) {
+      throw new ApiContractError('Nexus returned a malformed Discord response.');
+    }
+
+    if (envelope.error !== undefined) {
+      const error = envelope.error;
+      if (!error || typeof error !== 'object' || typeof error.code !== 'string' || error.code.trim() === '') {
+        throw new ApiContractError('Nexus returned a malformed Discord error response.');
+      }
+      throw new ApiContractError(
+        typeof error.message === 'string' && error.message.trim() !== ''
+          ? error.message
+          : 'Nexus rejected the request.',
+        { code: error.code, details: error.details ?? null },
+      );
+    }
+
+    if (!Object.hasOwn(envelope, 'data') || envelope?.meta?.contract_version !== 1) {
+      throw new ApiContractError('Nexus returned an unsupported Discord response contract.');
+    }
+
+    return envelope.data;
   }
 
   #isRetryableError(error) {
