@@ -1,5 +1,10 @@
-import { EmbedBuilder } from 'discord.js';
 import { isDiscordSnowflake } from '../../utils/boundaryValidators.js';
+import {
+  buildEmbed,
+  escapeMarkdown,
+  markdownLink,
+  safeUrl,
+} from '../../utils/discordUi.js';
 
 export const validate = (payload) => {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
@@ -83,14 +88,10 @@ function buildAllianceDepartureEmbed(command) {
   const createdAt = parseDate(command?.created_at) ?? new Date();
   const timestamp = leftAt ?? createdAt;
 
-  const embed = new EmbedBuilder().setTitle('🏳️ Alliance Departure').setColor(0xf59f00);
-
-  if (nation.links?.nation) {
-    embed.setURL(nation.links.nation);
-  }
+  const nationLink = safeUrl(nation.links?.nation);
 
   const descriptionLines = [
-    `${nation.leader_name ?? 'A nation'} (${nation.nation_name ?? 'Unknown nation'}) has left ${
+    `**${escapeMarkdown(nation.leader_name ?? 'Unknown leader')}** (${markdownLink(nation.nation_name ?? 'Unknown nation', nationLink)}) has left ${
       formatAlliance(payload.previous_alliance) ?? 'an alliance'
     }.`,
   ];
@@ -101,13 +102,16 @@ function buildAllianceDepartureEmbed(command) {
     descriptionLines.push('They are currently unaffiliated.');
   }
 
-  if (nation.links?.nation) {
-    descriptionLines.push(`🔗 [Nation Profile](${nation.links.nation})`);
+  if (nationLink) {
+    descriptionLines.push(markdownLink('Open nation profile', nationLink));
   }
 
-  embed
-    .setDescription(descriptionLines.join('\n'))
-    .addFields(
+  const embed = buildEmbed({
+    title: '🏳️ Alliance Departure',
+    color: 0xf59f00,
+    description: descriptionLines.join('\n'),
+    url: nationLink,
+    fields: [
       {
         name: 'Previous Alliance',
         value: formatAlliance(payload.previous_alliance) ?? 'Unknown',
@@ -124,8 +128,8 @@ function buildAllianceDepartureEmbed(command) {
           ? `${formatDiscordTime(leftAt, 'f')} (${formatDiscordTime(leftAt, 'R')})`
           : formatDiscordTime(createdAt, 'R'),
       },
-    )
-    .setTimestamp(timestamp);
+    ],
+  }).setTimestamp(timestamp);
 
   return embed;
 }
@@ -135,12 +139,7 @@ function formatAlliance(alliance) {
     return null;
   }
 
-  const name = alliance.name ?? 'Unknown alliance';
-  if (alliance.link) {
-    return `[${name}](${alliance.link})`;
-  }
-
-  return name;
+  return markdownLink(alliance.name ?? 'Unknown alliance', alliance.link);
 }
 
 function formatDiscordTime(date, style = 'R') {

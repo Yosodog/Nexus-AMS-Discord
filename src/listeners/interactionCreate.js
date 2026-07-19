@@ -1,6 +1,8 @@
 import { Events } from 'discord.js';
 import { InteractionSessionStore } from '../services/InteractionSessionStore.js';
+import { COLLECTION_PAGE_EVENT, collectionPageMessage } from '../utils/commandSupport.js';
 import { config } from '../utils/config.js';
+import { statusMessage } from '../utils/discordUi.js';
 
 /**
  * Register the interactionCreate listener responsible for dispatching slash commands.
@@ -48,9 +50,41 @@ export const registerInteractionListener = (
       commandName = session?.commandName;
       handler = isButton ? 'button' : isSelect ? 'select' : 'modal';
       if (!session) {
-        await interaction.reply({ content: 'This control expired or belongs to another user. Run the command again.', ephemeral: true }).catch(() => {});
+        await interaction.reply({
+          ...statusMessage({
+            title: 'Control Expired',
+            tone: 'warning',
+            description: 'This control expired or belongs to another user. Run the command again to get fresh controls.',
+          }),
+          ephemeral: true,
+        }).catch(() => {});
         return;
       }
+    }
+
+    if (isButton && session?.event === COLLECTION_PAGE_EVENT) {
+      try {
+        await interaction.deferUpdate();
+        await interaction.editReply(collectionPageMessage({
+          state: session.state,
+          sessions,
+          userId: interaction.user.id,
+        }));
+      } catch (error) {
+        logger.error('Failed to render a collection page', {
+          command: commandName ?? null,
+          guildId: interaction.guildId,
+          errorMessage: error?.message ?? String(error),
+        });
+        const payload = statusMessage({
+          title: 'Page Unavailable',
+          tone: 'danger',
+          description: 'That page could not be displayed. Run the command again to refresh the results.',
+        });
+        if (interaction.deferred || interaction.replied) await interaction.editReply(payload).catch(() => {});
+        else await interaction.reply({ ...payload, ephemeral: true }).catch(() => {});
+      }
+      return;
     }
 
     const command = commands.get(commandName);
@@ -58,7 +92,14 @@ export const registerInteractionListener = (
     if (!command || typeof command[handler] !== 'function') {
       logger.warn('Received unsupported interaction', { command: commandName ?? null, handler });
       if (isAutocomplete) await interaction.respond([]).catch(() => {});
-      else await interaction.reply({ content: 'This interaction is no longer available.', ephemeral: true }).catch(() => {});
+      else await interaction.reply({
+        ...statusMessage({
+          title: 'Interaction Unavailable',
+          tone: 'warning',
+          description: 'This interaction is no longer available. Run the command again.',
+        }),
+        ephemeral: true,
+      }).catch(() => {});
       return;
     }
 
@@ -83,15 +124,25 @@ export const registerInteractionListener = (
         return;
       }
       if (interaction.replied || interaction.deferred) {
-        const responder = interaction.isMessageComponent?.() || isModal ? 'editReply' : 'followUp';
+        const responder = interaction.deferred && !interaction.replied ? 'editReply' : 'followUp';
         await interaction[responder]({
-          content: 'Something went wrong while executing that command.',
+          ...statusMessage({
+            title: 'Command Failed',
+            tone: 'danger',
+            description: 'Something went wrong while executing that command. Try again in a moment.',
+          }),
           ephemeral: true,
-          components: [],
         }).catch(() => {});
       } else {
         await interaction
-          .reply({ content: 'Something went wrong while executing that command.', ephemeral: true })
+          .reply({
+            ...statusMessage({
+              title: 'Command Failed',
+              tone: 'danger',
+              description: 'Something went wrong while executing that command. Try again in a moment.',
+            }),
+            ephemeral: true,
+          })
           .catch(() => {});
       }
     }

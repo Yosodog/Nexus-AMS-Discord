@@ -1,9 +1,18 @@
-import { EmbedBuilder, SlashCommandBuilder } from 'discord.js';
+import { SlashCommandBuilder } from 'discord.js';
 import {
   archiveWarCounterRoom,
   resolveWarCounterChannelIdFromCounter,
 } from '../utils/warCounterRooms.js';
 import { config as runtimeConfig } from '../utils/config.js';
+import {
+  buildEmbed,
+  escapeMarkdown,
+  formatDiscordTime,
+  markdownLink,
+  resolveDeepLink,
+  statusMessage,
+  truncate,
+} from '../utils/discordUi.js';
 
 export const data = new SlashCommandBuilder()
   .setName('archivecounter')
@@ -115,36 +124,51 @@ export const execute = async (
 
   const alreadyArchived = Boolean(response?.already_archived);
   const discordArchived = archiveResult.success;
-
-  const embed = new EmbedBuilder()
-    .setTitle('War Counter Archived')
-    .setColor(discordArchived ? 0x57f287 : 0xfaa61a)
-    .setDescription(
-      [
-        `Counter **#${warCounterId}** archived in Nexus.`,
-        alreadyArchived ? 'Nexus indicated this counter was already archived.' : null,
-        discordArchived
-          ? `Discord thread archived and locked (<#${channelId}>).`
-          : 'Nexus archived the counter, but Discord thread archive could not be completed automatically.',
-      ]
-        .filter(Boolean)
-        .join('\n'),
-    )
-    .setTimestamp();
-
-  await interaction.editReply({ embeds: [embed] });
+  const counter = response?.counter ?? {};
+  const counterPath = counter.deep_link_path ?? `/admin/war-counters/${encodeURIComponent(warCounterId)}`;
+  await interaction.editReply(statusMessage({
+    title: 'War Counter Archived',
+    tone: discordArchived ? 'success' : 'warning',
+    description: [
+      `Counter **#${warCounterId}** archived in Nexus.`,
+      alreadyArchived ? 'Nexus indicated this counter was already archived.' : null,
+      discordArchived
+        ? `Discord thread archived and locked (<#${channelId}>).`
+        : 'Nexus archived the counter, but Discord thread archive could not be completed automatically.',
+    ].filter(Boolean).join('\n'),
+    fields: [
+      {
+        name: 'War Counter',
+        value: markdownLink(
+          `Counter #${warCounterId}`,
+          resolveDeepLink(apiService.baseUrl, counterPath),
+        ),
+        inline: true,
+      },
+      channelId ? {
+        name: 'Discord Thread',
+        value: discordArchived ? `<#${channelId}> · Archived and locked` : `<#${channelId}> · Follow-up required`,
+        inline: true,
+      } : { name: 'Discord Thread', value: 'No channel is attached in Nexus.', inline: true },
+      counter.archived_at || counter.updated_at ? {
+        name: 'Archived',
+        value: formatDiscordTime(counter.archived_at ?? counter.updated_at),
+        inline: true,
+      } : null,
+    ],
+    footer: discordArchived
+      ? 'Nexus and Discord archive steps completed.'
+      : 'The Nexus archive is complete; staff should finish the Discord follow-up.',
+    timestamp: true,
+  }));
 };
 
-function buildErrorEmbed(message, errorCode) {
-  const embed = new EmbedBuilder()
-    .setTitle('Archive Failed')
-    .setColor(0xed4245)
-    .setDescription(message)
-    .setTimestamp();
-
-  if (errorCode) {
-    embed.addFields({ name: 'Error', value: `\`${errorCode}\`` });
-  }
-
-  return embed;
+function buildErrorEmbed(message, errorCode = null) {
+  return buildEmbed({
+    title: 'Archive Failed',
+    tone: 'danger',
+    description: truncate(message, 4_096),
+    fields: errorCode ? [{ name: 'Error Code', value: escapeMarkdown(truncate(errorCode, 100)) }] : [],
+    timestamp: true,
+  });
 }

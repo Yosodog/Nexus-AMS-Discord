@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { Events } from 'discord.js';
 import { registerMessageListener } from '../src/listeners/messageCreate.js';
 import { config } from '../src/utils/config.js';
-import { createEventClient, createLogger } from './helpers.js';
+import { createEventClient, createLogger, embedJson } from './helpers.js';
 
 test('registerMessageListener skips registration when ApiService is missing', () => {
   const client = createEventClient();
@@ -174,11 +174,54 @@ test('message listener forwards intel reports and replies with the Nexus intel U
     });
 
     assert.deepEqual(intelPayload, { report: content, source: 'discord' });
-    assert.deepEqual(replyPayload, {
-      content: 'Intel report saved. View it at https://nexus.example/defense/intel',
-      allowedMentions: { parse: [], repliedUser: false },
-    });
+    assert.equal(embedJson(replyPayload).title, 'Intel Report Saved');
+    assert.match(embedJson(replyPayload).description, /https:\/\/nexus\.example\/defense\/intel/);
+    assert.deepEqual(replyPayload.allowedMentions, { parse: [], repliedUser: false });
   } finally {
     config.nexusApi.baseUrl = originalBaseUrl;
   }
+});
+
+test('message listener ignores bot-authored application messages', async () => {
+  const client = createEventClient();
+  const logger = createLogger();
+  const apiService = {
+    logApplicationMessage: async () => assert.fail('bot message should not be logged'),
+    sendIntelReport: async () => assert.fail('bot message should not be sent as intel'),
+  };
+
+  registerMessageListener(client, apiService, logger, 'guild-1');
+  await client.handlers.get(Events.MessageCreate)({
+    guild: { id: 'guild-1' },
+    channel: { name: 'app-123-456-target' },
+    channelId: 'channel-1',
+    id: 'message-1',
+    author: { id: 'bot-1', username: 'Nexus', bot: true },
+    content: 'Automated application update',
+    createdTimestamp: Date.now(),
+  });
+});
+
+test('message listener tells the user when an intel report cannot be saved', async () => {
+  const client = createEventClient();
+  const logger = createLogger();
+  let replyPayload = null;
+  registerMessageListener(client, {
+    logApplicationMessage: async () => {},
+    sendIntelReport: async () => { throw new Error('offline'); },
+  }, logger, 'guild-1');
+
+  await client.handlers.get(Events.MessageCreate)({
+    guild: { id: 'guild-1' },
+    channel: { name: 'general' },
+    channelId: 'channel-1',
+    id: 'message-1',
+    author: { id: 'user-1', username: 'User' },
+    content: 'ABC successfully gathered intelligence about Test Nation. The operation cost you $1,234.00 and 0 of your spies were captured and executed.',
+    createdTimestamp: Date.now(),
+    reply: async (payload) => { replyPayload = payload; },
+  });
+
+  assert.equal(embedJson(replyPayload).title, 'Intel Report Not Saved');
+  assert.equal(logger.entries.warn[0][0], 'Failed to submit intel report to Nexus');
 });

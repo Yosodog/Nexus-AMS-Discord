@@ -1,5 +1,11 @@
-import { EmbedBuilder } from 'discord.js';
 import { isDiscordSnowflake } from '../../utils/boundaryValidators.js';
+import {
+  buildEmbed,
+  formatDiscordTime,
+  markdownLink,
+  nationUrl,
+  resolveDeepLink,
+} from '../../utils/discordUi.js';
 
 const EVENTS = Object.freeze({
   created: { title: 'Blockade Relief Requested', color: 0xfee75c, detail: 'A new alliance blockade relief request is available.' },
@@ -40,13 +46,26 @@ export const validate = (payload) => {
 export const execute = async (command, runtime) => {
   const payload = command.payload;
   const template = EVENTS[payload.event_type];
-  const deadline = Math.floor(new Date(payload.deadline_at).getTime() / 1000);
   const requester = payload.requester.name ?? `Nation #${payload.requester.id}`;
   const blockader = payload.blockader.name ?? `Nation #${payload.blockader.id}`;
-  const embed = new EmbedBuilder()
-    .setTitle(template.title)
-    .setColor(template.color)
-    .setDescription(`${template.detail}\n**Requester:** ${requester}\n**Blockader:** ${blockader}\n**War:** #${payload.war_id}\n**Deadline:** <t:${deadline}:R>\nOpen Nexus: \`${payload.deep_link_path}\``);
+  const deepLink = resolveDeepLink(runtime.apiService?.baseUrl, payload.deep_link_path);
+  const embed = buildEmbed({
+    title: template.title,
+    color: template.color,
+    description: `${template.detail}${deepLink ? `\n${markdownLink('Open in Nexus', deepLink)}` : ''}`,
+    fields: [
+      {
+        name: 'Nations',
+        value: `**Requester:** ${markdownLink(requester, nationUrl({ id: payload.requester.id }))}\n**Blockader:** ${markdownLink(blockader, nationUrl({ id: payload.blockader.id }))}`,
+      },
+      {
+        name: 'War and deadline',
+        value: `${markdownLink(`War #${payload.war_id}`, `https://politicsandwar.com/nation/war/timeline/war=${payload.war_id}`)}\n${formatDiscordTime(payload.deadline_at)} (${formatDiscordTime(payload.deadline_at, 'f')})`,
+      },
+    ],
+    footer: deepLink ? null : `Nexus path: ${payload.deep_link_path}`,
+    url: deepLink,
+  });
   let delivered = 0;
   let undeliverable = 0;
 

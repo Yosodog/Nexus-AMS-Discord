@@ -1,5 +1,11 @@
-import { EmbedBuilder } from 'discord.js';
 import { isDiscordSnowflake } from '../../utils/boundaryValidators.js';
+import {
+  buildEmbed,
+  escapeMarkdown,
+  markdownLink,
+  resolveDeepLink,
+  statusLabel,
+} from '../../utils/discordUi.js';
 
 const EVENT_TEMPLATES = Object.freeze([
   { prefix: 'grant_', title: 'Grant Update', label: 'grant request' },
@@ -52,18 +58,21 @@ export const execute = async (command, runtime) => {
     return { success: true, result: { delivery: 'undeliverable', reason: 'user_unavailable' } };
   }
   const template = templateFor(payload.event_type);
-  const status = typeof payload.summary.status === 'string'
-    ? payload.summary.status.replaceAll('_', ' ').toLowerCase()
-    : 'updated';
+  const status = typeof payload.summary.status === 'string' ? payload.summary.status : 'updated';
   const label = typeof payload.subject?.label === 'string' && payload.subject.label.length <= 80
-    ? ` (${payload.subject.label})` : '';
+    ? payload.subject.label : template.label;
   const showsEvent = payload.event_type.startsWith('watchlist_')
     || payload.event_type.startsWith('blockade_relief_');
-  const event = showsEvent && typeof payload.summary.event === 'string'
-    ? `\n${payload.summary.event}` : '';
-  const description = `Your ${template.label}${label} was ${status}.${event}\nOpen Nexus: \`${payload.deep_link_path}\``;
+  const event = showsEvent && typeof payload.summary.event === 'string' ? payload.summary.event : null;
+  const deepLink = resolveDeepLink(runtime.apiService?.baseUrl, payload.deep_link_path);
+  const description = [
+    `**${escapeMarkdown(label)}**`,
+    statusLabel(status) ?? '• Updated',
+    event ? escapeMarkdown(event) : null,
+    deepLink ? markdownLink('Open in Nexus', deepLink) : `Nexus path: \`${payload.deep_link_path}\``,
+  ].filter(Boolean).join('\n');
   const message = {
-    embeds: [new EmbedBuilder().setTitle(template.title).setDescription(description).setColor(0x5865f2)],
+    embeds: [buildEmbed({ title: template.title, description, tone: 'info' })],
     allowedMentions: { parse: [], repliedUser: false },
   };
   try {

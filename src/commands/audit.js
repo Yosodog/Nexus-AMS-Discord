@@ -2,6 +2,7 @@ import { SlashCommandBuilder } from 'discord.js';
 import {
   actorFromInteraction, collectionMessage, deferEphemeral, normalizeCollection, replyError,
 } from '../utils/commandSupport.js';
+import { escapeMarkdown, statusMessage, truncate } from '../utils/discordUi.js';
 
 export const data = new SlashCommandBuilder()
   .setName('audit')
@@ -32,7 +33,12 @@ export const execute = async (interaction, context) => {
         interaction.options.getInteger('finding', true),
         { note: interaction.options.getString('note') ?? undefined },
       );
-      await interaction.editReply({ content: result?.message ?? 'Audit finding acknowledged.' });
+      await interaction.editReply(statusMessage({
+        title: 'Audit Finding Acknowledged',
+        tone: 'success',
+        description: escapeMarkdown(truncate(result?.message ?? 'Audit finding acknowledged.', 1000)),
+        footer: 'Acknowledgement saved in Nexus.',
+      }));
       return;
     }
 
@@ -42,7 +48,12 @@ export const execute = async (interaction, context) => {
         interaction.options.getInteger('finding', true),
         { hours: interaction.options.getInteger('hours', true) },
       );
-      await interaction.editReply({ content: result?.message ?? 'Audit reminders snoozed.' });
+      await interaction.editReply(statusMessage({
+        title: 'Audit Reminders Snoozed',
+        tone: 'success',
+        description: escapeMarkdown(truncate(result?.message ?? 'Audit reminders snoozed.', 1000)),
+        footer: 'The finding remains active until it is resolved.',
+      }));
       return;
     }
 
@@ -53,6 +64,11 @@ export const execute = async (interaction, context) => {
       empty: 'No active audit findings.',
       commandName: 'audit',
       userId: interaction.user.id,
+      sessions: context.sessions,
+      variant: 'audit',
+      description: 'Active findings, deadlines, and reminder status for your linked nation.',
+      baseUrl: context.apiService.baseUrl,
+      pageSize: 3,
     }));
   } catch (error) {
     await replyError(interaction, error);

@@ -1,4 +1,10 @@
-import { EmbedBuilder, SlashCommandBuilder } from 'discord.js';
+import { SlashCommandBuilder } from 'discord.js';
+import {
+  buildEmbed,
+  safeUrl,
+  statusMessage,
+  truncate,
+} from '../utils/discordUi.js';
 
 /**
  * /verify command used to link a Discord user to their Nexus AMS account.
@@ -11,6 +17,8 @@ export const data = new SlashCommandBuilder()
     option
       .setName('code')
       .setDescription('Verification code provided by Nexus AMS.')
+      .setMinLength(4)
+      .setMaxLength(128)
       .setRequired(true),
   )
   .setDMPermission(false);
@@ -36,7 +44,11 @@ export const execute = async (interaction, { logger, apiService }) => {
     if (!apiService) {
       logger.error('ApiService is not available to /verify command', logContext);
       await interaction.reply({
-        content: 'Verification service is unavailable. Please try again later.',
+        ...statusMessage({
+          title: 'Verification Unavailable',
+          tone: 'danger',
+          description: 'Verification service is unavailable. Please try again later.',
+        }),
         ephemeral: true,
       });
       return;
@@ -123,18 +135,20 @@ export const execute = async (interaction, { logger, apiService }) => {
         apiResult.data?.detail ??
         'Your Discord account is now linked to Nexus AMS.';
 
-      const successEmbed = new EmbedBuilder()
-        .setTitle('Verification Successful')
-        .setColor(0x57f287)
-        .setDescription(confirmationDetail)
-        .addFields(
+      const successMessage = statusMessage({
+        title: 'Verification Successful',
+        tone: 'success',
+        description: truncate(confirmationDetail, 4_096),
+        fields: [
           { name: 'Nexus Account', value: `\`${nexusUsername}\``, inline: true },
           { name: 'Discord', value: discordIdentity.tag, inline: true },
-        )
-        .setThumbnail(discordIdentity.avatarUrl)
-        .setTimestamp();
+        ],
+        timestamp: true,
+      });
+      const avatarUrl = safeUrl(discordIdentity.avatarUrl);
+      if (avatarUrl) successMessage.embeds[0].setThumbnail(avatarUrl);
 
-      await interaction.editReply({ embeds: [successEmbed] });
+      await interaction.editReply(successMessage);
       return;
     }
 
@@ -142,30 +156,32 @@ export const execute = async (interaction, { logger, apiService }) => {
       apiResult?.message ??
       'Verification failed. Please confirm your code and try again or request a new one.';
 
-    const errorEmbed = new EmbedBuilder()
-      .setTitle('Verification Failed')
-      .setColor(0xed4245)
-      .setDescription(errorMessage)
-      .addFields({ name: 'Need help?', value: 'If the issue persists, request a new code or contact an administrator.' })
-      .setTimestamp();
-
-    await interaction.editReply({ embeds: [errorEmbed] });
+    await interaction.editReply(statusMessage({
+      title: 'Verification Failed',
+      tone: 'danger',
+      description: truncate(errorMessage, 4_096),
+      fields: [{ name: 'Need help?', value: 'Request a new code or contact an administrator if this keeps happening.' }],
+      timestamp: true,
+    }));
   } catch (error) {
     logger.error('Unhandled error while executing /verify', {
       ...logContext,
       errorMessage: error?.message ?? String(error),
     });
 
-    const fallbackEmbed = new EmbedBuilder()
-      .setTitle('Verification Error')
-      .setColor(0xed4245)
-      .setDescription('Something went wrong while processing your verification. Please try again shortly.')
-      .setTimestamp();
+    const fallbackMessage = statusMessage({
+      title: 'Verification Error',
+      tone: 'danger',
+      description: 'Something went wrong while processing your verification. Please try again shortly.',
+      timestamp: true,
+    });
 
-    if (interaction.deferred || interaction.replied) {
-      await interaction.followUp({ embeds: [fallbackEmbed], ephemeral: true }).catch(() => {});
+    if (interaction.deferred) {
+      await interaction.editReply(fallbackMessage).catch(() => {});
+    } else if (interaction.replied) {
+      await interaction.followUp({ ...fallbackMessage, ephemeral: true }).catch(() => {});
     } else {
-      await interaction.reply({ embeds: [fallbackEmbed], ephemeral: true }).catch(() => {});
+      await interaction.reply({ ...fallbackMessage, ephemeral: true }).catch(() => {});
     }
   }
 };
@@ -176,9 +192,10 @@ export const execute = async (interaction, { logger, apiService }) => {
  * @returns {import('discord.js').EmbedBuilder}
  */
 function buildErrorEmbed(message) {
-  return new EmbedBuilder()
-    .setTitle('Verification Issue')
-    .setColor(0xed4245)
-    .setDescription(message)
-    .setTimestamp();
+  return buildEmbed({
+    title: 'Verification Issue',
+    tone: 'danger',
+    description: truncate(message, 4_096),
+    timestamp: true,
+  });
 }

@@ -17,7 +17,11 @@ const render = async (interaction, context, state = {}) => {
   const message = collectionMessage({
     title: 'Your Nexus Accounts', collection: normalizeCollection(result),
     empty: 'No linked accounts were found.', commandName: 'accounts', userId: interaction.user.id,
-    sessions: context.sessions, state: { account },
+    sessions: context.sessions, state: { account }, variant: 'account',
+    baseUrl: context.apiService.baseUrl,
+    description: account
+      ? 'Showing the selected linked account and its current Nexus balance.'
+      : 'Current balances for your linked Nexus banking accounts.',
   });
   return interaction.editReply(message);
 };

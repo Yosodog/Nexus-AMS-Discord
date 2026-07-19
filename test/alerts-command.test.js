@@ -5,6 +5,7 @@ import {
   execute as executePrivateNotification,
   validate as validatePrivateNotification,
 } from '../src/services/queueActions/privateNotification.js';
+import { embedJson } from './helpers.js';
 
 const interaction = (subcommand, values = {}) => {
   const replies = [];
@@ -51,7 +52,10 @@ test('market alert forwards a typed payload to Nexus', async () => {
   assert.deepEqual(calls[0].options.data, {
     name: 'Cheap steel', cooldown_minutes: 30, type: 'market', resource: 'steel', direction: 'below', threshold: 3000,
   });
-  assert.match(subject.replies[0].content, /Created alert #7/);
+  const embed = embedJson(subject.replies[0]);
+  assert.equal(embed.title, 'Alert Created');
+  assert.match(embed.description, /#7/);
+  assert.match(embed.description, /Cheap steel/);
 });
 
 test('manage pause sends an ownership-scoped status update', async () => {

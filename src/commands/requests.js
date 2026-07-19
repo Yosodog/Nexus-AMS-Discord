@@ -2,6 +2,7 @@ import { SlashCommandBuilder } from 'discord.js';
 import {
   actorFromInteraction, collectionMessage, deferEphemeral, normalizeCollection, replyError,
 } from '../utils/commandSupport.js';
+import { titleCase } from '../utils/discordUi.js';
 
 const SCOPES = ['mine', 'staff-queue'];
 const TYPES = ['all', 'withdrawal', 'grant', 'city-grant', 'loan', 'war-aid', 'rebuilding', 'member-transfer', 'application'];
@@ -34,6 +35,8 @@ const render = async (interaction, context, state = {}) => {
     title: filters.scope === 'staff-queue' ? 'Staff Request Queue' : 'Your Requests',
     collection: normalizeCollection(result), empty: 'No matching requests.', commandName: 'requests',
     userId: interaction.user.id, sessions: context.sessions, state: filters,
+    variant: 'request', baseUrl: context.apiService.baseUrl,
+    description: `${filters.scope === 'staff-queue' ? 'Requests awaiting staff attention' : 'Requests submitted by your nation'} · Type: ${titleCase(filters.type)} · Status: ${titleCase(filters.status)}`,
   }));
 };
 export const execute = async (interaction, context) => {

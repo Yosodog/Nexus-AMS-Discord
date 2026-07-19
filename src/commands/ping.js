@@ -1,4 +1,5 @@
 import { SlashCommandBuilder } from 'discord.js';
+import { statusMessage } from '../utils/discordUi.js';
 
 /**
  * /ping command used solely to confirm the bot wiring is functional.
@@ -17,7 +18,11 @@ export const data = new SlashCommandBuilder()
 export const execute = async (interaction, { logger }) => {
   try {
     await interaction.reply({
-      content: 'Pong! The bot is online and reachable.',
+      ...statusMessage({
+        title: 'Online',
+        tone: 'success',
+        description: 'The Discord bot is online and responding.',
+      }),
       ephemeral: true,
     });
   } catch (error) {
@@ -26,7 +31,14 @@ export const execute = async (interaction, { logger }) => {
     });
     // Best-effort follow-up so the user is not left hanging; ignore errors because Discord may block duplicates.
     if (!interaction.replied) {
-      await interaction.reply({ content: 'Something went wrong handling /ping.', ephemeral: true }).catch(() => {});
+      await interaction.reply({
+        ...statusMessage({
+          title: 'Ping Failed',
+          tone: 'danger',
+          description: 'The bot could not complete the status check.',
+        }),
+        ephemeral: true,
+      }).catch(() => {});
     }
   }
 };

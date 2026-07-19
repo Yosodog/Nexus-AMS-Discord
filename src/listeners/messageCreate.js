@@ -4,6 +4,7 @@ import {
   parseApplicationChannelIdentity,
 } from '../utils/applicationChannels.js';
 import { config } from '../utils/config.js';
+import { markdownLink, statusMessage } from '../utils/discordUi.js';
 
 export const APPLICATION_CHANNEL_REGEX = LEGACY_APPLICATION_CHANNEL_REGEX;
 export const INTEL_REPORT_REGEX = /^(?:\s*)[A-Za-z]{0,3}\s*successfully gather(?:ed)? intelligence about .+?The operation cost you \$[0-9,]+\.[0-9]{2} and \d+ of your spies were captured and executed\.?(?:\s*)$/is;
@@ -29,6 +30,7 @@ export const registerMessageListener = (
     if (!guildId || message.guild?.id !== guildId || !message.channel) {
       return;
     }
+    if (message.author?.bot || message.webhookId) return;
 
     const content = typeof message.content === 'string' ? message.content : '';
 
@@ -81,10 +83,12 @@ async function handleIntelReport(message, content, apiService, logger) {
     await apiService.sendIntelReport(payload);
 
     const intelUrl = new URL('/defense/intel', config.nexusApi.baseUrl).toString();
-    const replyMessage = `Intel report saved. View it at ${intelUrl}`;
-
     await message.reply({
-      content: replyMessage,
+      ...statusMessage({
+        title: 'Intel Report Saved',
+        tone: 'success',
+        description: `${markdownLink('Open the intelligence dashboard', intelUrl)} to review the report.`,
+      }),
       allowedMentions: { parse: [], repliedUser: false },
     }).catch((error) => {
       logger.warn('Failed to send intel confirmation message', {
@@ -100,5 +104,13 @@ async function handleIntelReport(message, content, apiService, logger) {
       backendErrorCode: data?.error ?? null,
       backendMessage: data?.message ?? error?.message ?? null,
     });
+    await message.reply({
+      ...statusMessage({
+        title: 'Intel Report Not Saved',
+        tone: 'danger',
+        description: 'Nexus could not save that report. Try posting it again in a moment.',
+      }),
+      allowedMentions: { parse: [], repliedUser: false },
+    }).catch(() => {});
   }
 }

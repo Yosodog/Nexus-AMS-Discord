@@ -1,11 +1,14 @@
 import {
-  ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, ModalBuilder,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder,
   SlashCommandBuilder, TextInputBuilder, TextInputStyle,
 } from 'discord.js';
 import {
   actorFromInteraction, collectionMessage, deferEphemeral, executeAutocomplete,
   normalizeCollection, replyError, summarizeItem,
 } from '../utils/commandSupport.js';
+import {
+  buildEmbed, escapeMarkdown, statusMessage, truncate,
+} from '../utils/discordUi.js';
 
 export const data = new SlashCommandBuilder().setName('war').setDescription('View wars and war assignments.')
   .addSubcommand((sub) => sub.setName('active').setDescription('View your active wars.'))
@@ -27,27 +30,49 @@ const warChoices = async (interaction, apiService) => {
 };
 export const autocomplete = (interaction, { apiService }) => executeAutocomplete(interaction, apiService, warChoices);
 
-const assignmentsPayload = (interaction, context, result) => {
-  const collection = normalizeCollection(result);
-  const embeds = [new EmbedBuilder().setTitle('War Assignments').setColor(0x5865f2)
-    .setDescription(collection.items.length
-      ? collection.items.slice(0, 6).map(summarizeItem).join('\n\n').slice(0, 3900)
-      : 'No active war assignments.')];
-  const components = [];
-  for (const assignment of collection.items.slice(0, 2)) {
+const ASSIGNMENTS_PAGE_SIZE = 2;
+
+const assignmentsPayload = (interaction, context, result, requestedPage = 1) => {
+  const items = normalizeCollection(result).items;
+  const pages = Math.max(1, Math.ceil(items.length / ASSIGNMENTS_PAGE_SIZE));
+  const page = Math.min(Math.max(1, Number(requestedPage) || 1), pages);
+  const start = (page - 1) * ASSIGNMENTS_PAGE_SIZE;
+  const pageItems = items.slice(start, start + ASSIGNMENTS_PAGE_SIZE);
+  const payload = collectionMessage({
+    title: 'War Assignments',
+    collection: {
+      items: pageItems,
+      page,
+      pages,
+      total: items.length,
+      perPage: ASSIGNMENTS_PAGE_SIZE,
+      remote: true,
+    },
+    empty: 'No active war assignments.',
+    commandName: 'war',
+    userId: interaction.user.id,
+    sessions: context.sessions,
+    event: 'assignments-page',
+    state: { items },
+    variant: 'war-assignment',
+    description: 'Current plan and counter assignments awaiting your response.',
+    baseUrl: context.apiService.baseUrl,
+    pageSize: ASSIGNMENTS_PAGE_SIZE,
+  });
+  for (const assignment of pageItems) {
     const type = assignment.type;
     const id = assignment.id;
     if (!['plan', 'counter'].includes(type) || id === undefined) continue;
-    components.push(new ActionRowBuilder().addComponents(
+    payload.components.push(new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(context.sessions.create({ commandName: 'war', userId: interaction.user.id,
         event: 'acknowledge', state: { type, id }, oneShot: true }))
-        .setLabel(`Acknowledge ${assignment.label ?? id}`.slice(0, 80)).setStyle(ButtonStyle.Success),
+        .setLabel(truncate(`Acknowledge ${assignment.label ?? id}`, 80)).setStyle(ButtonStyle.Success),
       new ButtonBuilder().setCustomId(context.sessions.create({ commandName: 'war', userId: interaction.user.id,
         event: 'unavailable', state: { type, id }, oneShot: true }))
         .setLabel('Unavailable').setStyle(ButtonStyle.Danger),
     ));
   }
-  return { embeds, components };
+  return payload;
 };
 
 export const execute = async (interaction, context) => {
@@ -63,26 +88,61 @@ export const execute = async (interaction, context) => {
     if (subcommand === 'counter') {
       const result = await context.apiService.getWarCounterRecommendation(actor, interaction.options.getInteger('nation', true));
       await interaction.editReply(collectionMessage({
-        title: 'Counter Guidance', collection: normalizeCollection(result), empty: 'No counter guidance is available.',
-        commandName: 'war', userId: interaction.user.id,
+        title: 'Counter Guidance',
+        collection: normalizeCollection(result),
+        empty: 'No counter guidance is available.',
+        commandName: 'war',
+        userId: interaction.user.id,
+        sessions: context.sessions,
+        variant: 'war-counter',
+        description: `Recommended counters for nation #${interaction.options.getInteger('nation', true)}.`,
+        baseUrl: context.apiService.baseUrl,
+        pageSize: 3,
       }));
       return;
     }
     if (subcommand === 'simulate') {
       const result = await context.apiService.getWarSimulation(actor, interaction.options.getString('war', true));
-      await interaction.editReply({ embeds: [new EmbedBuilder().setTitle('War Simulation').setColor(0x5865f2)
-        .setDescription(result?.summary ?? summarizeItem(result))] });
+      const summary = typeof result?.summary === 'string'
+        ? escapeMarkdown(truncate(result.summary, 3900))
+        : summarizeItem(result);
+      await interaction.editReply({
+        embeds: [buildEmbed({
+          title: 'War Simulation',
+          tone: 'military',
+          description: summary,
+          footer: 'Simulation results are estimates. Verify the live war state before acting.',
+        })],
+        components: [],
+      });
       return;
     }
     const result = await context.apiService.getMyActiveWars(actor);
     await interaction.editReply(collectionMessage({
-      title: 'Active Wars', collection: normalizeCollection(result), empty: 'No active wars.',
-      commandName: 'war', userId: interaction.user.id,
+      title: 'Active Wars',
+      collection: normalizeCollection(result),
+      empty: 'No active wars.',
+      commandName: 'war',
+      userId: interaction.user.id,
+      sessions: context.sessions,
+      variant: 'war',
+      description: 'Wars currently active for your linked nation.',
+      baseUrl: context.apiService.baseUrl,
+      pageSize: 3,
     }));
   } catch (error) { await replyError(interaction, error); }
 };
 export const button = async (interaction, context) => {
   const { event, state } = context.session;
+  if (event === 'assignments-page') {
+    await interaction.deferUpdate();
+    try {
+      await interaction.editReply(assignmentsPayload(interaction, context, state.items, state.page));
+    } catch (error) {
+      await replyError(interaction, error, 'Assignments Unavailable');
+    }
+    return;
+  }
   if (event === 'unavailable') {
     const reasonId = context.sessions.create({ commandName: 'war', userId: interaction.user.id, event: 'field', oneShot: true });
     const modalId = context.sessions.create({ commandName: 'war', userId: interaction.user.id,
@@ -97,7 +157,12 @@ export const button = async (interaction, context) => {
     const result = await context.apiService.respondToWarAssignment(actorFromInteraction(interaction), state.type, state.id, {
       response: 'acknowledged',
     });
-    await interaction.editReply({ content: result?.message ?? 'Assignment acknowledged.', embeds: [], components: [] });
+    await interaction.editReply(statusMessage({
+      title: 'Assignment Acknowledged',
+      tone: 'success',
+      description: escapeMarkdown(truncate(result?.message ?? 'Assignment acknowledged.', 1000)),
+      footer: 'Your assignment response has been saved.',
+    }));
   } catch (error) { await replyError(interaction, error); }
 };
 
@@ -105,7 +170,14 @@ export const modal = async (interaction, context) => {
   const { type, id, reasonId } = context.session.state;
   const reason = interaction.fields.getTextInputValue(reasonId).trim();
   if (!reason) {
-    await interaction.reply({ content: 'A reason is required.', ephemeral: true });
+    await interaction.reply({
+      ...statusMessage({
+        title: 'Reason Required',
+        tone: 'danger',
+        description: 'Explain why you cannot take this assignment so military staff can reassign it.',
+      }),
+      ephemeral: true,
+    });
     return;
   }
   await interaction.deferReply({ ephemeral: true });
@@ -113,6 +185,11 @@ export const modal = async (interaction, context) => {
     const result = await context.apiService.respondToWarAssignment(actorFromInteraction(interaction), type, id, {
       response: 'unavailable', reason,
     });
-    await interaction.editReply({ content: result?.message ?? 'Assignment marked unavailable.' });
+    await interaction.editReply(statusMessage({
+      title: 'Assignment Marked Unavailable',
+      tone: 'warning',
+      description: escapeMarkdown(truncate(result?.message ?? 'Assignment marked unavailable.', 1000)),
+      footer: 'Military staff can now reassign this target.',
+    }));
   } catch (error) { await replyError(interaction, error); }
 };

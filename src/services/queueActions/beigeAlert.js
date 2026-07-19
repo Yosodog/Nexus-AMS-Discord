@@ -1,5 +1,10 @@
-import { EmbedBuilder } from 'discord.js';
 import { isDiscordSnowflake } from '../../utils/boundaryValidators.js';
+import {
+  buildEmbed,
+  escapeMarkdown,
+  markdownLink,
+  safeUrl,
+} from '../../utils/discordUi.js';
 
 export const validate = (payload) => {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
@@ -161,17 +166,18 @@ function buildBeigeExitEmbed(command) {
   const nationLabel = nation.nation_name ?? 'Unknown nation';
   const leader = nation.leader_name ?? 'Unknown leader';
   const declareWarUrl = buildDeclareWarUrl(nation.id);
-  const declareWarLink = declareWarUrl ? `[Open Declare War Page](${declareWarUrl})` : 'Unavailable';
+  const declareWarLink = declareWarUrl ? markdownLink('Open declare war page', declareWarUrl) : 'Unavailable';
+  const nationLink = safeUrl(nation.links?.nation);
 
-  const embed = new EmbedBuilder()
-    .setTitle('🟨 Beige Exit Alert')
-    .setColor(0xd4b06a)
-    .setDescription(`**${leader}** of **${nationLabel}** is no longer beige.`)
-    .setTimestamp(detectedAt)
-    .addFields(
+  return buildEmbed({
+    title: '🟨 Beige Exit Alert',
+    color: 0xd4b06a,
+    description: `**${escapeMarkdown(leader)}** of ${markdownLink(nationLabel, nationLink)} is no longer beige.`,
+    url: nationLink,
+    fields: [
       {
         name: 'Nation',
-        value: `${nation.links?.nation ? `[${nationLabel}](${nation.links.nation})` : nationLabel}\nLeader: ${leader}`,
+        value: `${markdownLink(nationLabel, nationLink)}\nLeader: ${escapeMarkdown(leader)}`,
         inline: true,
       },
       {
@@ -196,14 +202,9 @@ function buildBeigeExitEmbed(command) {
         name: 'War Link',
         value: `⚔️ ${declareWarLink}`,
       },
-    )
-    .setFooter({ text: `Event: ${payload.event_type ?? 'beige_exit'}` });
-
-  if (nation.links?.nation) {
-    embed.setURL(nation.links.nation);
-  }
-
-  return embed;
+    ],
+    footer: `Event: ${payload.event_type ?? 'beige_exit'}`,
+  }).setTimestamp(detectedAt);
 }
 
 function formatAllianceWithLink(nation = {}) {
@@ -211,7 +212,7 @@ function formatAllianceWithLink(nation = {}) {
   const name = alliance.name ?? 'No alliance';
   const link = nation.links?.alliance ?? null;
 
-  return link ? `[${name}](${link})` : name;
+  return markdownLink(name, link);
 }
 
 function formatMilitaryMultiline(military = {}) {

@@ -1,8 +1,11 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, SlashCommandBuilder } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, SlashCommandBuilder } from 'discord.js';
 import {
   accountChoices, actorFromInteraction, collectionMessage, deferEphemeral, executeAutocomplete,
   normalizeCollection, replyError,
 } from '../utils/commandSupport.js';
+import {
+  buildEmbed, formatDiscordTime, formatMoney, resolveDeepLink, statusLabel, statusMessage, truncate,
+} from '../utils/discordUi.js';
 
 export const data = new SlashCommandBuilder().setName('grant').setDescription('Browse and apply for Nexus grants.')
   .addSubcommand((sub) => sub.setName('browse').setDescription('Browse grant programs.')
@@ -35,12 +38,17 @@ export const execute = async (interaction, context) => {
   const subcommand = interaction.options.getSubcommand();
   try {
     if (subcommand === 'browse') {
+      const eligibleOnly = interaction.options.getBoolean('eligible_only') ?? false;
       const result = await context.apiService.getGrantPrograms(actor, {
-        eligible_only: interaction.options.getBoolean('eligible_only') ?? false,
+        eligible_only: eligibleOnly,
       });
       await interaction.editReply(collectionMessage({
         title: 'Grant Programs', collection: normalizeCollection(result), empty: 'No matching grant programs.',
-        commandName: 'grant', userId: interaction.user.id,
+        commandName: 'grant', userId: interaction.user.id, sessions: context.sessions,
+        variant: 'grant-program', baseUrl: context.apiService.baseUrl,
+        description: eligibleOnly
+          ? 'Programs Nexus currently marks your nation eligible to request.'
+          : 'Enabled grant programs, including current eligibility guidance.',
       }));
       return;
     }
@@ -48,7 +56,9 @@ export const execute = async (interaction, context) => {
       const result = await context.apiService.getMyGrantRequests(actor);
       await interaction.editReply(collectionMessage({
         title: 'Your Grant Requests', collection: normalizeCollection(result), empty: 'No grant requests found.',
-        commandName: 'grant', userId: interaction.user.id,
+        commandName: 'grant', userId: interaction.user.id, sessions: context.sessions,
+        variant: 'request', baseUrl: context.apiService.baseUrl,
+        description: 'Grant requests submitted by your nation, newest first.',
       }));
       return;
     }
@@ -61,11 +71,42 @@ export const execute = async (interaction, context) => {
       : await context.apiService.previewGrantApplication(actor, request);
     const previewToken = `${preview?.intent?.id ?? ''}`;
     if (!previewToken) throw new TypeError('Grant preview is missing an opaque token.');
+    const accountId = preview?.account_id ?? request.account_id;
+    const estimatedAmount = preview?.estimated_grant_amount;
+    const previewState = {
+      type: subcommand,
+      previewToken,
+      accountId,
+      grantId: request.grant_id,
+      cityNumber: preview?.city_number,
+      estimatedAmount,
+    };
     const confirmId = context.sessions.create({ commandName: 'grant', userId: interaction.user.id,
-      event: 'confirm', state: { type: subcommand, previewToken }, oneShot: true });
+      event: 'confirm', state: previewState, oneShot: true });
     await interaction.editReply({
-      embeds: [new EmbedBuilder().setTitle('Review Grant Request').setColor(0xfee75c)
-        .setDescription(preview?.summary ?? 'Nexus validated this grant request. Confirm to submit it.')],
+      embeds: [buildEmbed({
+        title: 'Review Grant Request',
+        tone: 'warning',
+        description: truncate(
+          preview?.summary ?? 'Nexus validated this grant request. Confirm to submit it.',
+          1200,
+        ),
+        fields: [
+          { name: 'Destination account', value: `Account #${accountId}`, inline: true },
+          subcommand === 'city'
+            ? (preview?.city_number !== undefined
+              ? { name: 'City', value: `City ${preview.city_number}`, inline: true }
+              : { name: 'Request type', value: 'Current city grant', inline: true })
+            : { name: 'Grant program', value: `Program #${request.grant_id}`, inline: true },
+          estimatedAmount !== undefined && estimatedAmount !== null
+            ? { name: 'Estimated grant', value: formatMoney(estimatedAmount), inline: true }
+            : null,
+          preview?.intent?.expires_at
+            ? { name: 'Preview expires', value: formatDiscordTime(preview.intent.expires_at), inline: true }
+            : null,
+        ],
+        footer: 'Nexus will revalidate eligibility when you confirm.',
+      })],
       components: [new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(confirmId).setLabel('Confirm request').setStyle(ButtonStyle.Success),
       )],
@@ -81,6 +122,25 @@ export const button = async (interaction, context) => {
     const result = type === 'city'
       ? await context.apiService.confirmCityGrantRequest(actorFromInteraction(interaction), payload)
       : await context.apiService.confirmGrantApplication(actorFromInteraction(interaction), payload);
-    await interaction.editReply({ content: result?.message ?? 'Grant request submitted.', embeds: [], components: [] });
+    await interaction.editReply(statusMessage({
+      title: type === 'city' ? 'City Grant Request Submitted' : 'Grant Request Submitted',
+      tone: 'success',
+      description: truncate(result?.message ?? 'Nexus accepted the request for processing.', 1200),
+      fields: [
+        result?.id !== undefined ? { name: 'Request', value: `#${result.id}`, inline: true } : null,
+        context.session.state.accountId !== undefined
+          ? { name: 'Destination account', value: `Account #${context.session.state.accountId}`, inline: true }
+          : null,
+        context.session.state.estimatedAmount !== undefined && context.session.state.estimatedAmount !== null
+          ? { name: 'Estimated grant', value: formatMoney(context.session.state.estimatedAmount), inline: true }
+          : null,
+        result?.status ? { name: 'Status', value: statusLabel(result.status), inline: true } : null,
+        result?.created_at
+          ? { name: 'Submitted', value: formatDiscordTime(result.created_at), inline: true }
+          : null,
+      ],
+      url: resolveDeepLink(context.apiService.baseUrl, result?.deep_link_path ?? result?.url),
+      timestamp: true,
+    }));
   } catch (error) { await replyError(interaction, error); }
 };

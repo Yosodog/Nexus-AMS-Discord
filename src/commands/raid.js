@@ -17,12 +17,20 @@ export const execute = async (interaction, context) => {
     const filters = {
       nation_id: interaction.options.getInteger('nation') ?? undefined,
       sort: interaction.options.getString('sort') ?? 'value',
-      limit: interaction.options.getInteger('limit') ?? 5,
+      limit: interaction.options.getInteger('limit') ?? 10,
     };
     const result = await context.apiService.getMyRaidAssignments(actorFromInteraction(interaction), filters);
     await interaction.editReply(collectionMessage({
-      title: 'Raid Targets', collection: normalizeCollection(result), empty: 'No recommended targets found.',
-      commandName: 'raid', userId: interaction.user.id,
+      title: 'Raid Targets',
+      collection: normalizeCollection(result),
+      empty: 'No recommended targets found.',
+      commandName: 'raid',
+      userId: interaction.user.id,
+      sessions: context.sessions,
+      variant: 'raid',
+      description: `Up to ${filters.limit} targets for ${filters.nation_id ? `nation #${filters.nation_id}` : 'your linked nation'}, sorted by ${filters.sort}.`,
+      baseUrl: context.apiService.baseUrl,
+      pageSize: 2,
     }));
   } catch (error) { await replyError(interaction, error); }
 };

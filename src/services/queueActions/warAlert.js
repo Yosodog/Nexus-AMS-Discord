@@ -1,5 +1,10 @@
-import { EmbedBuilder } from 'discord.js';
 import { isDiscordSnowflake } from '../../utils/boundaryValidators.js';
+import {
+  buildEmbed,
+  escapeMarkdown,
+  markdownLink,
+  safeUrl,
+} from '../../utils/discordUi.js';
 
 export const validate = (payload) => {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
@@ -75,26 +80,22 @@ function buildWarAlertEmbed(command) {
   const createdAt = command?.created_at ? new Date(command.created_at) : new Date();
 
   const descriptionParts = [];
-  if (payload.war_url) {
-    descriptionParts.push(`➡️ [War Timeline](${payload.war_url})`);
+  const warUrl = safeUrl(payload.war_url);
+  if (warUrl) {
+    descriptionParts.push(`➡️ ${markdownLink('War timeline', warUrl)}`);
   }
-  if (payload.counter?.url) {
+  const counterUrl = safeUrl(payload.counter?.url);
+  if (counterUrl) {
     const counterLabel = payload.counter.id ? `Counter #${payload.counter.id}` : 'Counter';
-    descriptionParts.push(`🧭 [${counterLabel}](${payload.counter.url})`);
+    descriptionParts.push(`🧭 ${markdownLink(counterLabel, counterUrl)}`);
   }
 
-  const embed = new EmbedBuilder().setTitle(
-    `⚔️ War Alert${payload.war_id ? ` #${payload.war_id}` : ''}`,
-  );
-
-  if (payload.war_url) {
-    embed.setURL(payload.war_url);
-  }
-
-  embed
-    .setColor(0xd64045)
-    .setDescription(descriptionParts.join('\n') || 'A new war alert was received.')
-    .addFields(
+  return buildEmbed({
+    title: `⚔️ War Alert${payload.war_id ? ` #${payload.war_id}` : ''}`,
+    color: 0xd64045,
+    description: descriptionParts.join('\n') || 'A new war alert was received.',
+    url: warUrl,
+    fields: [
       { name: 'Attacker', value: formatParticipant(payload.attacker, '🔥'), inline: true },
       { name: 'Defender', value: formatParticipant(payload.defender, '🛡️'), inline: true },
       {
@@ -115,28 +116,23 @@ function buildWarAlertEmbed(command) {
         name: 'Defender Military',
         value: formatMilitary(payload.defender?.military),
       },
-    )
-    .setTimestamp(createdAt);
-
-  return embed;
+    ],
+  }).setTimestamp(createdAt);
 }
 
 function formatParticipant(side = {}, emoji = '') {
-  const leader = side.leader_name ?? 'Unknown leader';
-  const nation = side.nation_name ?? 'Unknown nation';
+  const leader = escapeMarkdown(side.leader_name ?? 'Unknown leader');
+  const nation = escapeMarkdown(side.nation_name ?? 'Unknown nation');
   const allianceName = side.alliance?.name ?? null;
   const allianceLink = side.links?.alliance ?? side.alliance?.url ?? null;
-  const alliance =
-    allianceName && allianceLink
-      ? `[${allianceName}](${allianceLink})`
-      : allianceName ?? '—';
+  const alliance = allianceName ? markdownLink(allianceName, allianceLink) : '—';
 
   const links = [];
   if (side.links?.nation) {
-    links.push(`[Nation](${side.links.nation})`);
+    links.push(markdownLink('Nation', side.links.nation));
   }
   if (side.links?.alliance) {
-    links.push(`[Alliance](${side.links.alliance})`);
+    links.push(markdownLink('Alliance', side.links.alliance));
   }
 
   const linkLine = links.length > 0 ? `🔗 ${links.join(' • ')}` : '🔗 No links provided';

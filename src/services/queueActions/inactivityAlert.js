@@ -1,5 +1,10 @@
-import { EmbedBuilder } from 'discord.js';
 import { isDiscordSnowflake } from '../../utils/boundaryValidators.js';
+import {
+  buildEmbed,
+  escapeMarkdown,
+  markdownLink,
+  nationUrl,
+} from '../../utils/discordUi.js';
 
 export const validate = (payload) => {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
@@ -91,23 +96,25 @@ function buildInactivityAlertEmbed(command) {
   const createdAt = parseDate(command?.created_at) ?? new Date();
   const threshold = payload.threshold_hours ?? extractThresholdFromMessage(payload.message);
 
-  const embed = new EmbedBuilder()
-    .setTitle('⏰ Inactivity Alert')
-    .setColor(0xe67700)
-    .setDescription(`**${leader}** (${nationName}${nationId}) has exceeded inactivity limits.`)
-    .addFields({
+  const profileUrl = nationUrl({ id: payload.nation_id });
+  const fields = [{
       name: 'Last Active',
       value: lastActiveAt
         ? `${formatDiscordTime(lastActiveAt, 'f')} (${formatDiscordTime(lastActiveAt, 'R')})`
         : 'Unknown',
-    })
-    .setTimestamp(lastActiveAt ?? createdAt);
+    }];
 
   if (threshold) {
-    embed.addFields({ name: 'Threshold', value: `${threshold}h`, inline: true });
+    fields.push({ name: 'Threshold', value: `${threshold}h`, inline: true });
   }
 
-  return embed;
+  return buildEmbed({
+    title: '⏰ Inactivity Alert',
+    color: 0xe67700,
+    description: `**${escapeMarkdown(leader)}** (${markdownLink(`${nationName}${nationId}`, profileUrl)}) has exceeded inactivity limits.`,
+    fields,
+    url: profileUrl,
+  }).setTimestamp(lastActiveAt ?? createdAt);
 }
 
 function normalizeSnowflake(value) {

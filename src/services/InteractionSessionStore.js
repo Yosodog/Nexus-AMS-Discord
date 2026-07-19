@@ -4,8 +4,9 @@ const CUSTOM_ID_PREFIX = 'nxs:';
 
 /** Short-lived, process-local state for ephemeral Discord components. */
 export class InteractionSessionStore {
-  constructor({ ttlMs = 14 * 60 * 1000, createToken = randomUUID, now = Date.now } = {}) {
+  constructor({ ttlMs = 14 * 60 * 1000, maxEntries = 5000, createToken = randomUUID, now = Date.now } = {}) {
     this.ttlMs = ttlMs;
+    this.maxEntries = Math.max(1, Number(maxEntries) || 5000);
     this.createToken = createToken;
     this.now = now;
     this.sessions = new Map();
@@ -13,6 +14,11 @@ export class InteractionSessionStore {
 
   create({ commandName, userId, event, state = {}, oneShot = false }) {
     this.prune();
+    while (this.sessions.size >= this.maxEntries) {
+      const oldestToken = this.sessions.keys().next().value;
+      if (!oldestToken) break;
+      this.sessions.delete(oldestToken);
+    }
     const token = this.createToken().replaceAll('-', '');
     this.sessions.set(token, {
       commandName,

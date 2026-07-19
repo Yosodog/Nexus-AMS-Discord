@@ -1,6 +1,5 @@
 import {
   ChannelType,
-  EmbedBuilder,
   PermissionFlagsBits,
   SlashCommandBuilder,
 } from 'discord.js';
@@ -11,6 +10,17 @@ import {
 } from '../utils/applicationChannels.js';
 import { isDiscordSnowflake } from '../utils/boundaryValidators.js';
 import { config as runtimeConfig } from '../utils/config.js';
+import {
+  buildEmbed,
+  escapeMarkdown,
+  formatDiscordTime,
+  formatNumber,
+  markdownLink,
+  nationUrl,
+  safeUrl,
+  statusMessage,
+  truncate,
+} from '../utils/discordUi.js';
 import { slugify } from '../utils/slugify.js';
 
 /**
@@ -86,11 +96,10 @@ export const execute = async (
     });
 
     const description = data?.message ?? 'Unable to submit your application right now.';
-    const embed = buildErrorEmbed(description);
-
-    if (data?.context?.join_url) {
-      embed.addFields({ name: 'Join Link', value: data.context.join_url });
-    }
+    const embed = buildErrorEmbed(description, data?.context?.join_url ? [{
+      name: 'Required Server',
+      value: markdownLink('Open the Discord invite', data.context.join_url),
+    }] : []);
 
     await interaction.editReply({ embeds: [embed] });
     return;
@@ -179,19 +188,33 @@ export const execute = async (
   }
 
   const setupPending = setupIssues.length > 0;
-
-  const confirmationEmbed = new EmbedBuilder()
-    .setTitle(setupPending ? 'Application Submitted — Setup Pending' : 'Application Submitted')
-    .setColor(setupPending ? 0xfaa61a : 0x57f287)
-    .setDescription(
-      setupPending
-        ? `Your application was submitted in Nexus and your interview channel is ${channel}, but some Discord setup is pending. Staff have been asked to review it.`
-        : `Your application has been submitted. Please continue in ${channel}.`,
-    )
-    .addFields({ name: 'Channel', value: `${channel}` })
-    .setTimestamp();
-
-  await interaction.editReply({ embeds: [confirmationEmbed] });
+  const identity = resolveApplicationIdentity(application, nation);
+  const nationIdForLink = nation?.id ?? application?.nation_id;
+  await interaction.editReply(statusMessage({
+    title: setupPending ? 'Application Submitted — Setup Pending' : 'Application Submitted',
+    tone: setupPending ? 'warning' : 'success',
+    description: setupPending
+      ? `Your application was submitted in Nexus and your interview channel is ${channel}, but some Discord setup is pending. Staff have been asked to review it.`
+      : `Your application has been submitted. Please continue in ${channel}.`,
+    fields: [
+      { name: 'Interview Channel', value: `${channel}`, inline: true },
+      identity?.applicationId
+        ? { name: 'Application', value: `#${identity.applicationId}`, inline: true }
+        : null,
+      nationIdForLink
+        ? {
+          name: 'Nation',
+          value: markdownLink(`Nation #${nationIdForLink}`, nationUrl({ id: nationIdForLink })),
+          inline: true,
+        }
+        : null,
+      application?.created_at
+        ? { name: 'Submitted', value: formatDiscordTime(application.created_at), inline: true }
+        : null,
+    ],
+    footer: setupPending ? 'Your Nexus application is saved; staff will finish the Discord setup.' : null,
+    timestamp: true,
+  }));
 };
 
 /**
@@ -393,36 +416,30 @@ async function sendApplicationIntro(channel, application, nation, applicantId, c
     (nation?.alliance_id ? `Alliance #${nation.alliance_id}` : null) ??
     application?.alliance_name ??
     null;
-  const score = nation?.score ? new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(nation.score) : null;
+  const score = nation?.score ? formatNumber(nation.score, { maximumFractionDigits: 2 }) : null;
   const cities = nation?.num_cities ?? nation?.cities ?? null;
+  const nationLink = nationUrl({ ...nation, id: nationId, nation_url: link });
+  const embed = buildEmbed({
+    title: 'New Application',
+    tone: 'info',
+    description: `${escapeMarkdown(truncate(leaderName, 100))} (${escapeMarkdown(truncate(nationName, 100))}) has submitted an application.`,
+    fields: [
+      { name: 'Nation', value: markdownLink(truncate(nationName, 100), nationLink), inline: true },
+      { name: 'Leader', value: escapeMarkdown(truncate(leaderName, 100)), inline: true },
+      { name: 'Nation ID', value: String(nationId), inline: true },
+      allianceName ? { name: 'Alliance', value: escapeMarkdown(truncate(allianceName, 100)), inline: true } : null,
+      cities !== null ? { name: 'Cities', value: String(cities), inline: true } : null,
+      score ? { name: 'Score', value: score, inline: true } : null,
+      application?.created_at
+        ? { name: 'Submitted', value: formatDiscordTime(application.created_at), inline: true }
+        : null,
+    ],
+    url: nationLink,
+    timestamp: true,
+  });
 
-  const embed = new EmbedBuilder()
-    .setTitle('New Application')
-    .setColor(0x5865f2)
-    .setDescription(`${leaderName} (${nationName}) has submitted an application.`)
-    .setTimestamp();
-
-  embed.addFields(
-    { name: 'Nation', value: `[${nationName}](${link})`, inline: true },
-    { name: 'Leader', value: leaderName, inline: true },
-    { name: 'Nation ID', value: String(nationId), inline: true },
-  );
-
-  if (allianceName) {
-    embed.addFields({ name: 'Alliance', value: allianceName, inline: true });
-  }
-
-  if (cities !== null) {
-    embed.addFields({ name: 'Cities', value: String(cities), inline: true });
-  }
-
-  if (score) {
-    embed.addFields({ name: 'Score', value: score, inline: true });
-  }
-
-  if (nation?.flag) {
-    embed.setThumbnail(nation.flag);
-  }
+  const flagUrl = safeUrl(nation?.flag);
+  if (flagUrl) embed.setThumbnail(flagUrl);
 
   const identity = resolveApplicationIdentity(application, nation);
   const embedNonce = `nxa${identity.applicationId}intro`.slice(0, 25);
@@ -448,14 +465,22 @@ async function sendApplicationIntro(channel, application, nation, applicantId, c
   });
 }
 
-function buildErrorEmbed(message) {
-  return new EmbedBuilder().setTitle('Application Error').setColor(0xed4245).setDescription(message).setTimestamp();
+function buildErrorEmbed(message, fields = []) {
+  return buildEmbed({
+    title: 'Application Error',
+    tone: 'danger',
+    description: truncate(message, 4_096),
+    fields,
+    timestamp: true,
+  });
 }
 
 function buildPartialEmbed(message) {
-  return new EmbedBuilder()
-    .setTitle('Application Submitted — Setup Pending')
-    .setColor(0xfaa61a)
-    .setDescription(message)
-    .setTimestamp();
+  return buildEmbed({
+    title: 'Application Submitted — Setup Pending',
+    tone: 'warning',
+    description: truncate(message, 4_096),
+    footer: 'Your Nexus application is saved; staff will finish the Discord setup.',
+    timestamp: true,
+  });
 }

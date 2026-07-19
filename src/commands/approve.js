@@ -1,7 +1,17 @@
-import { EmbedBuilder, SlashCommandBuilder } from 'discord.js';
+import { SlashCommandBuilder } from 'discord.js';
 import { cleanupApplicationInterviewChannel } from '../utils/applicationChannels.js';
 import { isDiscordSnowflake } from '../utils/boundaryValidators.js';
 import { config as runtimeConfig } from '../utils/config.js';
+import {
+  buildEmbed,
+  escapeMarkdown,
+  formatDiscordTime,
+  markdownLink,
+  nationUrl,
+  resolveDeepLink,
+  statusMessage,
+  truncate,
+} from '../utils/discordUi.js';
 
 /**
  * /approve command to approve an applicant and perform the required guild actions.
@@ -84,18 +94,39 @@ export const execute = async (
   const announcementResult = await announceApproval(interaction.client, guildId, config, logger);
   const cleanupPending = !roleResult.success || !cleanupResult.success || !announcementResult.success;
 
-  const successEmbed = new EmbedBuilder()
-    .setTitle(cleanupPending ? 'Applicant Approved — Cleanup Pending' : 'Applicant Approved')
-    .setColor(cleanupPending ? 0xfaa61a : 0x57f287)
-    .setDescription(
-      cleanupPending
-        ? `${applicant} has been approved in Nexus, but Discord cleanup is pending. Staff should review the applicant roles, interview channel, and announcement.`
-        : `${applicant} has been approved.`,
-    )
-    .setTimestamp();
-
-  await interaction.editReply({ embeds: [successEmbed] });
+  await interaction.editReply(statusMessage({
+    title: cleanupPending ? 'Applicant Approved — Cleanup Pending' : 'Applicant Approved',
+    tone: cleanupPending ? 'warning' : 'success',
+    description: cleanupPending
+      ? `${applicant} has been approved in Nexus, but Discord cleanup is pending. Staff should review the applicant roles, interview channel, and announcement.`
+      : `${applicant} has been approved.`,
+    fields: applicationFields(application, apiService.baseUrl),
+    footer: cleanupPending
+      ? 'The Nexus decision is complete; only the listed Discord follow-up remains.'
+      : 'Nexus and Discord follow-up completed.',
+    timestamp: true,
+  }));
 };
+
+function applicationFields(application, baseUrl) {
+  const applicationId = application?.id;
+  const applicationPath = application?.deep_link_path
+    ?? (applicationId ? `/admin/applications/${encodeURIComponent(applicationId)}` : null);
+  const decidedAt = application?.approved_at ?? application?.updated_at;
+  return [
+    applicationId ? {
+      name: 'Application',
+      value: markdownLink(`Application #${applicationId}`, resolveDeepLink(baseUrl, applicationPath)),
+      inline: true,
+    } : null,
+    application?.nation_id ? {
+      name: 'Nation',
+      value: markdownLink(`Nation #${application.nation_id}`, nationUrl({ id: application.nation_id })),
+      inline: true,
+    } : null,
+    decidedAt ? { name: 'Decision Recorded', value: formatDiscordTime(decidedAt), inline: true } : null,
+  ];
+}
 
 async function handleRoleChanges(guild, applicantId, config, logger) {
   const issues = [];
@@ -150,7 +181,7 @@ async function announceApproval(client, guildId, config, logger) {
     }
 
     await channel.send({
-      content: config.approval_message_template,
+      content: truncate(config.approval_message_template, 2000),
       allowedMentions: { parse: [], repliedUser: false },
     });
     return { success: true };
@@ -160,12 +191,13 @@ async function announceApproval(client, guildId, config, logger) {
   }
 }
 
-function buildErrorEmbed(message, errorCode) {
-  const embed = new EmbedBuilder().setTitle('Approval Failed').setColor(0xed4245).setDescription(message).setTimestamp();
-
-  if (errorCode) {
-    embed.addFields({ name: 'Error', value: `\`${errorCode}\`` });
-  }
-
-  return embed;
+function buildErrorEmbed(message, errorCode = null) {
+  return buildEmbed({
+    title: 'Approval Failed',
+    tone: 'danger',
+    description: truncate(message, 4_096),
+    fields: errorCode ? [{ name: 'Error Code', value: escapeMarkdown(truncate(errorCode, 100)) }] : [],
+    footer: 'No additional Discord confirmation is required; retry only after resolving the error.',
+    timestamp: true,
+  });
 }

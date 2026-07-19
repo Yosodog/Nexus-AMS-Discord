@@ -1,11 +1,14 @@
 import {
-  ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, ModalBuilder,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder,
   SlashCommandBuilder, TextInputBuilder, TextInputStyle,
 } from 'discord.js';
 import {
   accountChoices, actorFromInteraction, collectionMessage, deferEphemeral, executeAutocomplete,
   normalizeCollection, replyError,
 } from '../utils/commandSupport.js';
+import {
+  buildEmbed, formatDiscordTime, formatMoney, resolveDeepLink, statusLabel, statusMessage, truncate,
+} from '../utils/discordUi.js';
 
 export const data = new SlashCommandBuilder().setName('loan').setDescription('Apply for and manage Nexus loans.')
   .addSubcommand((sub) => sub.setName('apply').setDescription('Apply for a loan.')
@@ -47,7 +50,11 @@ export const execute = async (interaction, context) => {
       });
       await interaction.editReply(collectionMessage({
         title: 'Your Loans', collection: normalizeCollection(result), empty: 'No loans found.',
-        commandName: 'loan', userId: interaction.user.id,
+        commandName: 'loan', userId: interaction.user.id, sessions: context.sessions,
+        variant: 'loan', baseUrl: context.apiService.baseUrl,
+        description: interaction.options.getString('loan')
+          ? 'Showing the selected loan with its current balance and payment schedule.'
+          : 'Current loans, balances, and upcoming payment details.',
       }));
     } catch (error) { await replyError(interaction, error); }
     return;
@@ -60,13 +67,13 @@ export const execute = async (interaction, context) => {
   if (subcommand === 'pay') state.loan = interaction.options.getString('loan', true);
   const rows = [new ActionRowBuilder().addComponents(new TextInputBuilder()
     .setCustomId(amountId).setLabel('Amount').setPlaceholder('Positive decimal')
-    .setStyle(TextInputStyle.Short).setRequired(true))];
+    .setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(16))];
   if (subcommand === 'apply') {
     const termId = fieldId(context.sessions, interaction);
     fields.termId = termId;
     rows.push(new ActionRowBuilder().addComponents(new TextInputBuilder()
       .setCustomId(termId).setLabel('Term (weeks)').setPlaceholder('1 to 52 weeks')
-      .setStyle(TextInputStyle.Short).setRequired(true)));
+      .setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(2)));
   }
   modal.setCustomId(modalId(context.sessions, interaction, subcommand, state, fields)).addComponents(...rows);
   await interaction.showModal(modal);
@@ -76,13 +83,27 @@ export const modal = async (interaction, context) => {
   const { event, state } = context.session;
   const amount = interaction.fields.getTextInputValue(state.fields.amountId).trim();
   if (!/^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/.test(amount) || !/[1-9]/.test(amount)) {
-    await interaction.reply({ content: 'Amount must be a positive decimal with no more than 2 decimal places.', ephemeral: true });
+    await interaction.reply({
+      ...statusMessage({
+        title: 'Invalid Amount',
+        tone: 'danger',
+        description: 'Enter a positive decimal with no more than two decimal places.',
+      }),
+      ephemeral: true,
+    });
     return;
   }
   if (event === 'apply') {
     const term = interaction.fields.getTextInputValue(state.fields.termId).trim();
     if (!/^(?:[1-9]|[1-4]\d|5[0-2])$/.test(term)) {
-      await interaction.reply({ content: 'Term must be between 1 and 52 weeks.', ephemeral: true });
+      await interaction.reply({
+        ...statusMessage({
+          title: 'Invalid Loan Term',
+          tone: 'danger',
+          description: 'Enter a whole number between 1 and 52 weeks.',
+        }),
+        ephemeral: true,
+      });
       return;
     }
     await interaction.deferReply({ ephemeral: true });
@@ -92,13 +113,35 @@ export const modal = async (interaction, context) => {
       });
       const previewToken = `${preview?.intent?.id ?? ''}`;
       if (!previewToken) throw new TypeError('Loan preview is missing an opaque token.');
+      const authoritativeAmount = preview?.amount ?? preview?.intent?.amount ?? amount;
       const confirmId = context.sessions.create({
         commandName: 'loan', userId: interaction.user.id, event: 'confirm-application',
-        state: { previewToken }, oneShot: true,
+        state: {
+          previewToken,
+          accountId: state.account,
+          amount: authoritativeAmount,
+          termWeeks: Number(term),
+        },
+        oneShot: true,
       });
       await interaction.editReply({
-        embeds: [new EmbedBuilder().setTitle('Review Loan Application').setColor(0xfee75c)
-          .setDescription(preview.summary ?? 'Nexus validated the application. Confirm to submit it.')],
+        embeds: [buildEmbed({
+          title: 'Review Loan Application',
+          tone: 'warning',
+          description: truncate(
+            preview?.summary ?? 'Nexus validated the application. Confirm to submit it.',
+            1200,
+          ),
+          fields: [
+            { name: 'Destination account', value: `Account #${state.account}`, inline: true },
+            { name: 'Validated amount', value: formatMoney(authoritativeAmount), inline: true },
+            { name: 'Term', value: `${term} weeks`, inline: true },
+            preview?.intent?.expires_at
+              ? { name: 'Preview expires', value: formatDiscordTime(preview.intent.expires_at), inline: true }
+              : null,
+          ],
+          footer: 'Nexus will revalidate eligibility when you confirm.',
+        })],
         components: [new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId(confirmId).setLabel('Confirm application').setStyle(ButtonStyle.Success),
         )],
@@ -114,13 +157,46 @@ export const modal = async (interaction, context) => {
     });
     const previewToken = `${preview?.intent?.id ?? ''}`;
     if (!previewToken) throw new TypeError('Loan payment preview is missing an opaque token.');
+    const breakdown = preview?.breakdown ?? {};
+    const authoritativeAmount = breakdown.amount ?? preview?.amount ?? amount;
     const confirmId = context.sessions.create({
       commandName: 'loan', userId: interaction.user.id, event: 'confirm-payment',
-      state: { previewToken }, oneShot: true,
+      state: {
+        previewToken,
+        loanId: state.loan,
+        accountId: state.account,
+        amount: authoritativeAmount,
+        breakdown,
+      },
+      oneShot: true,
     });
     await interaction.editReply({
-      embeds: [new EmbedBuilder().setTitle('Review Loan Payment').setColor(0xfee75c)
-        .setDescription(preview.summary ?? 'Nexus validated the payment. Confirm to submit it.')],
+      embeds: [buildEmbed({
+        title: 'Review Loan Payment',
+        tone: 'warning',
+        description: truncate(
+          preview?.summary ?? 'Nexus validated the payment amount and allocation. Confirm to submit it.',
+          1200,
+        ),
+        fields: [
+          { name: 'Loan', value: `#${state.loan}`, inline: true },
+          { name: 'Source account', value: `Account #${state.account}`, inline: true },
+          { name: 'Payment applied', value: formatMoney(authoritativeAmount), inline: true },
+          breakdown.principal !== undefined
+            ? { name: 'To principal', value: formatMoney(breakdown.principal), inline: true }
+            : null,
+          breakdown.interest !== undefined
+            ? { name: 'To interest', value: formatMoney(breakdown.interest), inline: true }
+            : null,
+          breakdown.remaining_after !== undefined
+            ? { name: 'Balance after payment', value: formatMoney(breakdown.remaining_after), inline: true }
+            : null,
+          preview?.intent?.expires_at
+            ? { name: 'Preview expires', value: formatDiscordTime(preview.intent.expires_at), inline: true }
+            : null,
+        ],
+        footer: 'The applied amount is authoritative and may be lower than requested when it pays the loan in full.',
+      })],
       components: [new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(confirmId).setLabel('Confirm payment').setStyle(ButtonStyle.Success),
       )],
@@ -135,13 +211,57 @@ export const button = async (interaction, context) => {
       const result = await context.apiService.confirmLoanApplication(actorFromInteraction(interaction), {
         intent_id: context.session.state.previewToken,
       });
-      await interaction.editReply({ content: result?.message ?? 'Loan application submitted.', embeds: [], components: [] });
+      const loan = result?.loan ?? result ?? {};
+      const accountId = loan?.account_id ?? context.session.state.accountId;
+      const amount = loan?.amount ?? context.session.state.amount;
+      const termWeeks = loan?.term_weeks ?? context.session.state.termWeeks;
+      await interaction.editReply(statusMessage({
+        title: 'Loan Application Submitted',
+        tone: 'success',
+        description: truncate(result?.message ?? 'Nexus accepted the loan application for processing.', 1200),
+        fields: [
+          loan?.id !== undefined ? { name: 'Loan', value: `#${loan.id}`, inline: true } : null,
+          accountId !== undefined
+            ? { name: 'Destination account', value: `Account #${accountId}`, inline: true }
+            : null,
+          amount !== undefined ? { name: 'Amount', value: formatMoney(amount), inline: true } : null,
+          termWeeks !== undefined ? { name: 'Term', value: `${termWeeks} weeks`, inline: true } : null,
+          loan?.status ? { name: 'Status', value: statusLabel(loan.status), inline: true } : null,
+          loan?.created_at ? { name: 'Submitted', value: formatDiscordTime(loan.created_at), inline: true } : null,
+        ],
+        url: resolveDeepLink(context.apiService.baseUrl, loan?.deep_link_path ?? loan?.url),
+        timestamp: true,
+      }));
       return;
     }
     if (context.session.event !== 'confirm-payment') return;
     const result = await context.apiService.confirmLoanPayment(actorFromInteraction(interaction), {
       intent_id: context.session.state.previewToken,
     });
-    await interaction.editReply({ content: result?.message ?? 'Loan payment submitted.', embeds: [], components: [] });
+    const loan = result?.loan ?? result ?? {};
+    const loanId = loan?.id ?? context.session.state.loanId;
+    const accountId = context.session.state.accountId;
+    const appliedAmount = context.session.state.amount;
+    await interaction.editReply(statusMessage({
+      title: 'Loan Payment Submitted',
+      tone: 'success',
+      description: truncate(result?.message ?? 'Nexus applied the payment to the loan.', 1200),
+      fields: [
+        loanId !== undefined ? { name: 'Loan', value: `#${loanId}`, inline: true } : null,
+        accountId !== undefined ? { name: 'Source account', value: `Account #${accountId}`, inline: true } : null,
+        appliedAmount !== undefined
+          ? { name: 'Payment applied', value: formatMoney(appliedAmount), inline: true }
+          : null,
+        loan?.remaining_balance !== undefined
+          ? { name: 'Remaining balance', value: formatMoney(loan.remaining_balance), inline: true }
+          : null,
+        loan?.status ? { name: 'Status', value: statusLabel(loan.status), inline: true } : null,
+        loan?.next_due_date
+          ? { name: 'Next due', value: formatDiscordTime(loan.next_due_date, 'D'), inline: true }
+          : null,
+      ],
+      url: resolveDeepLink(context.apiService.baseUrl, loan?.deep_link_path ?? loan?.url),
+      timestamp: true,
+    }));
   } catch (error) { await replyError(interaction, error); }
 };

@@ -1,9 +1,15 @@
-import { EmbedBuilder, SlashCommandBuilder } from 'discord.js';
-
-const INTEGER_FORMATTER = new Intl.NumberFormat('en-US');
-const MONEY_FORMATTER = new Intl.NumberFormat('en-US', {
-  maximumFractionDigits: 0,
-});
+import { SlashCommandBuilder } from 'discord.js';
+import {
+  buildEmbed,
+  escapeMarkdown,
+  formatDiscordTime,
+  formatMoney,
+  formatNumber,
+  markdownLink,
+  resolveDeepLink,
+  titleCase,
+  truncate,
+} from '../utils/discordUi.js';
 
 export const data = new SlashCommandBuilder()
   .setName('sweepbank')
@@ -12,6 +18,7 @@ export const data = new SlashCommandBuilder()
     option
       .setName('note')
       .setDescription('Optional audit note for the Nexus sweep log.')
+      .setMaxLength(500)
       .setRequired(false),
   )
   .setDMPermission(false);
@@ -67,8 +74,8 @@ export const execute = async (interaction, { logger, apiService }) => {
     });
 
     const embed = response?.swept
-      ? buildSuccessEmbed(response)
-      : buildNoOpEmbed(response);
+      ? buildSuccessEmbed(response, apiService.baseUrl)
+      : buildNoOpEmbed(response, apiService.baseUrl);
 
     await interaction.editReply({ embeds: [embed] });
   } catch (error) {
@@ -114,43 +121,66 @@ export const execute = async (interaction, { logger, apiService }) => {
   }
 };
 
-function buildSuccessEmbed(response) {
+function buildSuccessEmbed(response, baseUrl) {
   const offshoreName = response?.offshore?.name ?? 'Primary Offshore';
   const transferPayload = response?.transfer?.payload ?? {};
   const resourceSummary = formatResourceSummary(transferPayload);
-  const embed = new EmbedBuilder()
-    .setTitle('Bank Swept')
-    .setColor(0x57f287)
-    .setDescription(`Main bank swept into **${offshoreName}**.`)
-    .setTimestamp();
+  const offshoreUrl = resolveDeepLink(
+    baseUrl,
+    response?.offshore?.deep_link_path ?? response?.offshore?.url,
+  );
 
-  if (resourceSummary !== 'No transferable resources were reported.') {
-    embed.addFields({ name: 'Transferred Resources', value: resourceSummary });
-  }
-
-  if (response?.transfer?.message) {
-    embed.addFields({ name: 'Transfer Status', value: response.transfer.message });
-  }
-
-  return embed;
+  return buildEmbed({
+    title: 'Bank Swept',
+    tone: 'success',
+    description: `Main bank swept into **${markdownLink(truncate(offshoreName, 100), offshoreUrl)}**.`,
+    fields: [
+      resourceSummary !== 'No transferable resources were reported.'
+        ? { name: 'Transferred Resources', value: resourceSummary }
+        : null,
+      response?.transfer?.message
+        ? { name: 'Transfer Status', value: escapeMarkdown(truncate(response.transfer.message, 1_024)) }
+        : null,
+      response?.transfer?.id
+        ? { name: 'Transfer', value: `#${response.transfer.id}`, inline: true }
+        : null,
+      response?.transfer?.created_at || response?.transfer?.completed_at
+        ? {
+          name: 'Completed',
+          value: formatDiscordTime(response.transfer.completed_at ?? response.transfer.created_at),
+          inline: true,
+        }
+        : null,
+    ],
+    footer: 'The sweep was recorded in the Nexus audit log.',
+    timestamp: true,
+  });
 }
 
-function buildNoOpEmbed(response) {
+function buildNoOpEmbed(response, baseUrl) {
   const offshoreName = response?.offshore?.name ?? 'the primary offshore';
+  const offshoreUrl = resolveDeepLink(
+    baseUrl,
+    response?.offshore?.deep_link_path ?? response?.offshore?.url,
+  );
 
-  return new EmbedBuilder()
-    .setTitle('No Sweep Needed')
-    .setColor(0xfaa61a)
-    .setDescription(`The main bank is already empty.\nConfigured offshore: **${offshoreName}**.`)
-    .setTimestamp();
+  return buildEmbed({
+    title: 'No Sweep Needed',
+    tone: 'warning',
+    description: `The main bank is already empty.\nConfigured offshore: **${markdownLink(truncate(offshoreName, 100), offshoreUrl)}**.`,
+    footer: 'No transfer was created.',
+    timestamp: true,
+  });
 }
 
 function buildErrorEmbed(message) {
-  return new EmbedBuilder()
-    .setTitle('Sweep Failed')
-    .setColor(0xed4245)
-    .setDescription(message)
-    .setTimestamp();
+  return buildEmbed({
+    title: 'Sweep Failed',
+    tone: 'danger',
+    description: truncate(message, 4_096),
+    footer: 'No additional Discord confirmation is required before retrying.',
+    timestamp: true,
+  });
 }
 
 function formatResourceSummary(payload) {
@@ -165,16 +195,12 @@ function formatResourceValue(resource, value) {
   const numericValue = Number(value);
 
   if (resource === 'money') {
-    return `$${MONEY_FORMATTER.format(numericValue)}`;
+    return formatMoney(numericValue);
   }
 
-  return INTEGER_FORMATTER.format(numericValue);
+  return formatNumber(numericValue, { maximumFractionDigits: 3 });
 }
 
 function humanizeResourceName(resource) {
-  return String(resource)
-    .split('_')
-    .filter(Boolean)
-    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
-    .join(' ');
+  return titleCase(resource);
 }

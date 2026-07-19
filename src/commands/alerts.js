@@ -1,5 +1,10 @@
-import { EmbedBuilder, SlashCommandBuilder } from 'discord.js';
-import { actorFromInteraction, deferEphemeral, replyError } from '../utils/commandSupport.js';
+import { SlashCommandBuilder } from 'discord.js';
+import {
+  actorFromInteraction, collectionMessage, deferEphemeral, normalizeCollection, replyError,
+} from '../utils/commandSupport.js';
+import {
+  escapeMarkdown, formatNumber, statusMessage, truncate,
+} from '../utils/discordUi.js';
 
 const NATION_EVENTS = [
   ['Alliance changed', 'alliance_changed'],
@@ -66,25 +71,6 @@ export const data = new SlashCommandBuilder()
     )))
   .setDMPermission(false);
 
-const renderList = (items) => {
-  const alerts = Array.isArray(items) ? items : items?.items ?? [];
-  const description = alerts.length
-    ? alerts.slice(0, 20).map((alert) => [
-      `**#${alert.id} · ${alert.name}**`,
-      `${alert.type_label ?? alert.type} · ${alert.active ? 'active' : 'paused'} · ${alert.condition}`,
-      `Cooldown: ${alert.cooldown_minutes}m · last triggered: ${alert.last_triggered_at ?? 'never'}`,
-    ].join('\n')).join('\n\n').slice(0, 3900)
-    : 'You have no custom alerts. Use `/alerts nation`, `/alerts alliance`, or `/alerts market` to create one.';
-
-  return {
-    embeds: [new EmbedBuilder()
-      .setTitle('Your Nexus Alerts')
-      .setColor(0x5865f2)
-      .setDescription(description)],
-    components: [],
-  };
-};
-
 const createPayload = (interaction, subcommand) => {
   const common = {
     name: interaction.options.getString('name') ?? undefined,
@@ -123,7 +109,18 @@ export const execute = async (interaction, context) => {
   try {
     if (subcommand === 'list') {
       const alerts = await context.apiService.requestDiscord('me/alerts', { actor });
-      await interaction.editReply(renderList(alerts));
+      await interaction.editReply(collectionMessage({
+        title: 'Your Nexus Alerts',
+        collection: normalizeCollection(alerts?.alerts ?? alerts),
+        empty: 'You have no custom alerts. Use `/alerts nation`, `/alerts alliance`, or `/alerts market` to create one.',
+        commandName: 'alerts',
+        userId: interaction.user.id,
+        sessions: context.sessions,
+        variant: 'alert',
+        description: 'Private alerts and watchlists configured for your linked Nexus account.',
+        baseUrl: context.apiService.baseUrl,
+        pageSize: 4,
+      }));
       return;
     }
 
@@ -140,18 +137,28 @@ export const execute = async (interaction, context) => {
         });
       }
       const resultLabel = { pause: 'paused', resume: 'resumed', test: 'tested', delete: 'deleted' }[action];
-      await interaction.editReply({ content: `Alert #${id} ${resultLabel}.`, embeds: [], components: [] });
+      const title = {
+        pause: 'Alert Paused', resume: 'Alert Resumed', test: 'Alert Test Sent', delete: 'Alert Deleted',
+      }[action];
+      await interaction.editReply(statusMessage({
+        title,
+        tone: ['pause', 'delete'].includes(action) ? 'warning' : 'success',
+        description: `Alert **#${formatNumber(id, { maximumFractionDigits: 0 })}** was ${resultLabel}.`,
+        footer: action === 'test' ? 'Check your Discord notifications for the test alert.' : 'Your alert settings are synced with Nexus.',
+      }));
       return;
     }
 
     const created = await context.apiService.requestDiscord('me/alerts', {
       method: 'post', actor, data: createPayload(interaction, subcommand),
     });
-    await interaction.editReply({
-      content: `Created alert #${created.id}: **${created.name}**. Nexus will establish a baseline before sending notifications.`,
-      embeds: [],
-      components: [],
-    });
+    const name = escapeMarkdown(truncate(created?.name ?? 'New alert', 100));
+    await interaction.editReply(statusMessage({
+      title: 'Alert Created',
+      tone: 'success',
+      description: `Created alert **#${formatNumber(created?.id, { maximumFractionDigits: 0 })} · ${name}**.`,
+      footer: 'Nexus will establish a baseline before sending notifications.',
+    }));
   } catch (error) {
     await replyError(interaction, error, 'Alert Request Failed');
   }

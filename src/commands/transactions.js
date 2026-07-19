@@ -3,6 +3,7 @@ import {
   accountChoices, actorFromInteraction, collectionMessage, deferEphemeral,
   executeAutocomplete, normalizeCollection, replyError,
 } from '../utils/commandSupport.js';
+import { titleCase, truncate } from '../utils/discordUi.js';
 
 const TYPES = ['all', 'deposit', 'withdrawal', 'internal', 'member-transfer'];
 const STATUSES = ['all', 'pending', 'completed', 'failed', 'needs-attention'];
@@ -34,6 +35,8 @@ const render = async (interaction, context, state = {}) => {
   return interaction.editReply(collectionMessage({
     title: 'Transactions', collection: normalizeCollection(result), empty: 'No matching transactions.',
     commandName: 'transactions', userId: interaction.user.id, sessions: context.sessions, state: filters,
+    variant: 'transaction', baseUrl: context.apiService.baseUrl,
+    description: `Account #${truncate(filters.account, 64)} · Type: ${titleCase(filters.type)} · Status: ${titleCase(filters.status)}`,
   }));
 };
 export const execute = async (interaction, context) => {

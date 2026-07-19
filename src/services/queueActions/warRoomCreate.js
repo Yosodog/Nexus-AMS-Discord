@@ -1,9 +1,15 @@
-import { EmbedBuilder } from 'discord.js';
 import {
   isBoundedString,
   isDiscordSnowflake,
   toPositiveInteger,
 } from '../../utils/boundaryValidators.js';
+import {
+  buildEmbed,
+  escapeMarkdown,
+  markdownLink,
+  safeUrl,
+  truncate,
+} from '../../utils/discordUi.js';
 import {
   chunkDiscordMessage,
   formatMilitaryMultiline,
@@ -295,11 +301,11 @@ function buildWarRoomIntroLines(payload, attackedMention) {
   const target = payload.target ?? {};
   const lines = [
     '## War Room Opened',
-    `Target: ${target.nation_name ?? 'Unknown nation'} (${target.leader_name ?? 'Unknown leader'})`,
+    `Target: ${escapeMarkdown(truncate(target.nation_name ?? 'Unknown nation', 180))} (${escapeMarkdown(truncate(target.leader_name ?? 'Unknown leader', 180))})`,
     'Target briefing below. Assignments and pings follow.',
   ];
   if (payload.attacked_member) {
-    lines.splice(2, 0, `Defender: ${attackedMention ?? payload.attacked_member.nation_name ?? 'Unknown nation'}`);
+    lines.splice(2, 0, `Defender: ${attackedMention ?? escapeMarkdown(truncate(payload.attacked_member.nation_name ?? 'Unknown nation', 180))}`);
   }
   return lines;
 }
@@ -313,24 +319,25 @@ function buildWarRoomEmbed(command) {
   const sourceType = payload?.source?.type ?? 'war_plan';
   const sourceId = payload?.source?.id ?? null;
   const sourceLabel = sourceId ? `${sourceType} #${sourceId}` : sourceType;
-  const sourceLink = payload?.source?.url ? `[${sourceLabel}](${payload.source.url})` : sourceLabel;
+  const sourceLink = markdownLink(sourceLabel, payload?.source?.url);
   const nationName = target.nation_name ?? 'Unknown nation';
-  const nationLink = links.target_nation ? `[${nationName}](${links.target_nation})` : nationName;
+  const nationProfile = safeUrl(links.target_nation);
+  const nationLink = markdownLink(nationName, nationProfile);
   const objectives = [];
-  if (links.declare_war) objectives.push(`⚔️ [Declare War](${links.declare_war})`);
-  if (links.war_simulators) objectives.push(`🧪 [War Simulators](${links.war_simulators})`);
-  if (payload.source?.url) objectives.push(`🧭 [Source Plan](${payload.source.url})`);
+  if (links.declare_war) objectives.push(`⚔️ ${markdownLink('Declare war', links.declare_war)}`);
+  if (links.war_simulators) objectives.push(`🧪 ${markdownLink('War simulators', links.war_simulators)}`);
+  if (payload.source?.url) objectives.push(`🧭 ${markdownLink('Source plan', payload.source.url)}`);
 
-  const embed = new EmbedBuilder()
-    .setTitle(`⚔️ Target Brief: ${target.leader_name ?? 'Unknown leader'}`)
-    .setColor(0xb02e26)
-    .setDescription([
-      `**Target:** ${nationLink} (${target.leader_name ?? 'Unknown leader'})`,
-      `**Attack Type:** ${attackType}`,
+  return buildEmbed({
+    title: `⚔️ Target Brief: ${target.leader_name ?? 'Unknown leader'}`,
+    color: 0xb02e26,
+    description: [
+      `**Target:** ${nationLink} (${escapeMarkdown(target.leader_name ?? 'Unknown leader')})`,
+      `**Attack Type:** ${escapeMarkdown(attackType)}`,
       `**Source:** ${sourceLink}`,
       objectives.length ? `\n${objectives.join(' • ')}` : '',
-    ].filter(Boolean).join('\n'))
-    .addFields(
+    ].filter(Boolean).join('\n'),
+    fields: [
       { name: 'Alliance', value: formatAlliance(target.alliance), inline: true },
       { name: 'Score / Cities', value: `${formatNumber(target.score)} / ${formatNumber(target.cities)}`, inline: true },
       {
@@ -339,15 +346,14 @@ function buildWarRoomEmbed(command) {
         inline: true,
       },
       { name: 'Military Snapshot', value: formatMilitaryMultiline(target.military) },
-    )
-    .setFooter({ text: 'Nexus AMS War Room' })
-    .setTimestamp(createdAt);
-  if (links.target_nation) embed.setURL(links.target_nation);
-  return embed;
+    ],
+    footer: 'Nexus AMS War Room',
+    url: nationProfile,
+  }).setTimestamp(createdAt);
 }
 
 function formatAlliance(alliance = {}) {
-  return `${alliance?.name ?? 'No alliance'}${alliance?.acronym ? ` (${alliance.acronym})` : ''}`;
+  return escapeMarkdown(`${alliance?.name ?? 'No alliance'}${alliance?.acronym ? ` (${alliance.acronym})` : ''}`);
 }
 
 function formatMemberLine(member, index) {

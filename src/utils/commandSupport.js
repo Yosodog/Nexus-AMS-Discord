@@ -2,8 +2,15 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  EmbedBuilder,
 } from 'discord.js';
+import {
+  buildEmbed,
+  pluralize,
+  renderCollectionItem,
+  variantConfig,
+} from './discordUi.js';
+
+export const COLLECTION_PAGE_EVENT = 'ui:collection-page';
 
 export const actorFromInteraction = (interaction) => ({
   discordUserId: interaction.user.id,
@@ -22,17 +29,22 @@ export const errorMessage = (error) => {
     VALIDATION_ERROR: 'Nexus could not validate that request.',
     FEATURE_DISABLED: 'This feature is currently disabled.',
   };
+  const detail = typeof error?.message === 'string' && error.message.length <= 300 ? error.message : null;
+  if (error?.code === 'VALIDATION_ERROR' && detail) return detail;
   return messages[error?.code]
-    ?? (typeof error?.message === 'string' && error.message.length <= 300 ? error.message : null)
+    ?? detail
     ?? 'Nexus is unavailable right now. Please try again later.';
 };
 
 export const replyError = async (interaction, error, title = 'Request Failed') => {
   const payload = {
-    embeds: [new EmbedBuilder()
-      .setTitle(title)
-      .setColor(0xed4245)
-      .setDescription(errorMessage(error))],
+    embeds: [buildEmbed({
+      title,
+      tone: 'danger',
+      description: errorMessage(error),
+      footer: 'Try the command again. If this keeps happening, contact a Nexus administrator.',
+    })],
+    components: [],
     ephemeral: true,
   };
   if (interaction.deferred || interaction.replied) return interaction.editReply(payload);
@@ -42,7 +54,9 @@ export const replyError = async (interaction, error, title = 'Request Failed') =
 export const deferEphemeral = (interaction) => interaction.deferReply({ ephemeral: true });
 
 export const normalizeCollection = (value) => {
-  if (Array.isArray(value)) return { items: value, page: 1, pages: 1, total: value.length };
+  if (Array.isArray(value)) return {
+    items: value, page: 1, pages: 1, total: value.length, remote: false,
+  };
   const items = value?.items
     ?? value?.accounts
     ?? value?.transactions
@@ -57,40 +71,28 @@ export const normalizeCollection = (value) => {
     ?? [];
   if (!Array.isArray(items)) throw new TypeError('Collection response is missing an items array.');
   const pagination = value?.pagination ?? value?.meta ?? {};
+  const remote = Boolean(
+    pagination
+    && typeof pagination === 'object'
+    && ['current_page', 'page', 'last_page', 'pages', 'total'].some((key) => pagination[key] !== undefined),
+  );
+  const page = Math.max(1, Number(pagination.current_page ?? pagination.page ?? 1) || 1);
+  const pages = Math.max(1, Number(pagination.last_page ?? pagination.pages ?? 1) || 1);
+  const total = Math.max(0, Number(pagination.total ?? items.length) || 0);
+  const perPage = Math.max(1, Number(pagination.per_page ?? pagination.page_size ?? items.length) || Math.max(items.length, 1));
   return {
     items,
-    page: Number(pagination.current_page ?? pagination.page ?? 1),
-    pages: Number(pagination.last_page ?? pagination.pages ?? 1),
-    total: Number(pagination.total ?? items.length),
+    page: Math.min(page, pages),
+    pages,
+    total,
+    perPage,
+    remote,
   };
 };
 
-const displayScalar = (value) => {
-  if (value === null || value === undefined || value === '') return '—';
-  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
-  if (typeof value === 'object') return value.label ?? value.name ?? value.nation_name ?? value.leader_name ?? value.status ?? 'Available';
-  return `${value}`;
-};
-
 export const summarizeItem = (item, index = 0) => {
-  if (typeof item === 'string') return item;
-  const title = item?.label ?? item?.name ?? item?.title ?? item?.nation_name ?? `Item ${index + 1}`;
-  const interesting = [
-    'status', 'type', 'account_name', 'amount', 'remaining_balance', 'eligible', 'cities', 'score',
-    'estimated_value', 'turns_left', 'created_at', 'updated_at', 'target', 'reason',
-  ];
-  const details = interesting
-    .filter((key) => item?.[key] !== undefined)
-    .slice(0, 4)
-    .map((key) => `${key.replaceAll('_', ' ')}: ${displayScalar(item[key])}`);
-  if (item?.resources && typeof item.resources === 'object') {
-    const resources = Object.entries(item.resources)
-      .filter(([, amount]) => Number(amount) !== 0)
-      .slice(0, 6)
-      .map(([resource, amount]) => `${resource}: ${amount}`);
-    if (resources.length) details.push(resources.join(' · '));
-  }
-  return `**${title}**${details.length ? `\n${details.join(' · ')}` : ''}`;
+  const rendered = renderCollectionItem('generic', item, index);
+  return `**${rendered.name}**\n${rendered.value}`;
 };
 
 export const collectionMessage = ({
@@ -102,31 +104,96 @@ export const collectionMessage = ({
   event = 'page',
   state = {},
   sessions,
+  variant = 'generic',
+  description,
+  baseUrl,
+  page: requestedPage,
+  pageSize: requestedPageSize,
+  noun: requestedNoun,
 }) => {
-  const body = collection.items.length
-    ? collection.items.slice(0, 10).map(summarizeItem).join('\n\n').slice(0, 3900)
-    : empty;
-  const embed = new EmbedBuilder()
-    .setTitle(title)
-    .setColor(0x5865f2)
-    .setDescription(body)
-    .setFooter({ text: `Page ${collection.page} of ${Math.max(collection.pages, 1)} · ${collection.total} total` });
+  const config = variantConfig(variant);
+  const noun = requestedNoun ?? config.noun;
+  const pageSize = Math.max(1, Math.min(10, Number(requestedPageSize ?? config.pageSize) || config.pageSize));
+  const isRemote = Boolean(collection.remote);
+  const allItems = collection.items;
+  const total = isRemote ? Math.max(collection.total, allItems.length) : allItems.length;
+  const pages = isRemote
+    ? Math.max(collection.pages, 1)
+    : Math.max(Math.ceil(total / pageSize), 1);
+  const page = Math.min(
+    Math.max(1, Number(requestedPage ?? collection.page ?? 1) || 1),
+    pages,
+  );
+  const start = isRemote ? Math.max(0, (page - 1) * collection.perPage) : (page - 1) * pageSize;
+  const pageItems = isRemote ? allItems.slice(0, 10) : allItems.slice(start, start + pageSize);
+  const end = Math.min(start + pageItems.length, total);
+  const fields = pageItems.map((item, index) => renderCollectionItem(
+    variant,
+    item,
+    start + index,
+    { baseUrl },
+  ));
+  const footer = total === 0
+    ? null
+    : pages > 1
+      ? `${start + 1}–${end} of ${total} ${pluralize(total, noun)} · Page ${page}/${pages}`
+      : `${total} ${pluralize(total, noun)}`;
+  const embed = buildEmbed({
+    title,
+    tone: config.color,
+    description: total === 0 ? empty : description,
+    fields,
+    footer,
+  });
   const components = [];
-  if (collection.pages > 1 && sessions) {
+  if (pages > 1 && sessions) {
+    const localPresentation = {
+      title,
+      items: allItems,
+      empty,
+      commandName,
+      variant,
+      description,
+      baseUrl,
+      pageSize,
+      noun,
+    };
+    const previousEvent = isRemote ? event : COLLECTION_PAGE_EVENT;
+    const nextEvent = isRemote ? event : COLLECTION_PAGE_EVENT;
+    const previousState = isRemote
+      ? { ...state, page: page - 1 }
+      : { presentation: localPresentation, page: page - 1 };
+    const nextState = isRemote
+      ? { ...state, page: page + 1 }
+      : { presentation: localPresentation, page: page + 1 };
     components.push(new ActionRowBuilder().addComponents(
       new ButtonBuilder()
-        .setCustomId(sessions.create({ commandName, userId, event, state: { ...state, page: collection.page - 1 } }))
-        .setLabel('Previous')
+        .setCustomId(sessions.create({ commandName, userId, event: previousEvent, state: previousState }))
+        .setLabel('← Previous')
         .setStyle(ButtonStyle.Secondary)
-        .setDisabled(collection.page <= 1),
+        .setDisabled(page <= 1),
       new ButtonBuilder()
-        .setCustomId(sessions.create({ commandName, userId, event, state: { ...state, page: collection.page + 1 } }))
-        .setLabel('Next')
+        .setCustomId(sessions.create({ commandName, userId, event: nextEvent, state: nextState }))
+        .setLabel('Next →')
         .setStyle(ButtonStyle.Secondary)
-        .setDisabled(collection.page >= collection.pages),
+        .setDisabled(page >= pages),
     ));
   }
   return { embeds: [embed], components };
+};
+
+export const collectionPageMessage = ({ state, sessions, userId }) => {
+  const presentation = state?.presentation;
+  if (!presentation || !Array.isArray(presentation.items)) {
+    throw new TypeError('Collection pagination state is unavailable.');
+  }
+  return collectionMessage({
+    ...presentation,
+    collection: normalizeCollection(presentation.items),
+    page: state.page,
+    sessions,
+    userId,
+  });
 };
 
 export const accountChoices = async (interaction, apiService) => {

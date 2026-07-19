@@ -1,7 +1,17 @@
-import { EmbedBuilder, SlashCommandBuilder } from 'discord.js';
+import { SlashCommandBuilder } from 'discord.js';
 import { cleanupApplicationInterviewChannel } from '../utils/applicationChannels.js';
 import { isDiscordSnowflake } from '../utils/boundaryValidators.js';
 import { config as runtimeConfig } from '../utils/config.js';
+import {
+  buildEmbed,
+  escapeMarkdown,
+  formatDiscordTime,
+  markdownLink,
+  nationUrl,
+  resolveDeepLink,
+  statusMessage,
+  truncate,
+} from '../utils/discordUi.js';
 
 /**
  * /deny command to deny an applicant and clean up their interview channel.
@@ -83,18 +93,43 @@ export const execute = async (
   });
   const cleanupPending = !roleResult.success || !cleanupResult.success;
 
-  const successEmbed = new EmbedBuilder()
-    .setTitle(cleanupPending ? 'Applicant Denied — Cleanup Pending' : 'Applicant Denied')
-    .setColor(cleanupPending ? 0xfaa61a : 0xed4245)
-    .setDescription(
-      cleanupPending
-        ? `${applicant} has been denied in Nexus, but Discord cleanup is pending. Staff should review the applicant role and interview channel.`
-        : `${applicant} has been denied.`,
-    )
-    .setTimestamp();
-
-  await interaction.editReply({ embeds: [successEmbed] });
+  await interaction.editReply(statusMessage({
+    title: cleanupPending ? 'Applicant Denied — Cleanup Pending' : 'Applicant Denied',
+    tone: cleanupPending ? 'warning' : 'danger',
+    description: cleanupPending
+      ? `${applicant} has been denied in Nexus, but Discord cleanup is pending. Staff should review the applicant role and interview channel.`
+      : `${applicant} has been denied.`,
+    fields: applicationFields(application, apiService.baseUrl),
+    footer: cleanupPending
+      ? 'The Nexus decision is complete; only Discord cleanup remains.'
+      : 'Nexus and Discord cleanup completed.',
+    timestamp: true,
+  }));
 };
+
+function applicationFields(application, baseUrl) {
+  const applicationId = application?.id;
+  const applicationPath = application?.deep_link_path
+    ?? (applicationId ? `/admin/applications/${encodeURIComponent(applicationId)}` : null);
+  const decidedAt = application?.denied_at ?? application?.updated_at;
+  return [
+    applicationId ? {
+      name: 'Application',
+      value: markdownLink(`Application #${applicationId}`, resolveDeepLink(baseUrl, applicationPath)),
+      inline: true,
+    } : null,
+    application?.nation_id ? {
+      name: 'Nation',
+      value: markdownLink(`Nation #${application.nation_id}`, nationUrl({ id: application.nation_id })),
+      inline: true,
+    } : null,
+    decidedAt ? { name: 'Decision Recorded', value: formatDiscordTime(decidedAt), inline: true } : null,
+    application?.denial_reason ? {
+      name: 'Denial Reason',
+      value: escapeMarkdown(truncate(application.denial_reason, 500)),
+    } : null,
+  ];
+}
 
 async function handleRoleRemoval(guild, applicantId, config, logger) {
   if (!isDiscordSnowflake(config?.applicant_role_id)) {
@@ -119,12 +154,13 @@ async function handleRoleRemoval(guild, applicantId, config, logger) {
   }
 }
 
-function buildErrorEmbed(message, errorCode) {
-  const embed = new EmbedBuilder().setTitle('Denial Failed').setColor(0xed4245).setDescription(message).setTimestamp();
-
-  if (errorCode) {
-    embed.addFields({ name: 'Error', value: `\`${errorCode}\`` });
-  }
-
-  return embed;
+function buildErrorEmbed(message, errorCode = null) {
+  return buildEmbed({
+    title: 'Denial Failed',
+    tone: 'danger',
+    description: truncate(message, 4_096),
+    fields: errorCode ? [{ name: 'Error Code', value: escapeMarkdown(truncate(errorCode, 100)) }] : [],
+    footer: 'No additional Discord confirmation is required; retry only after resolving the error.',
+    timestamp: true,
+  });
 }

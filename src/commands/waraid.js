@@ -27,8 +27,16 @@ export const execute = async (interaction, context) => {
   try {
     const result = await context.apiService.getMyWarAidRequests(actorFromInteraction(interaction));
     await interaction.editReply(collectionMessage({
-      title: 'Your War Aid Requests', collection: normalizeCollection(result), empty: 'No war aid requests found.',
-      commandName: 'waraid', userId: interaction.user.id,
+      title: 'Your War Aid Requests',
+      collection: normalizeCollection(result),
+      empty: 'No war aid requests found.',
+      commandName: 'waraid',
+      userId: interaction.user.id,
+      sessions: context.sessions,
+      variant: 'request',
+      description: 'War aid requests submitted by your linked nation.',
+      baseUrl: context.apiService.baseUrl,
+      pageSize: 4,
     }));
   } catch (error) { await replyError(interaction, error); }
 };

@@ -1,7 +1,10 @@
-import { EmbedBuilder, SlashCommandBuilder } from 'discord.js';
+import { SlashCommandBuilder } from 'discord.js';
 import {
   actorFromInteraction, collectionMessage, deferEphemeral, normalizeCollection, replyError,
 } from '../utils/commandSupport.js';
+import {
+  escapeMarkdown, formatDiscordTime, formatNumber, statusMessage, titleCase,
+} from '../utils/discordUi.js';
 
 export const data = new SlashCommandBuilder()
   .setName('unblockade')
@@ -40,8 +43,12 @@ export const execute = async (interaction, context) => {
           note: interaction.options.getString('note')?.trim() || null,
         },
       });
-      await interaction.editReply({ embeds: [new EmbedBuilder().setTitle('Relief Request Opened').setColor(0x57f287)
-        .setDescription(`Request #${result.id} is open until <t:${Math.floor(new Date(result.deadline_at).getTime() / 1000)}:R>.`)] });
+      await interaction.editReply(statusMessage({
+        title: 'Relief Request Opened',
+        tone: 'success',
+        description: `Request **#${formatNumber(result?.id, { maximumFractionDigits: 0 })}** is open until ${formatDiscordTime(result?.deadline_at)}.`,
+        footer: 'Alliance members who can break the blockade may now claim this request.',
+      }));
       return;
     }
 
@@ -50,10 +57,13 @@ export const execute = async (interaction, context) => {
       const result = await context.apiService.requestDiscord(`me/blockade-relief/${id}/${subcommand}`, {
         method: 'post', actor, data: {},
       });
-      await interaction.editReply({ embeds: [new EmbedBuilder()
-        .setTitle(subcommand === 'claim' ? 'Relief Request Claimed' : 'Relief Request Cancelled')
-        .setColor(subcommand === 'claim' ? 0x57f287 : 0xfee75c)
-        .setDescription(`Request #${result.id} is now ${result.status}. Recheck the war in Nexus before acting.`)] });
+      const status = escapeMarkdown(titleCase(result?.status ?? 'updated'));
+      await interaction.editReply(statusMessage({
+        title: subcommand === 'claim' ? 'Relief Request Claimed' : 'Relief Request Cancelled',
+        tone: subcommand === 'claim' ? 'success' : 'warning',
+        description: `Request **#${formatNumber(result?.id, { maximumFractionDigits: 0 })}** is now **${status}**.`,
+        footer: 'Recheck the live war state in Nexus before acting.',
+      }));
       return;
     }
 
@@ -66,6 +76,13 @@ export const execute = async (interaction, context) => {
       empty: subcommand === 'available' ? 'No current requests match your nation.' : 'You have no blockade relief requests.',
       commandName: 'unblockade',
       userId: interaction.user.id,
+      sessions: context.sessions,
+      variant: 'blockade',
+      description: subcommand === 'available'
+        ? 'Open relief requests your linked nation can currently claim.'
+        : 'Blockade relief requests opened by your linked nation.',
+      baseUrl: context.apiService.baseUrl,
+      pageSize: 3,
     }));
   } catch (error) {
     await replyError(interaction, error);

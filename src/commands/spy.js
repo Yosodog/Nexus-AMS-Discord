@@ -10,8 +10,16 @@ export const execute = async (interaction, context) => {
   try {
     const result = await context.apiService.getMySpyAssignments(actorFromInteraction(interaction));
     await interaction.editReply(collectionMessage({
-      title: 'Spy Assignments', collection: normalizeCollection(result), empty: 'No active spy assignments.',
-      commandName: 'spy', userId: interaction.user.id,
+      title: 'Spy Assignments',
+      collection: normalizeCollection(result),
+      empty: 'No active spy assignments.',
+      commandName: 'spy',
+      userId: interaction.user.id,
+      sessions: context.sessions,
+      variant: 'spy',
+      description: 'Current intelligence assignments for your linked nation.',
+      baseUrl: context.apiService.baseUrl,
+      pageSize: 3,
     }));
   } catch (error) { await replyError(interaction, error); }
 };
