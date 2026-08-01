@@ -11,5 +11,6 @@ export const config = {
   nexusApi: {
     baseUrl: process.env.NEXUS_API_URL ?? '',
     apiKey: process.env.NEXUS_API_KEY ?? '',
+    discordRelayPrivateKey: process.env.NEXUS_DISCORD_RELAY_PRIVATE_KEY ?? '',
   },
 };

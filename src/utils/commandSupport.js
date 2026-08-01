@@ -12,10 +12,11 @@ import {
 
 export const COLLECTION_PAGE_EVENT = 'ui:collection-page';
 
-export const actorFromInteraction = (interaction) => ({
+export const actorFromInteraction = (interaction, command = null) => ({
   discordUserId: interaction.user.id,
   discordGuildId: interaction.guildId,
   discordInteractionId: interaction.id,
+  discordCommand: command ?? interaction.nexusCommandName ?? interaction.commandName ?? 'interaction',
 });
 
 export const errorMessage = (error) => {

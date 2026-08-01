@@ -43,6 +43,17 @@ Configure:
 - `DISCORD_GUILD_ID`: the only guild the bot is permitted to process.
 - `NEXUS_API_URL`: Nexus base URL. Development may use HTTP; production startup requires HTTPS.
 - `NEXUS_API_KEY`: shared bot credential issued by Nexus.
+- `NEXUS_DISCORD_RELAY_PRIVATE_KEY`: base64 PKCS#8 Ed25519 private key used to sign the actual Gateway interaction identity and command sent to Nexus.
+
+Generate the asymmetric relay key pair once:
+
+```bash
+npm run keygen:relay
+```
+
+Store `NEXUS_DISCORD_RELAY_PRIVATE_KEY` only in the bot environment. Put the generated `DISCORD_RELAY_PUBLIC_KEY` in the Nexus environment. Do not reuse the Discord bot token or Discord application public key for this purpose.
+
+Discord.js receives interactions through the Gateway, which does not include Discord's HTTP interaction signature headers. The relay proof is therefore generated from the Gateway interaction object inside the bot and signed with this dedicated private key. Nexus verifies the signature, guild, actor, interaction ID, freshness, and action before resolving permissions.
 
 Startup rejects malformed URLs and Discord snowflakes. Message events, interactions, queue targets, announcements, and archive actions are constrained to `DISCORD_GUILD_ID`.
 
@@ -102,10 +113,11 @@ Recommended rollout order:
 
 1. Back up Nexus and deploy its code and migrations.
 2. Set matching `DISCORD_BOT_KEY`/`NEXUS_API_KEY` values and the same `DISCORD_GUILD_ID` in both services.
-3. Keep the Nexus private-notification master switch disabled.
-4. Deploy the bot, run `npm run register`, and restart the queue worker.
-5. Smoke-test account reads, a deposit code, a within-limit withdrawal, an above-limit review case, and DM failure handling.
-6. Enable private Discord notifications in Nexus when delivery results are healthy.
+3. Generate the relay key pair, put the private key in the bot, and put only the public key in Nexus.
+4. Keep the Nexus private-notification master switch disabled.
+5. Deploy the bot, run `npm run register`, and restart the queue worker.
+6. Smoke-test account reads, a deposit code, a within-limit withdrawal, an above-limit review case, and DM failure handling.
+7. Enable private Discord notifications in Nexus when delivery results are healthy.
 
 ## Shutdown Behavior
 

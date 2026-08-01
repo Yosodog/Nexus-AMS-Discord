@@ -4,6 +4,7 @@ import {
   resolveWarCounterChannelIdFromCounter,
 } from '../utils/warCounterRooms.js';
 import { config as runtimeConfig } from '../utils/config.js';
+import { actorFromInteraction } from '../utils/commandSupport.js';
 import {
   buildEmbed,
   escapeMarkdown,
@@ -62,10 +63,13 @@ export const execute = async (
 
   let response;
   try {
-    response = await apiService.archiveWarCounter({
-      war_counter_id: warCounterId,
-      moderator_discord_id: interaction.user.id,
-    });
+    response = await apiService.archiveWarCounter(
+      {
+        war_counter_id: warCounterId,
+        moderator_discord_id: interaction.user.id,
+      },
+      actorFromInteraction(interaction, 'archivecounter'),
+    );
   } catch (error) {
     const { data, status } = error?.response ?? {};
     logger.warn('Nexus rejected /archivecounter', {

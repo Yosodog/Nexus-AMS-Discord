@@ -1,4 +1,5 @@
 import { SlashCommandBuilder } from 'discord.js';
+import { actorFromInteraction } from '../utils/commandSupport.js';
 import {
   buildEmbed,
   escapeMarkdown,
@@ -58,11 +59,14 @@ export const execute = async (interaction, { logger, apiService }) => {
   await interaction.deferReply({ ephemeral: true });
 
   try {
-    const response = await apiService.sweepPrimaryOffshore({
-      moderator_discord_id: interaction.user.id,
-      request_id: interaction.id,
-      ...(noteValue ? { note: noteValue } : {}),
-    });
+    const response = await apiService.sweepPrimaryOffshore(
+      {
+        moderator_discord_id: interaction.user.id,
+        request_id: interaction.id,
+        ...(noteValue ? { note: noteValue } : {}),
+      },
+      actorFromInteraction(interaction, 'sweepbank'),
+    );
 
     logger.info('Sweep bank request succeeded', {
       ...logContext,

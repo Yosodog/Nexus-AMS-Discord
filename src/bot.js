@@ -4,6 +4,7 @@ import { loadCommands } from './commands/index.js';
 import { registerInteractionListener } from './listeners/interactionCreate.js';
 import { registerMessageListener } from './listeners/messageCreate.js';
 import { ApiService } from './services/ApiService.js';
+import { DiscordRelaySigner } from './services/DiscordRelaySigner.js';
 import { Logger } from './services/Logger.js';
 import { QueueDispatcher } from './services/QueueDispatcher.js';
 import { QueueWorker } from './services/QueueWorker.js';
@@ -16,6 +17,7 @@ const requiredEnv = [
   'DISCORD_GUILD_ID',
   'NEXUS_API_URL',
   'NEXUS_API_KEY',
+  'NEXUS_DISCORD_RELAY_PRIVATE_KEY',
 ];
 
 // Validate critical configuration before bootstrapping.
@@ -43,6 +45,10 @@ const bootstrap = async () => {
     baseUrl: config.nexusApi.baseUrl,
     apiKey: config.nexusApi.apiKey,
     logger,
+    relaySigner: new DiscordRelaySigner({
+      privateKeyBase64: config.nexusApi.discordRelayPrivateKey,
+      guildId: config.discord.guildId,
+    }),
   });
   const queueDispatcher = new QueueDispatcher({
     client,

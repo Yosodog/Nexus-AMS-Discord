@@ -1,4 +1,5 @@
 import { isDiscordSnowflake, isHttpUrl } from './boundaryValidators.js';
+import { createPrivateKey } from 'node:crypto';
 
 /**
  * Validate presence of required environment variables and exit with a clear message if any are missing.
@@ -22,6 +23,22 @@ export const validateEnv = (requiredKeys, logger) => {
       invalid.push('NEXUS_API_URL must be a valid absolute http or https URL');
     } else if (process.env.NODE_ENV === 'production' && !isHttpUrl(nexusUrl, { httpsOnly: true })) {
       invalid.push('NEXUS_API_URL must use https in production');
+    }
+  }
+
+  const relayPrivateKey = process.env.NEXUS_DISCORD_RELAY_PRIVATE_KEY;
+  if (relayPrivateKey) {
+    try {
+      const key = createPrivateKey({
+        key: Buffer.from(relayPrivateKey.trim(), 'base64'),
+        format: 'der',
+        type: 'pkcs8',
+      });
+      if (key.asymmetricKeyType !== 'ed25519') {
+        invalid.push('NEXUS_DISCORD_RELAY_PRIVATE_KEY must contain an Ed25519 private key');
+      }
+    } catch {
+      invalid.push('NEXUS_DISCORD_RELAY_PRIVATE_KEY must be a base64 PKCS#8 Ed25519 private key');
     }
   }
 

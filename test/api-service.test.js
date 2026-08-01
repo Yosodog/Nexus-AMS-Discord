@@ -1,13 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { generateKeyPairSync } from 'node:crypto';
 import { ApiService, RetryMode } from '../src/services/ApiService.js';
+import { DiscordRelaySigner } from '../src/services/DiscordRelaySigner.js';
 import { createLogger } from './helpers.js';
+
+const GUILD_ID = '223456789012345678';
+const { privateKey: relayPrivateKey } = generateKeyPairSync('ed25519');
+const relayPrivateKeyBase64 = relayPrivateKey.export({ format: 'der', type: 'pkcs8' }).toString('base64');
 
 function createApiService(options = {}) {
   return new ApiService({
     baseUrl: 'https://nexus.example',
     apiKey: 'secret-key',
     logger: createLogger(),
+    relaySigner: new DiscordRelaySigner({
+      privateKeyBase64: relayPrivateKeyBase64,
+      guildId: GUILD_ID,
+      clock: () => 1_700_000_000_000,
+      randomUUID: () => '11111111-2222-4333-8444-555555555555',
+    }),
     maxRetries: 1,
     ...options,
   });
@@ -74,12 +86,25 @@ test('ApiService exposes all Nexus mutation endpoints through the shared transpo
   await service.createApplication({ nation_id: 1 });
   await service.attachApplicationChannel({ application_id: 1, discord_channel_id: '123' });
   await service.attachWarCounterChannel({ war_counter_id: 1, discord_channel_id: '123' });
-  await service.archiveWarCounter({ war_counter_id: 1, moderator_discord_id: '456' });
-  await service.sweepPrimaryOffshore({ moderator_discord_id: '456', request_id: 'request' });
+  const actor = {
+    discordUserId: '123456789012345678',
+    discordGuildId: GUILD_ID,
+    discordInteractionId: '323456789012345678',
+  };
+  await service.archiveWarCounter({ war_counter_id: 1, moderator_discord_id: actor.discordUserId }, {
+    ...actor, discordCommand: 'archivecounter',
+  });
+  await service.sweepPrimaryOffshore({ moderator_discord_id: actor.discordUserId, request_id: 'request' }, {
+    ...actor, discordCommand: 'sweepbank',
+  });
   await service.logApplicationMessage({ discord_message_id: '789' });
   await service.sendIntelReport({ report: 'intel' });
-  await service.approveApplication({ applicant_discord_id: '123', moderator_discord_id: '456' });
-  await service.denyApplication({ applicant_discord_id: '123', moderator_discord_id: '456' });
+  await service.approveApplication({ applicant_discord_id: '123', moderator_discord_id: actor.discordUserId }, {
+    ...actor, discordCommand: 'approve',
+  });
+  await service.denyApplication({ applicant_discord_id: '123', moderator_discord_id: actor.discordUserId }, {
+    ...actor, discordCommand: 'deny',
+  });
 
   assert.equal(requests.length, 9);
   assert.deepEqual(requests.map(({ method }) => method), Array(9).fill('post'));
@@ -95,7 +120,7 @@ test('ApiService routes the expanded actor command contract with strict headers 
   };
   const actor = {
     discordUserId: '123456789012345678',
-    discordGuildId: '223456789012345678',
+    discordGuildId: GUILD_ID,
     discordInteractionId: '323456789012345678',
   };
 
@@ -143,6 +168,7 @@ test('ApiService routes the expanded actor command contract with strict headers 
   for (const call of calls) assert.deepEqual(await call(), { ok: true });
   assert.equal(requests.length, calls.length);
   assert.equal(requests.every(({ headers }) => headers['X-Discord-User-ID'] === actor.discordUserId), true);
+  assert.equal(requests.every(({ headers }) => typeof headers['X-Nexus-Discord-Relay-Signature'] === 'string'), true);
   assert.equal(requests.filter(({ method }) => method !== 'get')
     .every(({ headers }) => headers['X-Discord-Interaction-ID'] === actor.discordInteractionId), true);
 });

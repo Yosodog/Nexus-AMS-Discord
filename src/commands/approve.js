@@ -2,6 +2,7 @@ import { SlashCommandBuilder } from 'discord.js';
 import { cleanupApplicationInterviewChannel } from '../utils/applicationChannels.js';
 import { isDiscordSnowflake } from '../utils/boundaryValidators.js';
 import { config as runtimeConfig } from '../utils/config.js';
+import { actorFromInteraction } from '../utils/commandSupport.js';
 import {
   buildEmbed,
   escapeMarkdown,
@@ -61,11 +62,14 @@ export const execute = async (
 
   let response;
   try {
-    response = await apiService.approveApplication({
-      applicant_discord_id: applicant.id,
-      moderator_discord_id: moderator.id,
-      approval_request_id: interaction.id,
-    });
+    response = await apiService.approveApplication(
+      {
+        applicant_discord_id: applicant.id,
+        moderator_discord_id: moderator.id,
+        approval_request_id: interaction.id,
+      },
+      actorFromInteraction(interaction, 'approve'),
+    );
   } catch (error) {
     const { data, status } = error?.response ?? {};
     logger.warn('Nexus rejected /approve', {

@@ -104,6 +104,7 @@ export const registerInteractionListener = (
     }
 
     try {
+      interaction.nexusCommandName = commandName;
       await command[handler](interaction, {
         logger,
         ...context,

@@ -26,6 +26,7 @@ export class ApiService {
    * @param {string} options.baseUrl base URL for the Nexus API
    * @param {string} options.apiKey shared secret for authentication
    * @param {import('./Logger.js').Logger} options.logger structured logger instance
+   * @param {import('./DiscordRelaySigner.js').DiscordRelaySigner} options.relaySigner asymmetric relay proof signer
    * @param {number} [options.timeoutMs=10000] request timeout in milliseconds
    * @param {number} [options.maxRetries=3] number of retry attempts for transient failures
    */
@@ -33,6 +34,7 @@ export class ApiService {
     baseUrl,
     apiKey,
     logger,
+    relaySigner = null,
     timeoutMs = 10000,
     maxRetries = 3,
     random = Math.random,
@@ -41,6 +43,7 @@ export class ApiService {
     this.baseUrl = baseUrl;
     this.apiKey = apiKey;
     this.logger = logger;
+    this.relaySigner = relaySigner;
     this.maxRetries = maxRetries;
     this.random = random;
     this.sleep = sleep ?? ((durationMs) => new Promise((resolve) => setTimeout(resolve, durationMs)));
@@ -489,6 +492,7 @@ export class ApiService {
       data: payload,
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
+        ...this.#serviceRelayHeaders('war-counters.attach-channel'),
       },
     }, RetryMode.IDEMPOTENT);
   }
@@ -498,7 +502,7 @@ export class ApiService {
    * @param {{ war_counter_id: number|string, moderator_discord_id: string }} payload archive request payload
    * @returns {Promise<{ counter?: any, archived?: boolean, already_archived?: boolean }>} Nexus response
    */
-  async archiveWarCounter(payload) {
+  async archiveWarCounter(payload, actor) {
     const endpointUrl = new URL('/api/v1/discord/war-counters/archive', this.baseUrl).toString();
 
     return this.request({
@@ -507,6 +511,7 @@ export class ApiService {
       data: payload,
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
+        ...this.#discordActorHeaders(actor, true),
       },
     }, RetryMode.IDEMPOTENT);
   }
@@ -516,7 +521,7 @@ export class ApiService {
    * @param {{ moderator_discord_id: string, note?: string }} payload sweep request payload
    * @returns {Promise<any>} Nexus response
    */
-  async sweepPrimaryOffshore(payload) {
+  async sweepPrimaryOffshore(payload, actor) {
     const endpointUrl = new URL('/api/v1/discord/offshores/sweep-primary', this.baseUrl).toString();
 
     return this.request({
@@ -525,6 +530,7 @@ export class ApiService {
       data: payload,
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
+        ...this.#discordActorHeaders(actor, true),
       },
     }, RetryMode.IDEMPOTENT);
   }
@@ -570,7 +576,7 @@ export class ApiService {
    * @param {{ applicant_discord_id: string, moderator_discord_id: string, approval_request_id?: string }} payload approval payload
    * @returns {Promise<any>} Nexus response containing config for post-approval actions
    */
-  async approveApplication(payload) {
+  async approveApplication(payload, actor) {
     const endpointUrl = new URL('/api/v1/discord/applications/approve', this.baseUrl).toString();
 
     return this.request({
@@ -579,6 +585,7 @@ export class ApiService {
       data: payload,
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
+        ...this.#discordActorHeaders(actor, true),
       },
     }, RetryMode.IDEMPOTENT);
   }
@@ -588,7 +595,7 @@ export class ApiService {
    * @param {{ applicant_discord_id: string, moderator_discord_id: string, denial_request_id?: string }} payload denial payload
    * @returns {Promise<any>} Nexus response
    */
-  async denyApplication(payload) {
+  async denyApplication(payload, actor) {
     const endpointUrl = new URL('/api/v1/discord/applications/deny', this.baseUrl).toString();
 
     return this.request({
@@ -597,6 +604,7 @@ export class ApiService {
       data: payload,
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
+        ...this.#discordActorHeaders(actor, true),
       },
     }, RetryMode.IDEMPOTENT);
   }
@@ -721,11 +729,24 @@ export class ApiService {
       throw new TypeError('Discord write requests require a valid interaction snowflake.');
     }
 
-    return {
-      'X-Discord-User-ID': discordUserId,
-      'X-Discord-Guild-ID': discordGuildId,
-      ...(discordInteractionId ? { 'X-Discord-Interaction-ID': discordInteractionId } : {}),
-    };
+    if (!this.relaySigner) {
+      throw new TypeError('Discord actor requests require a configured relay signer.');
+    }
+
+    return this.relaySigner.interactionHeaders({
+      ...actor,
+      discordUserId,
+      discordGuildId,
+      discordInteractionId,
+    });
+  }
+
+  #serviceRelayHeaders(action) {
+    if (!this.relaySigner) {
+      throw new TypeError('Discord service requests require a configured relay signer.');
+    }
+
+    return this.relaySigner.serviceHeaders(action);
   }
 
   #unwrapDiscordEnvelope(envelope) {
