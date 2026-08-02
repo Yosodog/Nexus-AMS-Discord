@@ -11,8 +11,6 @@ import {
   truncate,
 } from '../../utils/discordUi.js';
 import {
-  chunkDiscordMessage,
-  formatMilitaryMultiline,
   formatNumber,
   invalid,
   parseDate,
@@ -21,6 +19,9 @@ import {
 import { extractUserSnowflakes } from './runtime.js';
 
 const isWarCounterSource = (source) => `${source?.type ?? ''}`.toLowerCase() === 'war_counter';
+const MAX_RENDERED_ASSIGNED_MEMBERS = 25;
+const MAX_OUTPUT_URL_LENGTH = 512;
+const PAGINATED_BODY_LIMIT = 1700;
 
 export const validate = (payload) => {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return invalid('invalid_payload');
@@ -72,9 +73,10 @@ export const execute = async (command, runtime) => {
   }
 
   const roomName = buildWarRoomName(payload);
+  const assignmentRoster = selectAssignedMembers(payload.assigned_members);
   const participants = buildWarRoomParticipants(payload.assigned_members, payload.attacked_member);
   const mentionMessages = buildWarRoomMentionMessages(buildWarRoomMentions(participants));
-  const assignmentMessages = buildWarRoomAssignmentMessages(payload);
+  const assignmentMessages = buildWarRoomAssignmentMessages(payload, assignmentRoster);
   const attackedMention = buildWarRoomMemberMention(payload.attacked_member);
   const starterLines = buildWarRoomIntroLines(payload, attackedMention);
 
@@ -161,11 +163,15 @@ export const execute = async (command, runtime) => {
 
     if (isWarCounterSource(payload.source) && defenseRoleId) {
       if (!runtime.canContinue()) return { success: false, reason: 'lease_lost' };
+      // Preserve this dedicated durable send; the assignment messages provide its surrounding context.
       await runtime.send(
         thread,
         command,
         'defense-role-ping',
-        { content: `<@&${defenseRoleId}>`, allowedMentions: { roles: [defenseRoleId] } },
+        {
+          content: `## Defense Team\n<@&${defenseRoleId}> — a new war room needs your attention. Assignment details follow below.`,
+          allowedMentions: { roles: [defenseRoleId] },
+        },
         'send WAR_ROOM_CREATE defense role ping',
       );
     }
@@ -239,10 +245,10 @@ async function attachWarCounterChannel(runtime, warCounterId, discordChannelId, 
 }
 
 function buildWarRoomName(payload) {
-  const suggested = typeof payload.room_name_suggestion === 'string' && payload.room_name_suggestion.trim()
-    ? payload.room_name_suggestion.trim()
-    : null;
-  if (suggested) return suggested.slice(0, 100);
+  const suggested = typeof payload.room_name_suggestion === 'string'
+    ? normalizeSingleLine(payload.room_name_suggestion, '', 100)
+    : '';
+  if (suggested) return suggested;
 
   const leader = payload?.target?.leader_name ?? null;
   const sourceType = payload?.source?.type ?? 'war';
@@ -262,6 +268,18 @@ function buildWarRoomMemberMention(member) {
   const discordId = isDiscordSnowflake(member?.discord_id) ? `${member.discord_id}`.trim() : null;
   const normalized = mentionId && isDiscordSnowflake(mentionId) ? mentionId : discordId;
   return normalized ? `<@${normalized}>` : null;
+}
+
+function selectAssignedMembers(assignedMembers) {
+  const entries = Array.isArray(assignedMembers) ? assignedMembers : [];
+  const members = entries
+    .slice(0, MAX_RENDERED_ASSIGNED_MEMBERS)
+    .filter((member) => member && typeof member === 'object' && !Array.isArray(member));
+  return {
+    members,
+    omittedCount: Math.max(0, entries.length - members.length),
+    totalCount: entries.length,
+  };
 }
 
 function buildWarRoomParticipants(assignedMembers, attackedMember) {
@@ -298,15 +316,20 @@ function buildWarRoomMentions(members) {
 }
 
 function buildWarRoomIntroLines(payload, attackedMention) {
-  const target = payload.target ?? {};
-  const lines = [
-    '## War Room Opened',
-    `Target: ${escapeMarkdown(truncate(target.nation_name ?? 'Unknown nation', 180))} (${escapeMarkdown(truncate(target.leader_name ?? 'Unknown leader', 180))})`,
-    'Target briefing below. Assignments and pings follow.',
-  ];
+  const lines = ['## War Room Opened'];
   if (payload.attacked_member) {
-    lines.splice(2, 0, `Defender: ${attackedMention ?? escapeMarkdown(truncate(payload.attacked_member.nation_name ?? 'Unknown nation', 180))}`);
+    const defender = payload.attacked_member;
+    const nation = linkedDisplayText(
+      defender?.nation_name,
+      'Unknown nation',
+      defender?.links?.nation,
+      120,
+    );
+    const leader = escapedDisplayText(defender?.leader_name, 'Unknown leader', 120);
+    const identity = attackedMention ? `${attackedMention} — ${nation}` : nation;
+    lines.push(`**Defending member:** ${identity} (${leader})`);
   }
+  lines.push('Target brief is below. Participant notifications and assignment details follow.');
   return lines;
 }
 
@@ -315,87 +338,236 @@ function buildWarRoomEmbed(command) {
   const target = payload.target ?? {};
   const links = payload.links ?? {};
   const createdAt = parseDate(command?.created_at) ?? new Date();
-  const attackType = payload?.attack_type?.label ?? payload?.attack_type?.key ?? 'Unspecified';
-  const sourceType = payload?.source?.type ?? 'war_plan';
+  const attackType = escapedDisplayText(
+    payload?.attack_type?.label ?? payload?.attack_type?.key,
+    'Unspecified',
+    80,
+  );
+  const reason = escapedDisplayText(payload.reason, 'Unspecified', 300);
+  const sourceType = normalizeSingleLine(payload?.source?.type, 'war plan', 80);
   const sourceId = payload?.source?.id ?? null;
-  const sourceLabel = sourceId ? `${sourceType} #${sourceId}` : sourceType;
-  const sourceLink = markdownLink(sourceLabel, payload?.source?.url);
-  const nationName = target.nation_name ?? 'Unknown nation';
-  const nationProfile = safeUrl(links.target_nation);
+  const sourceLabel = sourceId
+    ? `${sourceType.replace(/[_-]+/g, ' ')} #${normalizeSingleLine(sourceId, 'unknown', 40)}`
+    : sourceType.replace(/[_-]+/g, ' ');
+  const escapedSourceLabel = escapedDisplayText(sourceLabel, 'War plan', 120);
+  const nationName = normalizeSingleLine(target.nation_name, 'Unknown nation', 120);
+  const leaderName = escapedDisplayText(target.leader_name, 'Unknown leader', 120);
+  const nationProfile = safeOutputUrl(links.target_nation, 2048);
   const nationLink = markdownLink(nationName, nationProfile);
-  const objectives = [];
-  if (links.declare_war) objectives.push(`⚔️ ${markdownLink('Declare war', links.declare_war)}`);
-  if (links.war_simulators) objectives.push(`🧪 ${markdownLink('War simulators', links.war_simulators)}`);
-  if (payload.source?.url) objectives.push(`🧭 ${markdownLink('Source plan', payload.source.url)}`);
+  const actionLinks = [
+    ['Declare war', links.declare_war],
+    ['War simulators', links.war_simulators],
+    ['Source plan', payload?.source?.url],
+  ].flatMap(([label, url]) => {
+    const href = safeOutputUrl(url);
+    return href ? [markdownLink(label, href)] : [];
+  });
 
   return buildEmbed({
-    title: `⚔️ Target Brief: ${target.leader_name ?? 'Unknown leader'}`,
+    title: `⚔️ Target Brief — ${escapedDisplayText(nationName, 'Unknown nation', 120)}`,
     color: 0xb02e26,
-    description: [
-      `**Target:** ${nationLink} (${escapeMarkdown(target.leader_name ?? 'Unknown leader')})`,
-      `**Attack Type:** ${escapeMarkdown(attackType)}`,
-      `**Source:** ${sourceLink}`,
-      objectives.length ? `\n${objectives.join(' • ')}` : '',
-    ].filter(Boolean).join('\n'),
+    description: `**${nationLink}** — ${leaderName}`,
     fields: [
-      { name: 'Alliance', value: formatAlliance(target.alliance), inline: true },
-      { name: 'Score / Cities', value: `${formatNumber(target.score)} / ${formatNumber(target.cities)}`, inline: true },
       {
-        name: 'War Loadout',
-        value: `Off: ${formatNumber(target.offensive_wars)} | Def: ${formatNumber(target.defensive_wars)} | Beige Turns: ${formatNumber(target.beige_turns)}`,
-        inline: true,
+        name: 'Objective',
+        value: [
+          `**Attack type:** ${attackType}`,
+          `**Reason:** ${reason}`,
+          `**Source:** ${escapedSourceLabel}`,
+        ].join('\n'),
       },
-      { name: 'Military Snapshot', value: formatMilitaryMultiline(target.military) },
+      {
+        name: 'Target status',
+        value: [
+          formatAlliance(target.alliance, links.target_alliance),
+          `${formatNumber(target.score)} score · ${formatNumber(target.cities)} cities`,
+          `Wars: ${formatNumber(target.offensive_wars)} offensive · ${formatNumber(target.defensive_wars)} defensive · Beige: ${formatNumber(target.beige_turns)} turns`,
+        ].join('\n'),
+      },
+      { name: 'Military', value: formatMilitaryBrief(target.military) },
+      actionLinks.length ? { name: 'Links', value: actionLinks.join(' · ') } : null,
     ],
-    footer: 'Nexus AMS War Room',
     url: nationProfile,
   }).setTimestamp(createdAt);
 }
 
-function formatAlliance(alliance = {}) {
-  return escapeMarkdown(`${alliance?.name ?? 'No alliance'}${alliance?.acronym ? ` (${alliance.acronym})` : ''}`);
+function formatAlliance(alliance = {}, url = null) {
+  const name = normalizeSingleLine(alliance?.name, 'No alliance', 120);
+  const acronym = alliance?.acronym
+    ? normalizeSingleLine(alliance.acronym, '', 24)
+    : '';
+  const label = acronym ? `${name} (${acronym})` : name;
+  return markdownLink(label, safeOutputUrl(url ?? alliance?.url ?? alliance?.link));
 }
 
-function formatMemberLine(member, index) {
-  const nationName = member?.nation_name ?? 'Unknown nation';
-  const nation = member?.links?.nation ? `[${nationName}](${member.links.nation})` : nationName;
-  return `${index + 1}. ${buildWarRoomMemberMention(member) ?? 'No Discord link'} | ${nation} (${member?.leader_name ?? 'Unknown leader'}) | Match: ${formatNumber(member?.match_score)} | Score: ${formatNumber(member?.score)} | Cities: ${formatNumber(member?.cities)} | Role: ${member?.role ?? 'counter'} | Wars O/D: ${formatNumber(member?.offensive_wars)}/${formatNumber(member?.defensive_wars)}`;
+function formatMilitaryBrief(military = {}) {
+  return [
+    `Soldiers ${formatNumber(military?.soldiers)} · Tanks ${formatNumber(military?.tanks)} · Aircraft ${formatNumber(military?.aircraft)} · Ships ${formatNumber(military?.ships)}`,
+    `Spies ${formatNumber(military?.spies)} · Missiles ${formatNumber(military?.missiles)} · Nukes ${formatNumber(military?.nukes)}`,
+  ].join('\n');
 }
 
-function buildWarRoomAssignmentMessages(payload) {
-  const assigned = Array.isArray(payload.assigned_members) ? payload.assigned_members : [];
-  const counters = assigned.filter((member) => `${member?.role ?? 'counter'}` !== 'defender');
+function formatMemberBlock(member, index, roleFallback = 'Counter') {
+  const nation = linkedDisplayText(member?.nation_name, 'Unknown nation', member?.links?.nation, 120);
+  const leader = escapedDisplayText(member?.leader_name, 'Unknown leader', 120);
+  const role = formatRoleLabel(member?.role, roleFallback);
+  return [
+    `**${index + 1}. ${nation}** — ${leader}`,
+    `${buildWarRoomMemberMention(member) ?? 'No Discord mention'} · ${role}`,
+    `Match ${formatNumber(member?.match_score)} · ${formatNumber(member?.score)} score · ${formatNumber(member?.cities)} cities · Wars ${formatNumber(member?.offensive_wars)}/${formatNumber(member?.defensive_wars)}`,
+  ].join('\n');
+}
+
+function buildWarRoomAssignmentMessages(payload, roster = selectAssignedMembers(payload.assigned_members)) {
+  const assigned = roster.members;
+  const counters = assigned.filter((member) => memberRoleKey(member) !== 'defender');
   const defenders = buildWarRoomParticipants(
-    assigned.filter((member) => `${member?.role ?? 'counter'}` === 'defender'),
+    assigned.filter((member) => memberRoleKey(member) === 'defender'),
     payload.attacked_member,
   );
-  const reason = typeof payload.reason === 'string' && payload.reason.trim() ? payload.reason.trim() : 'Unspecified';
-  return chunkDiscordMessage([
-    '### Friendly Assignments',
-    ...(counters.length ? counters.map(formatMemberLine) : ['No assigned friendly nations were provided for this target.']),
-    '',
-    '### Defending Nation',
-    ...(defenders.length ? defenders.map(formatMemberLine) : ['No defending nation was provided for this target.']),
-    '',
-    '### War Instructions',
-    `Attack Type: ${payload?.attack_type?.label ?? payload?.attack_type?.key ?? 'Unspecified'}`,
-    `Reason: ${reason}`,
-  ].join('\n'));
+  const attackType = escapedDisplayText(
+    payload?.attack_type?.label ?? payload?.attack_type?.key,
+    'Unspecified',
+    120,
+  );
+  const reason = escapedDisplayText(payload.reason, 'Unspecified', 700);
+  const sourcePlan = safeOutputUrl(payload?.source?.url);
+  const groups = [
+    {
+      title: 'Counters',
+      blocks: counters.length
+        ? counters.map((member, index) => formatMemberBlock(member, index, 'Counter'))
+        : ['No counter assignments were provided for this target.'],
+    },
+    {
+      title: 'Defender',
+      blocks: defenders.length
+        ? defenders.map((member, index) => formatMemberBlock(member, index, 'Defender'))
+        : ['No defending nation was provided for this target.'],
+    },
+  ];
+
+  if (roster.omittedCount > 0) {
+    groups.push({
+      title: 'Roster limit',
+      blocks: [[
+        `To keep this war room readable, ${formatNumber(roster.omittedCount)} additional assignment ${roster.omittedCount === 1 ? 'entry was' : 'entries were'} omitted from the Discord summary.`,
+        sourcePlan ? markdownLink('Open the source plan for the complete roster', sourcePlan) : null,
+      ].filter(Boolean).join('\n')],
+    });
+  }
+
+  groups.push({
+    title: 'Instructions',
+    blocks: [[
+      `**Attack type:** ${attackType}`,
+      `**Reason:** ${reason}`,
+    ].join('\n')],
+  });
+
+  return paginateSectionedBlocks('Assignments', groups);
 }
 
 function buildWarRoomMentionMessages(mentions) {
-  if (!mentions.length) return ['### Assigned Friendlies\nNo Discord mentions available for this target.'];
-  const messages = [];
-  let current = '### Assigned Friendlies\n';
+  if (!mentions.length) {
+    return [[
+      '## Participant Notifications',
+      '',
+      'No linked Discord accounts were available for the defender or assigned nations. Assignment details follow.',
+    ].join('\n')];
+  }
+
+  const bodyPrefix = 'The following linked participants are being notified about this war room:';
+  const bodySuffix = 'Assignment details follow in a separate message.';
+  const pages = [];
+  let current = [];
   for (const mention of mentions) {
-    const token = `${mention} `;
-    if ((current + token).length <= 1900) {
-      current += token;
-    } else {
-      messages.push(current.trimEnd());
-      current = `### Assigned Friendlies\n${token}`;
+    const candidate = [...current, mention];
+    const body = [bodyPrefix, '', candidate.join(' '), '', bodySuffix].join('\n');
+    if (body.length <= PAGINATED_BODY_LIMIT) {
+      current = candidate;
+      continue;
+    }
+    if (current.length) pages.push(current);
+    current = [mention];
+  }
+  if (current.length) pages.push(current);
+
+  return pages.map((page, index) => [
+    `## Participant Notifications — Part ${index + 1} of ${pages.length}`,
+    '',
+    bodyPrefix,
+    '',
+    page.join(' '),
+    '',
+    bodySuffix,
+  ].join('\n'));
+}
+
+function paginateSectionedBlocks(title, groups) {
+  const pages = [];
+  let current = '';
+  let currentSections = new Set();
+
+  for (const group of groups) {
+    for (const block of group.blocks) {
+      const needsHeading = !currentSections.has(group.title);
+      const segment = `${needsHeading ? `### ${group.title}\n` : ''}${block}`;
+      const candidate = current ? `${current}\n\n${segment}` : segment;
+
+      if (candidate.length <= PAGINATED_BODY_LIMIT) {
+        current = candidate;
+        currentSections.add(group.title);
+        continue;
+      }
+
+      if (current) pages.push(current);
+      current = `### ${group.title}\n${block}`;
+      currentSections = new Set([group.title]);
     }
   }
-  if (current.trim()) messages.push(current.trimEnd());
-  return messages;
+
+  if (current) pages.push(current);
+  return pages.map((body, index) => [
+    `## ${title} — Part ${index + 1} of ${pages.length}`,
+    '',
+    body,
+  ].join('\n'));
+}
+
+function memberRoleKey(member) {
+  return normalizeSingleLine(member?.role, 'counter', 60).toLowerCase();
+}
+
+function formatRoleLabel(value, fallback) {
+  const normalized = normalizeSingleLine(value, fallback, 60).replace(/[_-]+/g, ' ');
+  const label = normalized.replace(/\b\w/g, (character) => character.toUpperCase());
+  return escapeMarkdown(label);
+}
+
+function linkedDisplayText(value, fallback, url, maxLength) {
+  return markdownLink(
+    normalizeSingleLine(value, fallback, maxLength),
+    safeOutputUrl(url),
+  );
+}
+
+function escapedDisplayText(value, fallback, maxLength) {
+  return escapeMarkdown(normalizeSingleLine(value, fallback, maxLength));
+}
+
+function normalizeSingleLine(value, fallback, maxLength) {
+  const normalized = value === undefined || value === null
+    ? ''
+    : String(value)
+      .replace(/[\u0000-\u001f\u007f]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  const result = normalized || fallback;
+  return result ? truncate(result, maxLength, '') : '';
+}
+
+function safeOutputUrl(value, maxLength = MAX_OUTPUT_URL_LENGTH) {
+  const href = safeUrl(value);
+  return href && href.length <= maxLength ? href : null;
 }

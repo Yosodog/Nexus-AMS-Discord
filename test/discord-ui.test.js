@@ -14,6 +14,7 @@ import {
 import {
   allianceUrl,
   buildEmbed,
+  buildPlainMessages,
   cleanText,
   escapeMarkdown,
   formatDiscordTime,
@@ -69,7 +70,7 @@ const raidTarget = (id) => ({
   alliance_url: 'https://politicsandwar.com/alliance/id=456',
 });
 
-test('raid collections render useful target context and paginate local arrays', () => {
+test('raid collections render readable plain-text targets with working links and pagination', () => {
   const sessions = sessionStore();
   const payload = collectionMessage({
     title: 'Raid Targets',
@@ -82,14 +83,15 @@ test('raid collections render useful target context and paginate local arrays', 
     baseUrl: 'https://nexus.example',
   });
 
-  const embed = embedJson(payload);
-  assert.equal(embed.fields.length, 2);
-  assert.match(embed.fields[0].name, /Target Nation 1/);
-  assert.match(embed.fields[0].name, /Leader 1/);
-  assert.match(embed.fields[0].value, /Target Alliance/);
-  assert.match(embed.fields[0].value, /Estimated loot:\*\* \$42,157,764/);
-  assert.match(embed.fields[0].value, /Soldiers:\*\* 120,000/);
-  assert.equal(embed.footer.text, '1–2 of 4 targets · Page 1/2');
+  assert.deepEqual(payload.embeds, []);
+  assert.ok(payload.content.length <= 2_000);
+  assert.match(payload.content, /## ⚔️ Raid Targets/);
+  assert.match(payload.content, /\[Target Nation 1\]\(https:\/\/politicsandwar\.com\/nation\/id=1\)/);
+  assert.match(payload.content, /Leader 1/);
+  assert.match(payload.content, /Target Alliance/);
+  assert.match(payload.content, /Estimated loot:\*\* \$42,157,764/);
+  assert.match(payload.content, /Soldiers:\*\* 120,000/);
+  assert.match(payload.content, /1–2 of 4 targets · Page 1\/2/);
   assert.equal(payload.components.length, 1);
 
   const buttons = payload.components[0].toJSON().components;
@@ -105,10 +107,9 @@ test('raid collections render useful target context and paginate local arrays', 
     sessions,
     userId: '123456789012345678',
   });
-  const secondEmbed = embedJson(secondPage);
-  assert.equal(secondEmbed.fields.length, 2);
-  assert.match(secondEmbed.fields[0].name, /Target Nation 3/);
-  assert.equal(secondEmbed.footer.text, '3–4 of 4 targets · Page 2/2');
+  assert.deepEqual(secondPage.embeds, []);
+  assert.match(secondPage.content, /Target Nation 3/);
+  assert.match(secondPage.content, /3–4 of 4 targets · Page 2\/2/);
 });
 
 test('collection pagination controls are routed without command-specific button handlers', async () => {
@@ -147,7 +148,7 @@ test('collection pagination controls are routed without command-specific button 
   await client.handlers.get(Events.InteractionCreate)(interaction);
 
   assert.ok(updatedPayload);
-  assert.match(embedJson(updatedPayload).fields[0].name, /Target Nation 3/);
+  assert.match(updatedPayload.content, /Target Nation 3/);
   assert.equal(logger.entries.warn.length, 0);
   assert.equal(logger.entries.error.length, 0);
 });
@@ -171,6 +172,42 @@ test('embed builder enforces Discord per-part and total text budgets', () => {
   assert.ok((embed.description?.length ?? 0) <= 4096);
   assert.ok((embed.fields ?? []).every((field) => field.name.length <= 256 && field.value.length <= 1024));
   assert.ok(totalCharacters <= 6000);
+});
+
+test('long plain-text output is split into complete Discord-sized continuation messages', () => {
+  const messages = buildPlainMessages({
+    title: 'War Simulation',
+    tone: 'military',
+    description: Array.from({ length: 30 }, (_, index) => `Simulation paragraph ${index + 1}: ${'detail '.repeat(25)}`).join('\n\n'),
+    footer: 'Verify the live war state before acting.',
+  });
+
+  assert.ok(messages.length > 1);
+  assert.ok(messages.every((message) => message.content.length <= 2_000));
+  assert.ok(messages.every((message) => message.embeds.length === 0));
+  assert.match(messages[0].content, /## ⚔️ War Simulation — Part 1 of \d+/);
+  assert.match(messages[1].content, /War Simulation — Part 2 of \d+/);
+  assert.match(messages.at(-1).content, /Verify the live war state before acting/);
+});
+
+test('embed collection links are placed in field values instead of unsupported field headers', () => {
+  const payload = collectionMessage({
+    title: 'Your Requests',
+    collection: normalizeCollection([{
+      id: 7,
+      type: 'war_aid',
+      status: 'pending',
+      deep_link_path: '/requests/7',
+    }]),
+    commandName: 'requests',
+    userId: '123456789012345678',
+    variant: 'request',
+    baseUrl: 'https://nexus.example',
+  });
+  const embed = embedJson(payload);
+
+  assert.doesNotMatch(embed.fields[0].name, /\]\(/);
+  assert.match(embed.fields[0].value, /\[Open request in Nexus\]\(https:\/\/nexus\.example\/requests\/7\)/);
 });
 
 test('shared formatters produce readable values and reject unsafe links', () => {
@@ -201,6 +238,7 @@ test('shared UI primitives handle empty, malformed, and alternate value shapes',
   assert.equal(resolveDeepLink('https://nexus.example', 'https://example.com/item'), 'https://example.com/item');
   assert.equal(resolveDeepLink('not-a-url', '/requests/1'), null);
   assert.equal(markdownLink('Unsafe *label*', 'javascript:alert(1)'), 'Unsafe \\*label\\*');
+  assert.equal(markdownLink('Safe label', 'https://example.com/a(b)'), '[Safe label](https://example.com/a%28b%29)');
   assert.equal(statusLabel(null), null);
   assert.equal(statusLabel('custom_state'), '• Custom State');
   assert.equal(statusTone('approved'), 'success');
@@ -292,6 +330,7 @@ test('collection support handles API envelopes, remote pages, empty states, and 
     reply: async (payload) => { replied = payload; },
   }, { code: 'NOT_FOUND' });
   assert.match(embedJson(replied).description, /no longer available/);
+  assert.match(embedJson(replied).footer.text, /Refresh the list/);
 
   let edited = null;
   await replyError({

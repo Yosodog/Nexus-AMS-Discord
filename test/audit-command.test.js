@@ -33,15 +33,27 @@ test('audit status renders only the actor audit collection', async () => {
   let receivedActor;
   await execute(interaction, {
     apiService: {
+      baseUrl: 'https://nexus.example',
       getMyAuditFindings: async (value) => {
         receivedActor = value;
-        return [{ id: 7, name: 'Warchest', priority: 'high' }];
+        return [{
+          id: 7,
+          name: 'Warchest below requirement',
+          description: 'Deposit enough resources to meet the alliance minimum.',
+          priority: 'high',
+          target: 'Nation-wide',
+          target_type: 'nation',
+        }];
       },
     },
   });
   assert.equal(receivedActor.discordUserId, actor.id);
   assert.equal(interaction.replies.length, 1);
-  assert.equal(interaction.replies[0].embeds[0].data.title, 'Your Audit Findings');
+  const embed = interaction.replies[0].embeds[0].data;
+  assert.equal(embed.title, 'Your Audit Findings');
+  assert.match(embed.description, /Open the audit center in Nexus/);
+  assert.match(embed.fields[0].name, /Warchest below requirement/);
+  assert.match(embed.fields[0].value, /Deposit enough resources/);
 });
 
 test('audit acknowledge and snooze forward mutation inputs to Nexus', async () => {

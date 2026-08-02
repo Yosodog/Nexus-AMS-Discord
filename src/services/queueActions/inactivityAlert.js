@@ -90,31 +90,60 @@ export const execute = async (command, context) => {
 function buildInactivityAlertEmbed(command) {
   const payload = command?.payload ?? {};
   const leader = payload.leader_name ?? 'Unknown leader';
-  const nationName = payload.nation_name ?? 'Unknown nation';
-  const nationId = payload.nation_id ? `, #${payload.nation_id}` : '';
+  const nationName = escapeMarkdown(payload.nation_name ?? 'Unknown nation');
   const lastActiveAt = parseDate(payload.last_active_at);
   const createdAt = parseDate(command?.created_at) ?? new Date();
   const threshold = payload.threshold_hours ?? extractThresholdFromMessage(payload.message);
-
   const profileUrl = nationUrl({ id: payload.nation_id });
-  const fields = [{
-      name: 'Last Active',
-      value: lastActiveAt
-        ? `${formatDiscordTime(lastActiveAt, 'f')} (${formatDiscordTime(lastActiveAt, 'R')})`
-        : 'Unknown',
-    }];
+  const descriptionLines = [lastActiveAt
+    ? `**${escapeMarkdown(leader)}** was last active ${formatDiscordTime(lastActiveAt, 'R')} (${formatDiscordTime(lastActiveAt, 'f')}).`
+    : `The last active time for **${escapeMarkdown(leader)}** is unavailable.`];
 
-  if (threshold) {
-    fields.push({ name: 'Threshold', value: `${threshold}h`, inline: true });
+  if (profileUrl) {
+    descriptionLines.push('', markdownLink('Open nation profile', profileUrl));
+  }
+
+  const fields = [];
+  const inactiveFor = formatInactiveDuration(lastActiveAt, createdAt);
+  if (inactiveFor) {
+    fields.push({ name: 'Inactive for', value: inactiveFor, inline: true });
+  }
+
+  const thresholdLabel = formatHours(threshold);
+  if (thresholdLabel) {
+    fields.push({ name: 'Alert threshold', value: thresholdLabel, inline: true });
   }
 
   return buildEmbed({
-    title: '⏰ Inactivity Alert',
+    title: `⏰ Inactivity Warning — ${nationName}`,
     color: 0xe67700,
-    description: `**${escapeMarkdown(leader)}** (${markdownLink(`${nationName}${nationId}`, profileUrl)}) has exceeded inactivity limits.`,
+    description: descriptionLines.join('\n'),
     fields,
     url: profileUrl,
-  }).setTimestamp(lastActiveAt ?? createdAt);
+  }).setTimestamp(createdAt);
+}
+
+function formatInactiveDuration(lastActiveAt, referenceTime) {
+  if (!lastActiveAt || !referenceTime) return null;
+
+  const elapsedMilliseconds = referenceTime.getTime() - lastActiveAt.getTime();
+  if (!Number.isFinite(elapsedMilliseconds) || elapsedMilliseconds < 0) return null;
+
+  const totalHours = Math.floor(elapsedMilliseconds / 3_600_000);
+  if (totalHours < 1) return 'Less than 1 hour';
+
+  const days = Math.floor(totalHours / 24);
+  const hours = totalHours % 24;
+  const parts = [];
+  if (days > 0) parts.push(`${days} ${days === 1 ? 'day' : 'days'}`);
+  if (hours > 0) parts.push(`${hours} ${hours === 1 ? 'hour' : 'hours'}`);
+  return parts.join(' ');
+}
+
+function formatHours(value) {
+  const hours = Number(value);
+  if (!Number.isFinite(hours) || hours <= 0) return null;
+  return `${new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(hours)} ${hours === 1 ? 'hour' : 'hours'}`;
 }
 
 function normalizeSnowflake(value) {

@@ -101,6 +101,29 @@ test('archiveWarCounterRoom is idempotent for an already archived and locked thr
   assert.deepEqual(result, { success: true, channelId: THREAD_ID });
 });
 
+test('archiveWarCounterRoom sanitizes user-facing title prefixes before renaming', async () => {
+  let renamedTo;
+  const thread = {
+    id: THREAD_ID,
+    guildId: GUILD_ID,
+    name: 'counter-room',
+    archived: true,
+    locked: true,
+    isThread: () => true,
+    setName: async (name) => { renamedTo = name; },
+  };
+
+  await archiveWarCounterRoom({
+    client: { channels: { cache: new Map([[THREAD_ID, thread]]) } },
+    logger: createLogger(),
+    channelId: THREAD_ID,
+    guildId: GUILD_ID,
+    titlePrefix: '[Done]\n  ',
+  });
+
+  assert.equal(renamedTo, '[Done] counter-room');
+});
+
 test('archiveWarCounterRoom reports missing, unavailable, and non-thread targets', async () => {
   const logger = createLogger();
   const unavailableClient = {

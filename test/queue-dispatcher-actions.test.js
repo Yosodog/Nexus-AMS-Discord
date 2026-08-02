@@ -336,6 +336,78 @@ test('QueueDispatcher delivers richly formatted alert actions with inert default
   assert.equal(sent.every((payload) => payload.enforceNonce && payload.nonce.length <= 25), true);
   assert.deepEqual(sent[0].allowedMentions, { parse: [], repliedUser: false });
   assert.deepEqual(sent[1].allowedMentions, { users: ['423456789012345678'] });
+
+  const departureEmbed = sent[0].embeds[0].toJSON();
+  assert.match(departureEmbed.title, /Alliance Departure — Former Nation/);
+  assert.match(departureEmbed.description, /Former Leader.*left.*Old Alliance/);
+  assert.equal(departureEmbed.fields, undefined);
+
+  const inactivityEmbed = sent[1].embeds[0].toJSON();
+  assert.match(inactivityEmbed.title, /Inactivity Warning — Sleepy Nation/);
+  assert.match(inactivityEmbed.description, /last active <t:/);
+  assert.deepEqual(inactivityEmbed.fields.map((field) => field.name), ['Inactive for', 'Alert threshold']);
+
+  assert.match(sent[2].content, /## 🟨 Beige Watch — Expected to Leave Beige This Turn/);
+  assert.match(sent[2].content, /\[Target Nation\]\(https:\/\/politicsandwar\.com\/nation\/id=99\)/);
+  assert.match(sent[2].content, /\*\*Part:\*\* 1 of 1/);
+  assert.doesNotMatch(sent[2].content, /🪖|🛡️|✈️|🚢|🕵️|🎯|☢️/);
+
+  const beigeExitEmbed = sent[3].embeds[0].toJSON();
+  assert.match(beigeExitEmbed.title, /Beige Exit — Target Nation/);
+  assert.match(beigeExitEmbed.description, /no longer protected by beige/);
+  assert.deepEqual(beigeExitEmbed.fields.map((field) => field.name), [
+    'Alliance', 'Score', 'Cities', 'Previous beige', 'Military',
+  ]);
+  assert.equal(beigeExitEmbed.footer, undefined);
+});
+
+test('BEIGE_ALERT paginates complete safe nation blocks within Discord limits', async () => {
+  const sent = [];
+  const channelId = '323456789012345678';
+  const channel = {
+    id: channelId,
+    guildId: GUILD_ID,
+    isTextBased: () => true,
+    send: async (payload) => { sent.push(payload); return { id: `beige-${sent.length}` }; },
+  };
+  const client = createBaseClient();
+  client.channels.cache.set(channelId, channel);
+  const dispatcher = new QueueDispatcher({ client, logger: createLogger(), guildId: GUILD_ID });
+  const nations = Array.from({ length: 12 }, (_, index) => ({
+    id: index + 1,
+    nation_name: index === 0 ? 'Target ](https://evil.example)' : `Long Target Nation ${index + 1} ${'X'.repeat(55)}`,
+    leader_name: `Leader ${index + 1}`,
+    score: 1200 + index,
+    cities: 20,
+    beige_turns: 1,
+    alliance: { name: `Alliance ${index + 1}` },
+    links: {
+      nation: index === 0 ? 'javascript:alert(1)' : `https://politicsandwar.com/nation/id=${index + 1}`,
+      alliance: `https://politicsandwar.com/alliance/id=${index + 1}`,
+    },
+    military: { soldiers: 1000, tanks: 200, aircraft: 50, ships: 10, spies: 20, missiles: 3, nukes: 1 },
+  }));
+
+  const result = await dispatcher.dispatch({
+    id: 'beige-many',
+    action: 'BEIGE_ALERT',
+    created_at: '2026-07-10T00:00:00Z',
+    payload: {
+      channel_id: channelId,
+      event_type: 'upcoming_turn_exit',
+      turn_change_at: '2026-07-10T02:00:00Z',
+      nation_count: nations.length,
+      nations,
+    },
+  });
+
+  assert.deepEqual(result, { success: true });
+  assert.ok(sent.length > 1);
+  assert.ok(sent.every((message) => message.content.length <= 2_000));
+  assert.ok(sent.every((message) => /## 🟨 Beige Watch/.test(message.content)));
+  assert.ok(sent.every((message) => /\*\*Part:\*\* \d+ of \d+/.test(message.content)));
+  assert.equal(sent.reduce((count, message) => count + (message.content.match(/^### /gm)?.length ?? 0), 0), nations.length);
+  assert.doesNotMatch(sent.map((message) => message.content).join('\n'), /\]\(https:\/\/evil\.example\)/);
 });
 
 test('QueueDispatcher rejects foreign-guild channels without sending', async () => {

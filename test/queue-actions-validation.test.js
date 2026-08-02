@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { queueActions } from '../src/services/queueActions/index.js';
 import { QueueActionRuntime, extractUserSnowflakes } from '../src/services/queueActions/runtime.js';
 import {
-  chunkDiscordMessage,
   formatDiscordTime,
   formatNumber,
   parseDate,
@@ -76,6 +75,47 @@ test('PRIVATE_NOTIFICATION accepts only versioned structured events and reports 
     success: true,
     result: { delivery: 'undeliverable', reason: 'user_unavailable' },
   });
+});
+
+test('PRIVATE_NOTIFICATION renders useful audit counts, details, tone, timestamp, and link', async () => {
+  const action = queueActions.PRIVATE_NOTIFICATION;
+  const payload = {
+    contract_version: 1,
+    recipient_discord_id: USER_ID,
+    event_type: 'audit_summary_reminder',
+    notification_id: 'audit-summary-42',
+    subject: { type: 'audit_summary', id: 42, label: 'Audit findings' },
+    occurred_at: '2026-07-10T12:00:00Z',
+    deep_link_path: '/audit',
+    summary: {
+      status: 'needs_attention',
+      finding_count: 3,
+      overdue_count: 1,
+      finding_name: 'Warchest below requirement',
+    },
+  };
+  let message;
+  await action.execute({ id: 'queue-audit', payload }, {
+    apiService: { baseUrl: 'https://nexus.example' },
+    logger: createLogger(),
+    canContinue: () => true,
+    resolveUser: async (id) => ({ id }),
+    sendDirectMessage: async (_user, _command, _step, outgoing) => {
+      message = outgoing;
+      return { id: 'dm-audit' };
+    },
+  });
+
+  const embed = message.embeds[0].toJSON();
+  assert.equal(embed.title, 'Audit Findings Need Attention');
+  assert.equal(embed.url, 'https://nexus.example/audit');
+  assert.equal(embed.color, 0xed4245);
+  assert.match(embed.description, /3 active audit findings need attention/);
+  assert.match(embed.description, /Warchest below requirement/);
+  assert.match(embed.description, /Overdue:\*\* 1/);
+  assert.match(embed.description, /Review audit findings in Nexus/);
+  assert.equal(embed.timestamp, '2026-07-10T12:00:00.000Z');
+  assert.equal(embed.footer, undefined);
 });
 
 test('channel alert action validators distinguish absent, malformed, and valid targets', () => {
@@ -277,7 +317,7 @@ test('QueueActionRuntime resolves cached/fetched guilds and exposes lease contin
   assert.equal(failedLogger.entries.warn.length, 1);
 });
 
-test('queue action support safely parses, formats, and chunks Discord content', () => {
+test('queue action support safely parses and formats Discord content', () => {
   const date = parseDate('2026-07-10T00:00:00Z');
   assert.equal(date instanceof Date, true);
   assert.equal(parseDate('not-a-date'), null);
@@ -285,7 +325,4 @@ test('queue action support safely parses, formats, and chunks Discord content', 
   assert.equal(formatDiscordTime(null), 'Unknown');
   assert.equal(formatNumber(1234), '1,234');
   assert.equal(formatNumber('not-a-number'), '—');
-  assert.deepEqual(chunkDiscordMessage('short', 10), ['short']);
-  assert.deepEqual(chunkDiscordMessage('first\nsecond', 6), ['first', 'second']);
-  assert.deepEqual(chunkDiscordMessage('abcdefgh', 3), ['abc', 'def', 'gh']);
 });

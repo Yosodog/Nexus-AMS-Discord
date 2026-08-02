@@ -126,36 +126,19 @@ function buildBeigeTurnMessages(command) {
 
   const eventLabel = describeBeigeEvent(payload.event_type, payload.window);
   const count = payload.nation_count ?? nations.length;
-  const headerParts = ['🟨 **Beige Watch**', eventLabel, `Nations: **${formatNumber(count)}**`];
+  const blocks = nations.map((nation, index) => formatBeigeNationBlock(nation, index));
 
-  if (turnTime) {
-    headerParts.push(
-      `Turn: ${formatDiscordTime(turnTime, 'f')} (${formatDiscordTime(turnTime, 'R')})`,
-    );
-  } else if (createdAt) {
-    headerParts.push(`Updated: ${formatDiscordTime(createdAt, 'R')}`);
-  }
-
-  const lines = nations.map((nation, index) => {
-    const nationName = nation?.nation_name ?? 'Unknown nation';
-    const leader = nation?.leader_name ?? 'Unknown leader';
-    const nationLink = nation?.links?.nation ?? null;
-    const allianceName = nation?.alliance?.name ?? 'No alliance';
-    const allianceLink = nation?.links?.alliance ?? null;
-    const score = formatNumber(nation?.score);
-    const cities = formatNumber(nation?.cities);
-    const beigeTurns = formatNumber(nation?.beige_turns);
-    const military = nation?.military ?? {};
-    const declareWarUrl = buildDeclareWarUrl(nation?.id);
-
-    const nationLabel = nationLink ? `[${nationName}](${nationLink})` : nationName;
-    const allianceLabel = allianceLink ? `[${allianceName}](${allianceLink})` : allianceName;
-    const declareWarLabel = declareWarUrl ? `[Declare War](${declareWarUrl})` : 'Declare War: —';
-
-    return `${index + 1}. ${nationLabel} (${leader}) | ${allianceLabel} | ${declareWarLabel} | Score: ${score} | Cities: ${cities} | Beige: ${beigeTurns} | Mil: 🪖 ${formatNumber(military.soldiers)} • 🛡️ ${formatNumber(military.tanks)} • ✈️ ${formatNumber(military.aircraft)} • 🚢 ${formatNumber(military.ships)} • 🕵️ ${formatNumber(military.spies)} • 🎯 ${formatNumber(military.missiles)} • ☢️ ${formatNumber(military.nukes)}`;
-  });
-
-  return chunkDiscordMessage([headerParts.join(' | '), ...lines].join('\n'));
+  return paginateDiscordBlocks(
+    blocks,
+    (part, totalParts) => buildBeigeTurnHeader({
+      eventLabel,
+      count,
+      turnTime,
+      createdAt,
+      part,
+      totalParts,
+    }),
+  );
 }
 
 function buildBeigeExitEmbed(command) {
@@ -163,133 +146,202 @@ function buildBeigeExitEmbed(command) {
   const nation = payload.nation ?? {};
   const createdAt = parseDate(command?.created_at) ?? new Date();
   const detectedAt = parseDate(payload.detected_at) ?? createdAt;
-  const nationLabel = nation.nation_name ?? 'Unknown nation';
-  const leader = nation.leader_name ?? 'Unknown leader';
+  const nationLabel = formatLabel(nation.nation_name, 'Unknown nation', 80);
+  const leader = formatLabel(nation.leader_name, 'Unknown leader', 80);
   const declareWarUrl = buildDeclareWarUrl(nation.id);
-  const declareWarLink = declareWarUrl ? markdownLink('Open declare war page', declareWarUrl) : 'Unavailable';
-  const nationLink = safeUrl(nation.links?.nation);
+  const nationLink = formatSafeUrl(nation.links?.nation);
+  const description = [
+    `**${escapeMarkdown(leader)}** is no longer protected by beige (${formatDiscordTime(detectedAt, 'R')}).`,
+    declareWarUrl ? formatSafeMarkdownLink('Declare war', declareWarUrl) : null,
+  ].filter(Boolean).join('\n');
 
   return buildEmbed({
-    title: '🟨 Beige Exit Alert',
+    title: `🟨 Beige Exit — ${escapeMarkdown(nationLabel)}`,
     color: 0xd4b06a,
-    description: `**${escapeMarkdown(leader)}** of ${markdownLink(nationLabel, nationLink)} is no longer beige.`,
+    description,
     url: nationLink,
     fields: [
-      {
-        name: 'Nation',
-        value: `${markdownLink(nationLabel, nationLink)}\nLeader: ${escapeMarkdown(leader)}`,
-        inline: true,
-      },
       {
         name: 'Alliance',
         value: formatAllianceWithLink(nation),
         inline: true,
       },
       {
-        name: 'Stats',
-        value: `Score: ${formatNumber(nation.score)}\nCities: ${formatNumber(nation.cities)}\nPrevious Beige Turns: ${formatNumber(payload.previous_beige_turns ?? 0)}`,
+        name: 'Score',
+        value: formatNumber(nation.score),
         inline: true,
       },
       {
-        name: 'Military Snapshot',
-        value: formatMilitaryMultiline(nation.military),
+        name: 'Cities',
+        value: formatNumber(nation.cities, 0),
+        inline: true,
       },
       {
-        name: 'Detected',
-        value: `${formatDiscordTime(detectedAt, 'f')} (${formatDiscordTime(detectedAt, 'R')})`,
+        name: 'Previous beige',
+        value: formatCount(payload.previous_beige_turns ?? 0, 'turn', 'turns'),
+        inline: true,
       },
       {
-        name: 'War Link',
-        value: `⚔️ ${declareWarLink}`,
+        name: 'Military',
+        value: formatMilitaryCompact(nation.military),
       },
     ],
-    footer: `Event: ${payload.event_type ?? 'beige_exit'}`,
   }).setTimestamp(detectedAt);
 }
 
 function formatAllianceWithLink(nation = {}) {
   const alliance = nation.alliance ?? {};
-  const name = alliance.name ?? 'No alliance';
+  const name = formatLabel(alliance.name, 'No alliance', 80);
   const link = nation.links?.alliance ?? null;
 
-  return markdownLink(name, link);
+  return formatSafeMarkdownLink(name, link);
 }
 
-function formatMilitaryMultiline(military = {}) {
+function formatMilitaryCompact(military = {}) {
   return [
-    `🪖 Soldiers: ${formatNumber(military.soldiers)}`,
-    `🛡️ Tanks: ${formatNumber(military.tanks)}`,
-    `✈️ Aircraft: ${formatNumber(military.aircraft)}`,
-    `🚢 Ships: ${formatNumber(military.ships)}`,
-    `🕵️ Spies: ${formatNumber(military.spies)}`,
-    `🎯 Missiles: ${formatNumber(military.missiles)}`,
-    `☢️ Nukes: ${formatNumber(military.nukes)}`,
+    `Soldiers ${formatNumber(military.soldiers, 0)} · Tanks ${formatNumber(military.tanks, 0)} · Aircraft ${formatNumber(military.aircraft, 0)} · Ships ${formatNumber(military.ships, 0)}`,
+    `Spies ${formatNumber(military.spies, 0)} · Missiles ${formatNumber(military.missiles, 0)} · Nukes ${formatNumber(military.nukes, 0)}`,
   ].join('\n');
+}
+
+function formatBeigeNationBlock(nation = {}, index) {
+  const nationName = formatLabel(nation.nation_name, 'Unknown nation', 80);
+  const leader = formatLabel(nation.leader_name, 'Unknown leader', 80);
+  const allianceName = formatLabel(nation.alliance?.name, 'No alliance', 80);
+  const nationLabel = formatSafeMarkdownLink(nationName, nation.links?.nation);
+  const allianceLabel = formatSafeMarkdownLink(allianceName, nation.links?.alliance);
+  const declareWarUrl = buildDeclareWarUrl(nation.id);
+
+  return [
+    `### ${index + 1}. ${nationLabel} — ${escapeMarkdown(leader)}`,
+    `**Alliance:** ${allianceLabel}`,
+    `**Status:** ${formatCount(nation.cities, 'city', 'cities')} · ${formatNumber(nation.score)} score · ${formatCount(nation.beige_turns, 'beige turn', 'beige turns')}`,
+    `**Military:** ${formatMilitaryCompact(nation.military)}`,
+    declareWarUrl ? formatSafeMarkdownLink('Declare war', declareWarUrl) : null,
+  ].filter(Boolean).join('\n');
+}
+
+function buildBeigeTurnHeader({
+  eventLabel,
+  count,
+  turnTime,
+  createdAt,
+  part,
+  totalParts,
+}) {
+  const context = [];
+
+  if (turnTime) {
+    context.push(`**Turn:** ${formatDiscordTime(turnTime, 'f')} (${formatDiscordTime(turnTime, 'R')})`);
+  } else if (createdAt) {
+    context.push(`**Updated:** ${formatDiscordTime(createdAt, 'R')}`);
+  }
+
+  context.push(`**Nations:** ${formatNumber(count, 0)}`);
+  context.push(`**Part:** ${part} of ${totalParts}`);
+
+  return `## 🟨 Beige Watch — ${eventLabel}\n${context.join(' · ')}`;
 }
 
 function describeBeigeEvent(eventType, window) {
   if (eventType === 'upcoming_turn_exit') {
-    return 'Expected exits this turn';
+    return 'Expected to Leave Beige This Turn';
   }
 
   if (eventType === 'turn_exit') {
-    return 'Exited this turn';
+    return 'Left Beige This Turn';
   }
 
   if (eventType === 'early_exit') {
-    return 'Early beige exits';
+    return 'Early Beige Exits';
   }
 
-  if (window === 'pre_turn') {
-    return 'Pre-turn beige status';
+  if (window === 'pre_turn' || window === 'upcoming') {
+    return 'Expected to Leave Beige This Turn';
   }
 
   if (window === 'post_turn') {
-    return 'Post-turn beige status';
+    return 'Post-Turn Beige Status';
   }
 
-  return 'Beige status update';
+  return 'Beige Status Update';
 }
 
-function chunkDiscordMessage(text, maxLength = 1900) {
-  if (typeof text !== 'string' || text.length <= maxLength) {
-    return [text];
-  }
+function paginateDiscordBlocks(blocks, buildHeader, maxLength = 2000) {
+  let expectedParts = 1;
 
-  const lines = text.split('\n');
-  const chunks = [];
-  let currentChunk = '';
+  while (true) {
+    const pages = [[]];
 
-  for (const line of lines) {
-    if (!line) {
-      continue;
-    }
+    for (const block of blocks) {
+      const currentPage = pages.at(-1);
+      const part = pages.length;
+      const candidate = composeDiscordPage(buildHeader(part, expectedParts), [
+        ...currentPage,
+        block,
+      ]);
 
-    const withNewline = currentChunk ? `${currentChunk}\n${line}` : line;
-    if (withNewline.length <= maxLength) {
-      currentChunk = withNewline;
-      continue;
-    }
-
-    if (currentChunk) {
-      chunks.push(currentChunk);
-    }
-
-    if (line.length > maxLength) {
-      for (let i = 0; i < line.length; i += maxLength) {
-        chunks.push(line.slice(i, i + maxLength));
+      if (candidate.length <= maxLength) {
+        currentPage.push(block);
+        continue;
       }
-      currentChunk = '';
-    } else {
-      currentChunk = line;
+
+      const nextPart = pages.length + 1;
+      const singleBlockPage = composeDiscordPage(buildHeader(nextPart, expectedParts), [block]);
+
+      if (singleBlockPage.length > maxLength) {
+        throw new RangeError('BEIGE_ALERT nation block exceeds Discord message limit');
+      }
+
+      pages.push([block]);
     }
+
+    if (pages.length === expectedParts) {
+      return pages.map((pageBlocks, index) => composeDiscordPage(
+        buildHeader(index + 1, pages.length),
+        pageBlocks,
+      ));
+    }
+
+    expectedParts = pages.length;
+  }
+}
+
+function composeDiscordPage(header, blocks) {
+  return [header, ...blocks].join('\n\n');
+}
+
+function formatSafeMarkdownLink(label, url) {
+  const normalizedLabel = formatLabel(label, 'Unknown', 80);
+  const href = formatSafeUrl(url);
+
+  if (!href) {
+    return escapeMarkdown(normalizedLabel);
   }
 
-  if (currentChunk) {
-    chunks.push(currentChunk);
+  return markdownLink(normalizedLabel, href);
+}
+
+function formatSafeUrl(value) {
+  const href = safeUrl(value);
+
+  if (!href || href.length > 240) {
+    return null;
   }
 
-  return chunks;
+  return href.replaceAll('(', '%28').replaceAll(')', '%29');
+}
+
+function formatLabel(value, fallback, maxLength) {
+  const normalized = value === null || value === undefined
+    ? fallback
+    : String(value).replace(/\s+/g, ' ').trim() || fallback;
+
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
 }
 
 function buildDeclareWarUrl(nationId) {
@@ -311,12 +363,21 @@ function formatDiscordTime(date, style = 'R') {
   return `<t:${seconds}:${style}>`;
 }
 
-function formatNumber(value) {
-  if (value === null || value === undefined || Number.isNaN(Number(value))) {
+function formatCount(value, singular, plural) {
+  const numericValue = Number(value);
+  const label = numericValue === 1 ? singular : plural;
+  return `${formatNumber(value, 0)} ${label}`;
+}
+
+function formatNumber(value, maximumFractionDigits = 2) {
+  const numericValue = Number(value);
+
+  if (value === null || value === undefined || !Number.isFinite(numericValue)) {
     return '—';
   }
 
-  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(Number(value));
+  const formatted = new Intl.NumberFormat('en-US', { maximumFractionDigits }).format(numericValue);
+  return formatted.length <= 24 ? formatted : numericValue.toExponential(2);
 }
 
 function parseDate(input) {

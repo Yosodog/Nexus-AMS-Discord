@@ -9,7 +9,7 @@ import {
 
 const EVENTS = Object.freeze({
   created: { title: 'Blockade Relief Requested', color: 0xfee75c, detail: 'A new alliance blockade relief request is available.' },
-  claimed: { title: 'Blockade Relief Claimed', color: 0x57f287, detail: 'The blockade relief request has been claimed.' },
+  claimed: { title: 'Blockade Relief Claimed', color: 0x57f287, detail: 'This request has been claimed. Open Nexus for assignment details.' },
   reopened: { title: 'Blockade Relief Reopened', color: 0xfee75c, detail: 'The previous helper is no longer eligible, so the request is open again.' },
   resolved: { title: 'Blockade Relief Resolved', color: 0x57f287, detail: 'The blockade or war has ended.' },
   cancelled: { title: 'Blockade Relief Cancelled', color: 0x747f8d, detail: 'The requester cancelled this relief request.' },
@@ -49,23 +49,32 @@ export const execute = async (command, runtime) => {
   const requester = payload.requester.name ?? `Nation #${payload.requester.id}`;
   const blockader = payload.blockader.name ?? `Nation #${payload.blockader.id}`;
   const deepLink = resolveDeepLink(runtime.apiService?.baseUrl, payload.deep_link_path);
+  const deadlineLabel = ['resolved', 'cancelled', 'expired'].includes(payload.event_type)
+    ? 'Deadline was'
+    : 'Deadline';
+  const createdAt = parseDate(command?.created_at) ?? new Date();
   const embed = buildEmbed({
     title: template.title,
     color: template.color,
-    description: `${template.detail}${deepLink ? `\n${markdownLink('Open in Nexus', deepLink)}` : ''}`,
+    description: `${template.detail}${deepLink ? `\n\n${markdownLink('Open relief request in Nexus', deepLink)}` : ''}`,
     fields: [
       {
-        name: 'Nations',
-        value: `**Requester:** ${markdownLink(requester, nationUrl({ id: payload.requester.id }))}\n**Blockader:** ${markdownLink(blockader, nationUrl({ id: payload.blockader.id }))}`,
+        name: 'Request',
+        value: `#${payload.request_id} · ${markdownLink(requester, nationUrl({ id: payload.requester.id }))} vs ${markdownLink(blockader, nationUrl({ id: payload.blockader.id }))}`,
       },
       {
-        name: 'War and deadline',
-        value: `${markdownLink(`War #${payload.war_id}`, `https://politicsandwar.com/nation/war/timeline/war=${payload.war_id}`)}\n${formatDiscordTime(payload.deadline_at)} (${formatDiscordTime(payload.deadline_at, 'f')})`,
+        name: 'War',
+        value: markdownLink(`War #${payload.war_id}`, `https://politicsandwar.com/nation/war/timeline/war=${payload.war_id}`),
+        inline: true,
+      },
+      {
+        name: deadlineLabel,
+        value: `${formatDiscordTime(payload.deadline_at)} (${formatDiscordTime(payload.deadline_at, 'f')})`,
+        inline: true,
       },
     ],
-    footer: deepLink ? null : `Nexus path: ${payload.deep_link_path}`,
     url: deepLink,
-  });
+  }).setTimestamp(createdAt);
   let delivered = 0;
   let undeliverable = 0;
 
@@ -91,3 +100,9 @@ export const execute = async (command, runtime) => {
 
   return { success: true, result: { delivered, undeliverable } };
 };
+
+function parseDate(input) {
+  if (!input) return null;
+  const date = input instanceof Date ? input : new Date(input);
+  return Number.isNaN(date.getTime()) ? null : date;
+}

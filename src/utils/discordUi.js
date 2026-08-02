@@ -71,7 +71,7 @@ const VARIANTS = Object.freeze({
   blockade: { color: 'military', noun: 'request', pageSize: 3 },
   'grant-program': { color: 'finance', noun: 'program', pageSize: 3 },
   loan: { color: 'finance', noun: 'loan', pageSize: 3 },
-  raid: { color: 'military', noun: 'target', pageSize: 2 },
+  raid: { color: 'military', noun: 'target', pageSize: 2, presentation: 'plain' },
   request: { color: 'info', noun: 'request', pageSize: 4 },
   spy: { color: 'intelligence', noun: 'assignment', pageSize: 3 },
   transaction: { color: 'finance', noun: 'transaction', pageSize: 4 },
@@ -174,7 +174,7 @@ export const resolveDeepLink = (baseUrl, path) => {
 
 export const markdownLink = (label, url) => {
   const text = escapeMarkdown(label);
-  const href = safeUrl(url);
+  const href = safeUrl(url)?.replaceAll('(', '%28').replaceAll(')', '%29');
   return href ? `[${text}](${href})` : text;
 };
 
@@ -209,7 +209,7 @@ export const formatResources = (resources, { multiline = true, includeZero = fal
   return lines.join('\n');
 };
 
-export const formatMilitary = (military) => {
+export const formatMilitary = (military, { multiline = false } = {}) => {
   if (!military || typeof military !== 'object' || Array.isArray(military)) return null;
   const units = [
     ['soldiers', 'Soldiers'],
@@ -221,7 +221,9 @@ export const formatMilitary = (military) => {
     ['nukes', 'Nukes'],
   ].filter(([key]) => isPresent(military[key]));
   if (!units.length) return null;
-  return units.map(([key, label]) => `**${label}:** ${formatNumber(military[key], { maximumFractionDigits: 0 })}`).join(' · ');
+  const values = units.map(([key, label]) => `**${label}:** ${formatNumber(military[key], { maximumFractionDigits: 0 })}`);
+  if (!multiline) return values.join(' · ');
+  return [values.slice(0, 4).join(' · '), values.slice(4).join(' · ')].filter(Boolean).join('\n');
 };
 
 export const nationUrl = (nation = {}) => safeUrl(nation.nation_url ?? nation.url ?? nation.links?.nation)
@@ -237,13 +239,13 @@ export const allianceUrl = (alliance = {}) => safeUrl(alliance.alliance_url ?? a
 const nationName = (nation = {}) => nation.nation_name ?? nation.name
   ?? (isPresent(nation.id ?? nation.nation_id) ? `Nation #${nation.id ?? nation.nation_id}` : 'Unknown nation');
 
-const linkedNation = (nation = {}) => markdownLink(nationName(nation), nationUrl(nation));
+const linkedNation = (nation = {}) => markdownLink(truncate(nationName(nation), 100), nationUrl(nation));
 
 const allianceLabel = (item = {}) => {
   const alliance = item.alliance && typeof item.alliance === 'object' ? item.alliance : item;
   const name = alliance.name ?? item.alliance_name;
   if (!isPresent(name)) return 'No alliance';
-  return markdownLink(name, allianceUrl({
+  return markdownLink(truncate(name, 100), allianceUrl({
     ...alliance,
     alliance_id: alliance.id ?? item.alliance_id,
     alliance_url: alliance.url ?? item.alliance_url,
@@ -258,11 +260,16 @@ const field = (name, lines, inline = false) => ({
   inline,
 });
 
+const itemLink = (label, url) => {
+  const href = safeUrl(url);
+  return href ? markdownLink(label, href) : null;
+};
+
 const renderRaid = (item, index) => {
-  const name = nationName(item);
-  const leader = isPresent(item.leader_name) ? ` — ${escapeMarkdown(item.leader_name)}` : '';
+  const name = truncate(nationName(item), 100);
+  const leader = isPresent(item.leader_name) ? ` — ${escapeMarkdown(truncate(item.leader_name, 100))}` : '';
   const heading = `${index + 1}. ${markdownLink(name, nationUrl(item))}${leader}`;
-  const military = formatMilitary(item.military ?? item.military_units);
+  const military = formatMilitary(item.military ?? item.military_units, { multiline: true });
   const loot = item.loot_values ?? item.loot ?? item.estimated_resources;
   const lines = [
     `**Alliance:** ${allianceLabel(item)}`,
@@ -306,18 +313,18 @@ const requestTitle = (item, index) => `${titleCase(item.type ?? 'Request')} #${i
 
 const renderRequest = (item, index, context) => {
   const deepLink = resolveDeepLink(context.baseUrl, item.deep_link_path ?? item.url);
-  const title = markdownLink(requestTitle(item, index), deepLink);
-  return field(title, [
+  return field(requestTitle(item, index), [
     statusLabel(item.status),
     isPresent(item.nation_id) ? `**Nation:** ${markdownLink(`Nation #${item.nation_id}`, nationUrl({ id: item.nation_id }))}` : null,
     item.created_at ? `**Submitted:** ${formatDiscordTime(item.created_at)}` : null,
     item.updated_at ? `**Updated:** ${formatDiscordTime(item.updated_at)}` : null,
+    itemLink('Open request in Nexus', deepLink),
   ]);
 };
 
 const renderGrantProgram = (item, index, context) => {
   const deepLink = resolveDeepLink(context.baseUrl, item.deep_link_path ?? item.url);
-  const title = markdownLink(item.name ?? `Grant program ${index + 1}`, deepLink);
+  const title = item.name ?? `Grant program ${index + 1}`;
   const eligibility = item.eligible === true ? '✓ Eligible' : item.eligible === false ? '× Not eligible' : null;
   const summary = Array.isArray(item.eligibility_summary)
     ? item.eligibility_summary.map((entry) => cleanText(entry)).slice(0, 3).join(' · ')
@@ -326,12 +333,13 @@ const renderGrantProgram = (item, index, context) => {
     compactParts([eligibility, item.one_time ? 'One-time' : 'Repeatable']),
     item.description ? escapeMarkdown(truncate(item.description, 350)) : null,
     summary ? `**Eligibility:** ${escapeMarkdown(summary)}` : null,
+    itemLink('Open program in Nexus', deepLink),
   ]);
 };
 
 const renderLoan = (item, index, context) => {
   const deepLink = resolveDeepLink(context.baseUrl, item.deep_link_path ?? item.url);
-  return field(markdownLink(`Loan #${item.id ?? index + 1}`, deepLink), [
+  return field(`Loan #${item.id ?? index + 1}`, [
     statusLabel(item.status),
     compactParts([
       isPresent(item.amount) ? `**Original:** ${formatMoney(item.amount)}` : null,
@@ -344,18 +352,20 @@ const renderLoan = (item, index, context) => {
       isPresent(item.scheduled_weekly_payment) ? `**Weekly:** ${formatMoney(item.scheduled_weekly_payment)}` : null,
     ]),
     item.next_due_date ? `**Next due:** ${formatDiscordTime(item.next_due_date, 'D')}` : null,
+    itemLink('Open loan in Nexus', deepLink),
   ]);
 };
 
 const renderApplication = (item, index, context) => {
   const deepLink = resolveDeepLink(context.baseUrl, item.deep_link_path ?? item.url);
   const identity = item.leader_name ?? item.discord_username ?? `Application #${item.id ?? index + 1}`;
-  return field(markdownLink(identity, deepLink), [
+  return field(identity, [
     compactParts([statusLabel(item.status), isPresent(item.id) ? `**ID:** ${item.id}` : null]),
     isPresent(item.nation_id) ? `**Nation:** ${markdownLink(`Nation #${item.nation_id}`, nationUrl({ id: item.nation_id }))}` : null,
     item.discord_username ? `**Discord:** ${escapeMarkdown(item.discord_username)}` : null,
     item.created_at ? `**Submitted:** ${formatDiscordTime(item.created_at)}` : null,
     item.denial_reason ? `**Denial reason:** ${escapeMarkdown(item.denial_reason)}` : null,
+    itemLink('Open application in Nexus', deepLink),
   ]);
 };
 
@@ -364,8 +374,7 @@ const renderWar = (item, index) => {
   const defender = item.defender ?? item.target ?? {};
   const url = item.war_url ?? item.url;
   const warType = item.war_type ?? item.type;
-  const heading = markdownLink(`War #${item.id ?? index + 1}`, url);
-  return field(heading, [
+  return field(`War #${item.id ?? index + 1}`, [
     `${linkedNation(attacker)} **vs** ${linkedNation(defender)}`,
     compactParts([
       item.role ? `**Your side:** ${titleCase(item.role)}` : null,
@@ -373,13 +382,15 @@ const renderWar = (item, index) => {
       isPresent(item.turns_left) ? `**Turns left:** ${formatNumber(item.turns_left, { maximumFractionDigits: 0 })}` : null,
       statusLabel(item.status),
     ]),
+    itemLink('Open war', url),
   ]);
 };
 
 const renderWarAssignment = (item, index) => {
   const target = item.target ?? {};
   const response = item.response?.response ?? item.response;
-  return field(`${index + 1}. ${linkedNation(target)}`, [
+  return field(`${index + 1}. ${escapeMarkdown(nationName(target))}`, [
+    itemLink('Open target nation', nationUrl(target)),
     compactParts([statusLabel(item.status), item.type ? `**Type:** ${titleCase(item.type)}` : null]),
     isPresent(target.leader_name) ? `**Leader:** ${escapeMarkdown(target.leader_name)}` : null,
     item.source?.name ? `**Operation:** ${escapeMarkdown(item.source.name)}` : null,
@@ -391,19 +402,21 @@ const renderWarAssignment = (item, index) => {
 const renderWarCounter = (item, index, context) => {
   const target = item.target ?? {};
   const deepLink = resolveDeepLink(context.baseUrl, item.deep_link_path ?? item.url);
-  return field(markdownLink(`Counter #${item.id ?? index + 1}`, deepLink), [
+  return field(`Counter #${item.id ?? index + 1}`, [
     `${linkedNation(target)}${target.leader_name ? ` — ${escapeMarkdown(target.leader_name)}` : ''}`,
     compactParts([
       statusLabel(item.status),
       item.type ? `**Declaration:** ${titleCase(item.type)}` : null,
       isPresent(item.team_size) ? `**Team:** ${formatNumber(item.team_size, { maximumFractionDigits: 0 })}` : null,
     ]),
+    itemLink('Open counter in Nexus', deepLink),
   ]);
 };
 
 const renderSpy = (item, index) => {
   const target = item.target ?? {};
-  return field(`${index + 1}. ${titleCase(item.operation ?? 'Spy operation')} → ${linkedNation(target)}`, [
+  return field(`${index + 1}. ${titleCase(item.operation ?? 'Spy operation')} → ${escapeMarkdown(nationName(target))}`, [
+    itemLink('Open target nation', nationUrl(target)),
     compactParts([
       statusLabel(item.status),
       isPresent(item.calculated_odds) ? `**Odds:** ${formatPercent(item.calculated_odds)}` : null,
@@ -431,23 +444,25 @@ const renderBlockade = (item, index, context) => {
   const requester = item.requester ?? {};
   const blockader = item.blockader ?? {};
   const claimer = item.claimer ?? null;
-  return field(markdownLink(item.label ?? `Relief request #${item.id ?? index + 1}`, deepLink), [
+  return field(item.label ?? `Relief request #${item.id ?? index + 1}`, [
     statusLabel(item.status),
     `${markdownLink(requester.name ?? `Nation #${requester.id ?? '?'}`, nationUrl(requester))} needs relief from ${markdownLink(blockader.name ?? `Nation #${blockader.id ?? '?'}`, nationUrl(blockader))}`,
     claimer ? `**Claimed by:** ${markdownLink(claimer.name ?? `Nation #${claimer.id}`, nationUrl(claimer))}` : '**Claimed by:** Unassigned',
     item.deadline_at ? `**Deadline:** ${formatDiscordTime(item.deadline_at)}` : null,
     isPresent(item.war_id) ? `[Open war](https://politicsandwar.com/nation/war/timeline/war=${encodeURIComponent(item.war_id)})` : null,
+    itemLink('Open request in Nexus', deepLink),
   ]);
 };
 
 const renderAlert = (item, index, context) => {
   const deepLink = resolveDeepLink(context.baseUrl, item.deep_link_path ?? item.url);
-  return field(markdownLink(item.name ?? `Alert #${item.id ?? index + 1}`, deepLink), [
+  return field(item.name ?? `Alert #${item.id ?? index + 1}`, [
     compactParts([item.active === false ? '○ Paused' : '● Active', item.type_label ?? (item.type ? titleCase(item.type) : null)]),
     item.condition ? `**When:** ${escapeMarkdown(item.condition)}` : null,
     isPresent(item.cooldown_minutes) ? `**Cooldown:** ${formatNumber(item.cooldown_minutes, { maximumFractionDigits: 0 })} minutes` : null,
     item.last_triggered_at ? `**Last triggered:** ${formatDiscordTime(item.last_triggered_at)}` : null,
     item.expires_at ? `**Expires:** ${formatDiscordTime(item.expires_at)}` : null,
+    itemLink('Open alert in Nexus', deepLink),
   ]);
 };
 
@@ -544,6 +559,92 @@ export const buildEmbed = ({
   if (href) embed.setURL(href);
   if (timestamp) embed.setTimestamp();
   return embed;
+};
+
+const PLAIN_TONE_ICONS = Object.freeze({
+  danger: '❌',
+  finance: '💳',
+  info: 'ℹ️',
+  intelligence: '🕵️',
+  military: '⚔️',
+  neutral: '•',
+  success: '✅',
+  warning: '⚠️',
+});
+
+export const buildPlainMessage = ({
+  title,
+  description,
+  tone = 'info',
+  sections = [],
+  footer,
+  components = [],
+}) => {
+  const icon = PLAIN_TONE_ICONS[tone] ?? PLAIN_TONE_ICONS.info;
+  const safeTitle = escapeMarkdown(truncate(title, 120));
+  const header = `## ${icon} ${safeTitle}`;
+  const normalizedSections = sections
+    .filter((section) => section && isPresent(section.name) && isPresent(section.value))
+    .map((section) => ({
+      name: truncate(section.name, 180),
+      value: cleanText(section.value),
+    }));
+  const safeDescription = isPresent(description)
+    ? truncate(description, normalizedSections.length ? 500 : 1_650)
+    : null;
+  const safeFooter = isPresent(footer) ? `-# ${truncate(footer, 200)}` : null;
+  const fixedParts = [
+    header,
+    safeDescription,
+    ...normalizedSections.map((section) => `**${section.name}**\n`),
+    safeFooter,
+  ].filter(isPresent);
+  const fixedLength = fixedParts.join('\n\n').length;
+  const valueBudget = normalizedSections.length
+    ? Math.max(40, Math.floor((2_000 - fixedLength) / normalizedSections.length))
+    : 0;
+  const content = [
+    header,
+    safeDescription,
+    ...normalizedSections.map((section) => `**${section.name}**\n${truncate(section.value, valueBudget)}`),
+    safeFooter,
+  ].filter(isPresent).join('\n\n');
+
+  return {
+    content: truncate(content, 2_000),
+    embeds: [],
+    components,
+  };
+};
+
+const splitPlainText = (value, maxLength = 1_600) => {
+  const chunks = [];
+  let remaining = cleanText(value);
+  while (remaining.length > maxLength) {
+    const window = remaining.slice(0, maxLength + 1);
+    const breakpoint = Math.max(
+      window.lastIndexOf('\n\n'),
+      window.lastIndexOf('\n'),
+      window.lastIndexOf(' '),
+    );
+    const end = breakpoint >= Math.floor(maxLength * 0.6) ? breakpoint : maxLength;
+    chunks.push(remaining.slice(0, end).trim());
+    remaining = remaining.slice(end).trim();
+  }
+  if (remaining) chunks.push(remaining);
+  return chunks;
+};
+
+export const buildPlainMessages = (options) => {
+  const chunks = splitPlainText(options.description);
+  if (!chunks.length) chunks.push('No details were provided.');
+  return chunks.map((description, index) => buildPlainMessage({
+    ...options,
+    title: chunks.length === 1 ? options.title : `${options.title} — Part ${index + 1} of ${chunks.length}`,
+    description,
+    footer: index === chunks.length - 1 ? options.footer : null,
+    components: index === chunks.length - 1 ? options.components : [],
+  }));
 };
 
 export const statusMessage = (options = {}) => ({

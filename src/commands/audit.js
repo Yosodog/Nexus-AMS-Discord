@@ -2,7 +2,9 @@ import { SlashCommandBuilder } from 'discord.js';
 import {
   actorFromInteraction, collectionMessage, deferEphemeral, normalizeCollection, replyError,
 } from '../utils/commandSupport.js';
-import { escapeMarkdown, statusMessage, truncate } from '../utils/discordUi.js';
+import {
+  escapeMarkdown, markdownLink, resolveDeepLink, statusMessage, truncate,
+} from '../utils/discordUi.js';
 
 export const data = new SlashCommandBuilder()
   .setName('audit')
@@ -66,7 +68,10 @@ export const execute = async (interaction, context) => {
       userId: interaction.user.id,
       sessions: context.sessions,
       variant: 'audit',
-      description: 'Active findings, deadlines, and reminder status for your linked nation.',
+      description: [
+        'Active findings, deadlines, and reminder status for your linked nation.',
+        markdownLink('Open the audit center in Nexus', resolveDeepLink(context.apiService.baseUrl, '/audit')),
+      ].filter(Boolean).join('\n'),
       baseUrl: context.apiService.baseUrl,
       pageSize: 3,
     }));

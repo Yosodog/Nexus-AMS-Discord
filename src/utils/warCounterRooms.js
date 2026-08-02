@@ -42,7 +42,9 @@ export const archiveWarCounterRoom = async ({
 }) => {
   const normalizedChannelId = typeof channelId === 'string' ? channelId.trim() : '';
   const normalizedGuildId = typeof guildId === 'string' ? guildId.trim() : '';
-  const prefix = typeof titlePrefix === 'string' ? titlePrefix : '[Archived] ';
+  const prefix = typeof titlePrefix === 'string'
+    ? titlePrefix.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').slice(0, 50)
+    : '[Archived] ';
 
   if (!isDiscordSnowflake(normalizedChannelId)) {
     logger.warn('Cannot archive war counter room without a channel id', logContext);

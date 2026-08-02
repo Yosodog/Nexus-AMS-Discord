@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execute } from '../src/commands/raid.js';
 import { InteractionSessionStore } from '../src/services/InteractionSessionStore.js';
-import { embedJson } from './helpers.js';
 
 const target = (id) => ({
   nation_id: id,
@@ -21,7 +20,7 @@ const target = (id) => ({
   alliance_url: 'https://politicsandwar.com/alliance/id=50',
 });
 
-test('/raid defaults to ten results and returns a rich paginated target list', async () => {
+test('/raid defaults to ten results and returns a rich paginated plain-text target list', async () => {
   let filters = null;
   let reply = null;
   const interaction = {
@@ -51,13 +50,14 @@ test('/raid defaults to ten results and returns a rich paginated target list', a
 
   assert.deepEqual(filters, { nation_id: undefined, sort: 'value', limit: 10 });
   assert.ok(reply);
-  const embed = embedJson(reply);
-  assert.equal(embed.fields.length, 2);
-  assert.match(embed.fields[0].name, /Nation 1/);
-  assert.match(embed.fields[0].name, /Leader 1/);
-  assert.match(embed.fields[0].value, /Alliance Fifty/);
-  assert.match(embed.fields[0].value, /Estimated loot/);
-  assert.match(embed.fields[0].value, /Military/);
-  assert.equal(embed.footer.text, '1–2 of 4 targets · Page 1/2');
+  assert.deepEqual(reply.embeds, []);
+  assert.ok(reply.content.length <= 2_000);
+  assert.match(reply.content, /## ⚔️ Raid Targets/);
+  assert.match(reply.content, /\[Nation 1\]\(https:\/\/politicsandwar\.com\/nation\/id=1\)/);
+  assert.match(reply.content, /Leader 1/);
+  assert.match(reply.content, /Alliance Fifty/);
+  assert.match(reply.content, /Estimated loot/);
+  assert.match(reply.content, /Military/);
+  assert.match(reply.content, /1–2 of 4 targets · Page 1\/2/);
   assert.equal(reply.components[0].toJSON().components.length, 2);
 });

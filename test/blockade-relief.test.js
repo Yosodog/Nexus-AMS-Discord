@@ -55,6 +55,7 @@ test('blockade relief is accepted by the preference-aware private renderer', () 
 test('blockade relief queue action sends deterministic safe DMs and reports outcomes', async () => {
   const sent = [];
   const runtime = {
+    apiService: { baseUrl: 'https://nexus.example' },
     logger: createLogger(),
     canContinue: () => true,
     resolveUser: async (id) => ({ id }),
@@ -64,10 +65,41 @@ test('blockade relief queue action sends deterministic safe DMs and reports outc
     },
   };
 
-  const result = await notification.execute({ id: 'queue-1', payload }, runtime);
+  const result = await notification.execute({
+    id: 'queue-1',
+    created_at: '2026-07-10T12:00:00Z',
+    payload,
+  }, runtime);
 
   assert.deepEqual(result, { success: true, result: { delivered: 1, undeliverable: 0 } });
   assert.equal(sent[0].user.id, USER_ID);
   assert.equal(sent[0].step, `blockade-relief-${USER_ID}`);
   assert.deepEqual(sent[0].message.allowedMentions, { parse: [], repliedUser: false });
+  const embed = sent[0].message.embeds[0].toJSON();
+  assert.equal(embed.url, 'https://nexus.example/defense/blockade-relief');
+  assert.match(embed.description, /Open relief request in Nexus/);
+  assert.deepEqual(embed.fields.map((field) => field.name), ['Request', 'War', 'Deadline']);
+  assert.match(embed.fields[0].value, /#7.*Friendly Nation.*Enemy Nation/);
+});
+
+test('closed blockade relief notices label the historical deadline clearly', async () => {
+  let message;
+  await notification.execute({
+    id: 'queue-closed',
+    created_at: '2026-07-10T21:00:00Z',
+    payload: { ...payload, event_type: 'resolved' },
+  }, {
+    apiService: { baseUrl: 'https://nexus.example' },
+    logger: createLogger(),
+    canContinue: () => true,
+    resolveUser: async (id) => ({ id }),
+    sendDirectMessage: async (_user, _command, _step, outgoing) => {
+      message = outgoing;
+      return { id: 'dm-closed' };
+    },
+  });
+
+  assert.deepEqual(message.embeds[0].toJSON().fields.map((field) => field.name), [
+    'Request', 'War', 'Deadline was',
+  ]);
 });

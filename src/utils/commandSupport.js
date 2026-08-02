@@ -5,6 +5,7 @@ import {
 } from 'discord.js';
 import {
   buildEmbed,
+  buildPlainMessage,
   pluralize,
   renderCollectionItem,
   variantConfig,
@@ -37,13 +38,24 @@ export const errorMessage = (error) => {
     ?? 'Nexus is unavailable right now. Please try again later.';
 };
 
+const errorGuidance = (error) => ({
+  DISCORD_ACCOUNT_NOT_LINKED: 'Link your Discord account in Nexus, then run this command again.',
+  DUPLICATE_REQUEST: 'Open your existing request in Nexus before starting another one.',
+  FEATURE_DISABLED: 'Contact a Nexus administrator if you need access to this feature.',
+  FORBIDDEN: 'If you believe you should have access, contact a Nexus administrator.',
+  INTENT_EXPIRED: 'Run the command again to create a fresh draft.',
+  NOT_FOUND: 'Refresh the list or run the command again to get current data.',
+  STALE_INTENT: 'Run the command again to create a fresh draft.',
+  VALIDATION_ERROR: 'Review the values above, then try again.',
+}[error?.code] ?? 'Try the command again. If this keeps happening, contact a Nexus administrator.');
+
 export const replyError = async (interaction, error, title = 'Request Failed') => {
   const payload = {
     embeds: [buildEmbed({
       title,
       tone: 'danger',
       description: errorMessage(error),
-      footer: 'Try the command again. If this keeps happening, contact a Nexus administrator.',
+      footer: errorGuidance(error),
     })],
     components: [],
     ephemeral: true,
@@ -139,13 +151,6 @@ export const collectionMessage = ({
     : pages > 1
       ? `${start + 1}–${end} of ${total} ${pluralize(total, noun)} · Page ${page}/${pages}`
       : `${total} ${pluralize(total, noun)}`;
-  const embed = buildEmbed({
-    title,
-    tone: config.color,
-    description: total === 0 ? empty : description,
-    fields,
-    footer,
-  });
   const components = [];
   if (pages > 1 && sessions) {
     const localPresentation = {
@@ -180,7 +185,27 @@ export const collectionMessage = ({
         .setDisabled(page >= pages),
     ));
   }
-  return { embeds: [embed], components };
+  if (config.presentation === 'plain') {
+    return buildPlainMessage({
+      title,
+      tone: config.color,
+      description: total === 0 ? empty : description,
+      sections: fields,
+      footer,
+      components,
+    });
+  }
+
+  return {
+    embeds: [buildEmbed({
+      title,
+      tone: config.color,
+      description: total === 0 ? empty : description,
+      fields,
+      footer,
+    })],
+    components,
+  };
 };
 
 export const collectionPageMessage = ({ state, sessions, userId }) => {

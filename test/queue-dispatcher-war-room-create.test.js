@@ -194,7 +194,7 @@ test('WAR_ROOM_CREATE fails for retry when the required defense role ping fails'
   let pingAttempts = 0;
   const { dispatcher, logger, sentMessages } = createWarRoomContext({
     onThreadSend: (payload) => {
-      if (payload?.content === `<@&${ROLE_ID}>`) {
+      if (payload?.content?.includes(`<@&${ROLE_ID}>`)) {
         pingAttempts += 1;
         throw new Error('Missing Permissions');
       }
@@ -217,11 +217,17 @@ test('WAR_ROOM_CREATE fails for retry when the required defense role ping fails'
 
   assert.equal(result.success, false);
   assert.equal(pingAttempts, 1);
-  assert.equal(sentMessages.some((message) => message?.content === `<@&${ROLE_ID}>`), true);
+  assert.equal(sentMessages.some((message) => message?.content?.includes(`<@&${ROLE_ID}>`)), true);
 });
 
 test('WAR_ROOM_CREATE without defense_role_id does not attempt role ping', async () => {
-  const { dispatcher, logger, sentMessages } = createWarRoomContext();
+  let starterPayload;
+  const { dispatcher, logger, sentMessages } = createWarRoomContext({
+    onThreadCreate: (payload, thread) => {
+      starterPayload = payload;
+      return thread;
+    },
+  });
 
   const result = await dispatcher.dispatch({
     id: '923456789012345678',
@@ -270,12 +276,69 @@ test('WAR_ROOM_CREATE without defense_role_id does not attempt role ping', async
   });
 
   assert.equal(result.success, true);
-  assert.equal(sentMessages.some((message) => /^<@&/.test(message?.content ?? '')), false);
+  assert.equal(sentMessages.some((message) => message?.content?.includes('<@&')), false);
   assert.equal(sentMessages.every((message) => message.enforceNonce === true && message.nonce.length <= 25), true);
+  assert.match(starterPayload.message.content, /## War Room Opened/);
+  const starterEmbed = starterPayload.message.embeds[0].toJSON();
+  assert.match(starterEmbed.title, /Target Brief — Target Nation/);
+  assert.deepEqual(starterEmbed.fields.map((field) => field.name), [
+    'Objective', 'Target status', 'Military',
+  ]);
+  assert.match(starterEmbed.fields[0].value, /Attack type:\*\* Raid/);
+  const mentionMessage = sentMessages.find((message) => /Participant Notifications/.test(message.content));
+  const assignmentMessage = sentMessages.find((message) => /## Assignments/.test(message.content));
+  assert.ok(mentionMessage);
+  assert.ok(assignmentMessage);
+  assert.match(mentionMessage.content, /<@523456789012345678>.*<@623456789012345678>/s);
+  assert.deepEqual(mentionMessage.allowedMentions.users.sort(), [
+    '523456789012345678', '623456789012345678',
+  ]);
+  assert.match(assignmentMessage.content, /### Counters/);
+  assert.match(assignmentMessage.content, /\[Friendly Nation\]\(https:\/\/politicsandwar\.com\/nation\/id=102\)/);
+  assert.match(assignmentMessage.content, /### Instructions/);
+  assert.ok(sentMessages.every((message) => (message.content?.length ?? 0) <= 2_000));
   assert.equal(
     logger.entries.warn.some(([message]) => message === 'Failed to send WAR_ROOM_CREATE defense role ping; continuing'),
     false,
   );
+});
+
+test('WAR_ROOM_CREATE caps displayed roster detail without dropping participant notifications', async () => {
+  const { dispatcher, sentMessages } = createWarRoomContext();
+  const assignedMembers = Array.from({ length: 27 }, (_, index) => ({
+    discord_id: `${50_000_000_000_000_000n + BigInt(index)}`,
+    nation_id: index + 1,
+    nation_name: `Friendly Nation ${index + 1}`,
+    leader_name: `Leader ${index + 1}`,
+    role: 'counter',
+  }));
+
+  const result = await dispatcher.dispatch({
+    id: '923456789012345679',
+    action: 'WAR_ROOM_CREATE',
+    lease_token: 'lease-token',
+    payload: {
+      forum_channel_id: FORUM_ID,
+      source: { type: 'war_plan', id: 90, url: 'https://nexus.example/war-plans/90' },
+      target: { leader_name: 'Target Leader', nation_name: 'Target Nation' },
+      assigned_members: assignedMembers,
+      reason: 'Defensive counter',
+    },
+  });
+
+  assert.deepEqual(result, { success: true });
+  const notificationContent = sentMessages
+    .filter((message) => /Participant Notifications/.test(message.content))
+    .map((message) => message.content)
+    .join('\n');
+  const assignmentContent = sentMessages
+    .filter((message) => /## Assignments/.test(message.content))
+    .map((message) => message.content)
+    .join('\n');
+  assert.match(notificationContent, new RegExp(`<@${assignedMembers.at(-1).discord_id}>`));
+  assert.match(assignmentContent, /2 additional assignment entries were omitted/);
+  assert.match(assignmentContent, /Open the source plan for the complete roster/);
+  assert.ok(sentMessages.every((message) => (message.content?.length ?? 0) <= 2_000));
 });
 
 test('WAR_ALERT retries once when Discord returns retry_after metadata', async (t) => {
@@ -286,11 +349,12 @@ test('WAR_ALERT retries once when Discord returns retry_after metadata', async (
 
   const logger = createLogger();
   let sendAttempts = 0;
+  let sentPayload = null;
 
   const channel = {
     guildId: GUILD_ID,
     isTextBased: () => true,
-    send: async () => {
+    send: async (payload) => {
       sendAttempts += 1;
 
       if (sendAttempts === 1) {
@@ -299,6 +363,7 @@ test('WAR_ALERT retries once when Discord returns retry_after metadata', async (
         throw error;
       }
 
+      sentPayload = payload;
       return { id: 'message-1' };
     },
   };
@@ -349,6 +414,14 @@ test('WAR_ALERT retries once when Discord returns retry_after metadata', async (
 
   assert.equal(result.success, true);
   assert.equal(sendAttempts, 2);
+  const embed = sentPayload.embeds[0].toJSON();
+  assert.equal(embed.title, '⚔️ War #123 Declared');
+  assert.match(embed.description, /Attacker Nation.*declared war on.*Defender Nation/);
+  assert.match(embed.description, /War timeline/);
+  assert.deepEqual(embed.fields.map((field) => field.name), [
+    'Attacker', 'Defender', 'Attacker military', 'Defender military',
+  ]);
+  assert.match(embed.fields[0].value, /1,000 score · 20 cities/);
   assert.equal(
     logger.entries.warn.some(([message]) => String(message).startsWith('Rate-limited while trying to send WAR_ALERT embed')),
     true,

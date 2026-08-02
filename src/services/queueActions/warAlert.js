@@ -77,82 +77,84 @@ export const execute = async (command, context) => {
 
 function buildWarAlertEmbed(command) {
   const payload = command?.payload ?? {};
-  const createdAt = command?.created_at ? new Date(command.created_at) : new Date();
-
-  const descriptionParts = [];
+  const rawCreatedAt = command?.created_at ? new Date(command.created_at) : null;
+  const createdAt = rawCreatedAt && !Number.isNaN(rawCreatedAt.getTime()) ? rawCreatedAt : new Date();
   const warUrl = safeUrl(payload.war_url);
+  const attackerNation = formatNation(payload.attacker);
+  const defenderNation = formatNation(payload.defender);
+  const descriptionParts = [
+    `**${attackerNation}** declared war on **${defenderNation}**.`,
+  ];
+
+  const links = [];
   if (warUrl) {
-    descriptionParts.push(`➡️ ${markdownLink('War timeline', warUrl)}`);
+    links.push(markdownLink('War timeline', warUrl));
   }
+
   const counterUrl = safeUrl(payload.counter?.url);
   if (counterUrl) {
     const counterLabel = payload.counter.id ? `Counter #${payload.counter.id}` : 'Counter';
-    descriptionParts.push(`🧭 ${markdownLink(counterLabel, counterUrl)}`);
+    links.push(markdownLink(counterLabel, counterUrl));
   }
 
+  if (links.length > 0) {
+    descriptionParts.push(links.join(' · '));
+  }
+
+  const warId = Number.isSafeInteger(payload.war_id) && payload.war_id > 0
+    ? ` #${payload.war_id}`
+    : '';
+
   return buildEmbed({
-    title: `⚔️ War Alert${payload.war_id ? ` #${payload.war_id}` : ''}`,
+    title: `⚔️ War${warId} Declared`,
     color: 0xd64045,
-    description: descriptionParts.join('\n') || 'A new war alert was received.',
+    description: descriptionParts.join('\n\n'),
     url: warUrl,
     fields: [
-      { name: 'Attacker', value: formatParticipant(payload.attacker, '🔥'), inline: true },
-      { name: 'Defender', value: formatParticipant(payload.defender, '🛡️'), inline: true },
+      { name: 'Attacker', value: formatParticipant(payload.attacker), inline: true },
+      { name: 'Defender', value: formatParticipant(payload.defender), inline: true },
       {
-        name: 'Scores',
-        value: `${formatNumber(payload.attacker?.score)} vs ${formatNumber(payload.defender?.score)}`,
-        inline: true,
-      },
-      {
-        name: 'Cities',
-        value: `${formatNumber(payload.attacker?.cities)} vs ${formatNumber(payload.defender?.cities)}`,
-        inline: true,
-      },
-      {
-        name: 'Attacker Military',
+        name: 'Attacker military',
         value: formatMilitary(payload.attacker?.military),
       },
       {
-        name: 'Defender Military',
+        name: 'Defender military',
         value: formatMilitary(payload.defender?.military),
       },
     ],
   }).setTimestamp(createdAt);
 }
 
-function formatParticipant(side = {}, emoji = '') {
+function formatNation(side = {}) {
+  return markdownLink(side.nation_name ?? 'Unknown nation', side.links?.nation);
+}
+
+function formatParticipant(side = {}) {
   const leader = escapeMarkdown(side.leader_name ?? 'Unknown leader');
-  const nation = escapeMarkdown(side.nation_name ?? 'Unknown nation');
   const allianceName = side.alliance?.name ?? null;
   const allianceLink = side.links?.alliance ?? side.alliance?.url ?? null;
-  const alliance = allianceName ? markdownLink(allianceName, allianceLink) : '—';
+  const alliance = allianceName ? markdownLink(allianceName, allianceLink) : 'No alliance';
 
-  const links = [];
-  if (side.links?.nation) {
-    links.push(markdownLink('Nation', side.links.nation));
-  }
-  if (side.links?.alliance) {
-    links.push(markdownLink('Alliance', side.links.alliance));
-  }
-
-  const linkLine = links.length > 0 ? `🔗 ${links.join(' • ')}` : '🔗 No links provided';
-
-  return `${emoji} **${nation}** (${leader})\nAlliance: ${alliance}\n${linkLine}`;
+  return `**${leader}** — ${alliance}\n${formatNumber(side.score)} score · ${formatNumber(side.cities)} cities`;
 }
 
 function formatMilitary(military = {}) {
-  const unitOrder = [
-    { key: 'soldiers', label: '🪖 Soldiers' },
-    { key: 'tanks', label: '🛡️ Tanks' },
-    { key: 'aircraft', label: '✈️ Aircraft' },
-    { key: 'ships', label: '🚢 Ships' },
-    { key: 'spies', label: '🕵️ Spies' },
-    { key: 'missiles', label: '🎯 Missiles' },
-    { key: 'nukes', label: '☢️ Nukes' },
+  const conventional = [
+    ['soldiers', 'Soldiers'],
+    ['tanks', 'Tanks'],
+    ['aircraft', 'Aircraft'],
+    ['ships', 'Ships'],
   ];
+  const strategic = [
+    ['spies', 'Spies'],
+    ['missiles', 'Missiles'],
+    ['nukes', 'Nukes'],
+  ];
+  const formatUnits = (units) => units
+    .map(([key, label]) => `${label} ${formatNumber(military[key])}`)
+    .join(' · ');
 
-  const parts = unitOrder.map(({ key, label }) => `${label}: ${formatNumber(military[key])}`);
-  return parts.join(' • ');
+  return `${formatUnits(conventional)}\n${formatUnits(strategic)}`;
 }
 
 function formatNumber(value) {

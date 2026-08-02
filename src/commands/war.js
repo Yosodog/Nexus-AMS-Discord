@@ -7,7 +7,7 @@ import {
   normalizeCollection, replyError, summarizeItem,
 } from '../utils/commandSupport.js';
 import {
-  buildEmbed, escapeMarkdown, statusMessage, truncate,
+  buildEmbed, buildPlainMessages, escapeMarkdown, statusMessage, truncate,
 } from '../utils/discordUi.js';
 
 export const data = new SlashCommandBuilder().setName('war').setDescription('View wars and war assignments.')
@@ -104,17 +104,18 @@ export const execute = async (interaction, context) => {
     if (subcommand === 'simulate') {
       const result = await context.apiService.getWarSimulation(actor, interaction.options.getString('war', true));
       const summary = typeof result?.summary === 'string'
-        ? escapeMarkdown(truncate(result.summary, 3900))
+        ? escapeMarkdown(truncate(result.summary, 6_000))
         : summarizeItem(result);
-      await interaction.editReply({
-        embeds: [buildEmbed({
-          title: 'War Simulation',
-          tone: 'military',
-          description: summary,
-          footer: 'Simulation results are estimates. Verify the live war state before acting.',
-        })],
-        components: [],
+      const messages = buildPlainMessages({
+        title: 'War Simulation',
+        tone: 'military',
+        description: summary,
+        footer: 'Simulation results are estimates. Verify the live war state before acting.',
       });
+      await interaction.editReply(messages[0]);
+      for (const message of messages.slice(1)) {
+        await interaction.followUp({ ...message, ephemeral: true });
+      }
       return;
     }
     const result = await context.apiService.getMyActiveWars(actor);
