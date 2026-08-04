@@ -124,6 +124,92 @@ test('QueueDispatcher ignores a stale archive payload channel in favor of the cu
   assert.equal(operations.every(([id]) => id === THREAD_ID), true);
 });
 
+test('QueueDispatcher archives a persisted Milcom objective thread', async () => {
+  const operations = [];
+  const thread = {
+    id: THREAD_ID,
+    guildId: GUILD_ID,
+    name: 'coalition-dawn-target',
+    archived: false,
+    locked: false,
+    isThread: () => true,
+    setName: async (name) => operations.push(['setName', name]),
+    setArchived: async (archived) => operations.push(['setArchived', archived]),
+    setLocked: async (locked) => operations.push(['setLocked', locked]),
+  };
+  const client = createBaseClient();
+  client.channels.cache.set(THREAD_ID, thread);
+  let lookedUpObjectiveId = null;
+  const dispatcher = new QueueDispatcher({
+    client,
+    logger: createLogger(),
+    guildId: GUILD_ID,
+    apiService: {
+      getMilcomObjective: async (objectiveId) => {
+        lookedUpObjectiveId = objectiveId;
+        return { data: { objective: { discord_channel_id: THREAD_ID } } };
+      },
+    },
+  });
+
+  const result = await dispatcher.dispatch({
+    id: 'queue-milcom-archive',
+    action: 'WAR_ROOM_ARCHIVE',
+    payload: {
+      source: { type: 'milcom_objective', id: 88 },
+      archive: { title_prefix: '[Complete] ' },
+    },
+  });
+
+  assert.deepEqual(result, { success: true });
+  assert.equal(lookedUpObjectiveId, 88);
+  assert.deepEqual(operations, [
+    ['setName', '[Complete] coalition-dawn-target'],
+    ['setArchived', true],
+    ['setLocked', true],
+  ]);
+});
+
+test('QueueDispatcher uses a direct Milcom channel fallback when Nexus lookup fails', async () => {
+  const operations = [];
+  const thread = {
+    id: THREAD_ID,
+    guildId: GUILD_ID,
+    name: 'fallback-target',
+    archived: false,
+    locked: false,
+    isThread: () => true,
+    setName: async () => operations.push('name'),
+    setArchived: async () => operations.push('archive'),
+    setLocked: async () => operations.push('lock'),
+  };
+  const client = createBaseClient();
+  client.channels.cache.set(THREAD_ID, thread);
+  const logger = createLogger();
+  const dispatcher = new QueueDispatcher({
+    client,
+    logger,
+    guildId: GUILD_ID,
+    apiService: { getMilcomObjective: async () => { throw new Error('Nexus unavailable'); } },
+  });
+
+  const result = await dispatcher.dispatch({
+    id: 'queue-milcom-fallback',
+    action: 'WAR_ROOM_ARCHIVE',
+    payload: {
+      source: { type: 'milcom_objective', id: 89 },
+      discord_channel_id: THREAD_ID,
+    },
+  });
+
+  assert.deepEqual(result, { success: true });
+  assert.deepEqual(operations, ['name', 'archive', 'lock']);
+  assert.equal(
+    logger.entries.warn.some(([message]) => message === 'WAR_ROOM_ARCHIVE failed to resolve persisted Nexus source'),
+    true,
+  );
+});
+
 test('QueueDispatcher removes all non-everyone roles for alliance departures', async () => {
   const logger = createLogger();
   let removedRoleIds = null;

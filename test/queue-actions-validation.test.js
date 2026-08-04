@@ -182,6 +182,47 @@ test('WAR_ROOM_CREATE validates forum, role, source, and assignment boundaries',
     valid: false,
     reason: 'invalid_source_id',
   });
+  const milcomSource = {
+    type: 'milcom_objective',
+    id: 10,
+    operation_id: 20,
+    operation_type: 'plan',
+    name: 'Coalition Dawn',
+    url: 'https://nexus.example/admin/milcom/plans/10',
+  };
+  assert.deepEqual(validate({
+    forum_channel_id: CHANNEL_ID,
+    source: { type: 'milcom_objective', id: 10 },
+  }), { valid: false, reason: 'invalid_operation_id' });
+  assert.deepEqual(validate({
+    forum_channel_id: CHANNEL_ID,
+    source: { type: 'milcom_objective', id: 10, operation_id: 20 },
+  }), { valid: false, reason: 'invalid_operation_type' });
+  assert.deepEqual(validate({
+    forum_channel_id: CHANNEL_ID,
+    source: { type: 'milcom_objective', id: 10, operation_id: 20, operation_type: 'plan' },
+  }), { valid: false, reason: 'invalid_operation_name' });
+  assert.deepEqual(validate({
+    forum_channel_id: CHANNEL_ID,
+    source: { ...milcomSource, url: 'javascript:alert(1)' },
+    dispatch_id: 30,
+  }), { valid: false, reason: 'invalid_source_url' });
+  assert.deepEqual(validate({ forum_channel_id: CHANNEL_ID, source: milcomSource }), {
+    valid: false,
+    reason: 'invalid_dispatch_id',
+  });
+  assert.deepEqual(validate({
+    forum_channel_id: CHANNEL_ID,
+    source: milcomSource,
+    dispatch_id: 30,
+    forum_tag_ids: [USER_ID, USER_ID],
+  }), { valid: false, reason: 'invalid_forum_tags' });
+  assert.deepEqual(validate({
+    forum_channel_id: CHANNEL_ID,
+    source: milcomSource,
+    dispatch_id: 30,
+    forum_tag_ids: Array.from({ length: 6 }, (_, index) => `${50_000_000_000_000_000n + BigInt(index)}`),
+  }), { valid: false, reason: 'invalid_forum_tags' });
   assert.deepEqual(validate({ forum_channel_id: CHANNEL_ID, assigned_members: {} }), {
     valid: false,
     reason: 'invalid_assigned_members',
@@ -200,6 +241,13 @@ test('WAR_ROOM_CREATE validates forum, role, source, and assignment boundaries',
     source: { type: 'war_counter', id: 1 },
     assigned_members: [],
   }), { valid: true });
+  assert.deepEqual(validate({
+    forum_channel_id: CHANNEL_ID,
+    source: milcomSource,
+    dispatch_id: 30,
+    assigned_members: [],
+    forum_tag_ids: [USER_ID],
+  }), { valid: true });
 });
 
 test('WAR_ROOM_ARCHIVE validates persisted counter and direct channel targets', () => {
@@ -207,6 +255,15 @@ test('WAR_ROOM_ARCHIVE validates persisted counter and direct channel targets', 
   assert.deepEqual(validate(null), { valid: false, reason: 'invalid_payload' });
   assert.deepEqual(validate({ source: { type: 'war_counter' } }), { valid: false, reason: 'invalid_source_id' });
   assert.deepEqual(validate({ source: { type: 'war_counter', id: 7 } }), { valid: true });
+  assert.deepEqual(validate({ source: { type: 'milcom_objective' } }), {
+    valid: false,
+    reason: 'invalid_source_id',
+  });
+  assert.deepEqual(validate({ source: { type: 'milcom_objective', id: 8 } }), { valid: true });
+  assert.deepEqual(validate({
+    source: { type: 'milcom_objective', id: 8 },
+    discord_channel_id: 'bad',
+  }), { valid: false, reason: 'invalid_channel' });
   assert.deepEqual(validate({}), { valid: false, reason: 'missing_channel' });
   assert.deepEqual(validate({ discord_channel_id: 'bad' }), { valid: false, reason: 'invalid_channel' });
   assert.deepEqual(validate({ discord_channel_id: 123456789012345678 }), {

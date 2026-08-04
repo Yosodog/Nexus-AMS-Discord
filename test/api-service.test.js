@@ -75,6 +75,58 @@ test('ApiService builds leased queue and war-counter requests', async () => {
   assert.equal(requests[4].url, 'https://nexus.example/api/v1/discord/war-counters/77');
 });
 
+test('ApiService signs and retries the idempotent Milcom objective room callback', async () => {
+  const service = createApiService({
+    maxRetries: 2,
+    random: () => 0,
+    sleep: async () => {},
+  });
+  const requests = [];
+  let callbackAttempts = 0;
+  service.http.request = async (options) => {
+    requests.push(options);
+    if (options.method === 'post') {
+      callbackAttempts += 1;
+      if (callbackAttempts === 1) {
+        const error = new Error('Temporary Nexus failure');
+        error.response = { status: 503 };
+        throw error;
+      }
+    }
+    return { data: { ok: true } };
+  };
+
+  assert.deepEqual(await service.getMilcomObjective(123), { ok: true });
+  assert.deepEqual(await service.attachMilcomObjectiveRoom({
+    objective_id: 123,
+    dispatch_id: 456,
+    discord_channel_id: '323456789012345678',
+  }), { ok: true });
+
+  assert.equal(requests[0].method, 'get');
+  assert.equal(requests[0].url, 'https://nexus.example/api/v1/discord/milcom/objectives/123');
+  assert.equal(callbackAttempts, 2);
+  assert.equal(requests[1].url, 'https://nexus.example/api/v1/discord/milcom/objectives/attach-room');
+  assert.deepEqual(requests[1].data, {
+    objective_id: 123,
+    dispatch_id: 456,
+    discord_channel_id: '323456789012345678',
+  });
+  assert.equal(requests[1].headers.Authorization, 'Bearer secret-key');
+  assert.equal(typeof requests[1].headers['X-Nexus-Discord-Relay-Signature'], 'string');
+  const relayPayload = JSON.parse(Buffer.from(
+    requests[1].headers['X-Nexus-Discord-Relay-Payload'],
+    'base64url',
+  ).toString('utf8'));
+  assert.deepEqual(relayPayload, {
+    relay_version: 1,
+    proof_type: 'service',
+    nonce: '11111111-2222-4333-8444-555555555555',
+    guild_id: GUILD_ID,
+    action: 'milcom.objectives.attach-room',
+  });
+});
+
 test('ApiService exposes all Nexus mutation endpoints through the shared transport', async () => {
   const service = createApiService();
   const requests = [];

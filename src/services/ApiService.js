@@ -442,6 +442,12 @@ export class ApiService {
     return this.request({ method: 'get', url: endpointUrl }, RetryMode.SAFE);
   }
 
+  /** Fetch the current persisted Milcom objective for room reconciliation. */
+  async getMilcomObjective(id) {
+    const endpointUrl = new URL(`/api/v1/discord/milcom/objectives/${id}`, this.baseUrl).toString();
+    return this.request({ method: 'get', url: endpointUrl }, RetryMode.SAFE);
+  }
+
   /**
    * Submit a new application on behalf of a Discord user.
    * @param {{ nation_id: number, discord_user_id: string, discord_username: string }} payload application payload
@@ -493,6 +499,28 @@ export class ApiService {
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
         ...this.#serviceRelayHeaders('war-counters.attach-channel'),
+      },
+    }, RetryMode.IDEMPOTENT);
+  }
+
+  /**
+   * Attach a checkpointed Discord room to a Milcom objective and dispatch.
+   * @param {{ objective_id: number, dispatch_id: number, discord_channel_id: string }} payload association payload
+   * @returns {Promise<any>} Nexus response
+   */
+  async attachMilcomObjectiveRoom(payload) {
+    const endpointUrl = new URL(
+      '/api/v1/discord/milcom/objectives/attach-room',
+      this.baseUrl,
+    ).toString();
+
+    return this.request({
+      method: 'post',
+      url: endpointUrl,
+      data: payload,
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+        ...this.#serviceRelayHeaders('milcom.objectives.attach-room'),
       },
     }, RetryMode.IDEMPOTENT);
   }

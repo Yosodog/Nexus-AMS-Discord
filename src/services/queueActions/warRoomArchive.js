@@ -6,7 +6,10 @@ import {
 import { archiveWarCounterRoom } from '../../utils/warCounterRooms.js';
 import { invalid, valid } from './support.js';
 
-const isWarCounterSource = (source) => `${source?.type ?? ''}`.toLowerCase() === 'war_counter';
+const sourceType = (source) => `${source?.type ?? ''}`.trim().toLowerCase();
+const isWarCounterSource = (source) => sourceType(source) === 'war_counter';
+const isMilcomObjectiveSource = (source) => sourceType(source) === 'milcom_objective';
+const isPersistedSource = (source) => isWarCounterSource(source) || isMilcomObjectiveSource(source);
 
 export const validate = (payload) => {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return invalid('invalid_payload');
@@ -14,8 +17,11 @@ export const validate = (payload) => {
   if (payload.source !== undefined && (!payload.source || typeof payload.source !== 'object' || Array.isArray(payload.source))) {
     return invalid('invalid_source');
   }
-  if (isWarCounterSource(source)) {
+  if (isPersistedSource(source)) {
     if (!toPositiveInteger(source.id)) return invalid('invalid_source_id');
+    if (payload.discord_channel_id !== undefined && !isDiscordSnowflake(payload.discord_channel_id)) {
+      return invalid('invalid_channel');
+    }
   } else {
     if (!payload.discord_channel_id) return invalid('missing_channel');
     if (!isDiscordSnowflake(payload.discord_channel_id)) return invalid('invalid_channel');
@@ -41,25 +47,59 @@ export const execute = async (command, runtime) => {
       ? payload.archive.title_prefix
       : '[Archived] ';
 
-  let channelId = null;
-  if (isWarCounterSource(source)) {
-    if (!runtime.apiService?.getWarCounter) {
-      return { success: false, reason: 'counter_lookup_unavailable' };
-    }
-    try {
-      const response = await runtime.apiService.getWarCounter(source.id);
-      const counter = response?.data ?? response?.counter ?? response;
-      channelId = counter?.discord_channel_id ?? null;
-    } catch (error) {
-      runtime.logger.warn('WAR_ROOM_ARCHIVE failed to resolve persisted Nexus counter', {
+  const fallbackChannelId = isDiscordSnowflake(payload.discord_channel_id)
+    ? payload.discord_channel_id.trim()
+    : null;
+  let channelId = fallbackChannelId;
+  if (isPersistedSource(source)) {
+    const lookup = isMilcomObjectiveSource(source)
+      ? runtime.apiService?.getMilcomObjective
+      : runtime.apiService?.getWarCounter;
+    const lookupUnavailableReason = isMilcomObjectiveSource(source)
+      ? 'objective_lookup_unavailable'
+      : 'counter_lookup_unavailable';
+    const lookupFailedReason = isMilcomObjectiveSource(source)
+      ? 'objective_lookup_failed'
+      : 'counter_lookup_failed';
+
+    if (!lookup) {
+      if (!fallbackChannelId) return { success: false, reason: lookupUnavailableReason };
+      runtime.logger.warn('WAR_ROOM_ARCHIVE source lookup unavailable; using direct channel fallback', {
         commandId: command?.id,
+        sourceType: sourceType(source),
+        sourceId: source.id,
+        channelId: fallbackChannelId,
+      });
+    }
+
+    try {
+      if (lookup) {
+        const response = await lookup.call(runtime.apiService, source.id);
+        const record = resolvePersistedRoomRecord(response);
+        const persistedChannelId = record?.discord_channel_id ?? null;
+        if (isDiscordSnowflake(persistedChannelId)) {
+          channelId = persistedChannelId.trim();
+        } else if (!fallbackChannelId) {
+          channelId = null;
+        } else {
+          runtime.logger.warn('WAR_ROOM_ARCHIVE persisted source has no usable channel; using direct fallback', {
+            commandId: command?.id,
+            sourceType: sourceType(source),
+            sourceId: source.id,
+            channelId: fallbackChannelId,
+          });
+        }
+      }
+    } catch (error) {
+      runtime.logger.warn('WAR_ROOM_ARCHIVE failed to resolve persisted Nexus source', {
+        commandId: command?.id,
+        sourceType: sourceType(source),
         sourceId: source.id,
         status: error?.response?.status ?? null,
+        fallbackChannelId,
       });
-      return { success: false, reason: 'counter_lookup_failed' };
+      if (!fallbackChannelId) return { success: false, reason: lookupFailedReason };
     }
-  } else {
-    channelId = payload.discord_channel_id.trim();
   }
 
   if (!isDiscordSnowflake(channelId)) {
@@ -89,3 +129,12 @@ export const execute = async (command, runtime) => {
 
   return archiveResult.success ? { success: true } : { success: false, reason: archiveResult.reason };
 };
+
+function resolvePersistedRoomRecord(response) {
+  return response?.data?.objective ??
+    response?.data?.counter ??
+    response?.data ??
+    response?.objective ??
+    response?.counter ??
+    response;
+}

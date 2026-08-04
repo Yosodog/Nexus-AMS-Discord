@@ -5,6 +5,7 @@ import { Collection } from 'discord.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const retiredCommandFiles = new Set(['archivecounter.js']);
 
 /**
  * Dynamically load all command modules from the commands directory.
@@ -21,6 +22,11 @@ export const loadCommands = async (logger, { directory = __dirname, importer = (
 
   for (const file of entries) {
     if (!file.endsWith('.js') || file === 'index.js') {
+      continue;
+    }
+
+    if (retiredCommandFiles.has(file)) {
+      logger.debug('Skipped retired command module', file);
       continue;
     }
 

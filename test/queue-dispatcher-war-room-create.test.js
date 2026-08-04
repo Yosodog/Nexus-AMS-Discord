@@ -6,6 +6,7 @@ const GUILD_ID = '123456789012345678';
 const FORUM_ID = '223456789012345678';
 const THREAD_ID = '323456789012345678';
 const ROLE_ID = '423456789012345678';
+const TAG_ID = '433456789012345678';
 
 function createLogger() {
   const entries = { info: [], warn: [], error: [], debug: [] };
@@ -19,7 +20,13 @@ function createLogger() {
   };
 }
 
-function createWarRoomContext({ onThreadSend, onThreadCreate, onCheckpoint, onAttach } = {}) {
+function createWarRoomContext({
+  onThreadSend,
+  onThreadCreate,
+  onCheckpoint,
+  onAttach,
+  onMilcomAttach,
+} = {}) {
   const logger = createLogger();
   const sentMessages = [];
 
@@ -68,12 +75,193 @@ function createWarRoomContext({ onThreadSend, onThreadCreate, onCheckpoint, onAt
     guildId: GUILD_ID,
     apiService: {
       attachWarCounterChannel: async (payload) => onAttach?.(payload),
+      attachMilcomObjectiveRoom: async (payload) => onMilcomAttach?.(payload),
       checkpointDiscordQueue: async (...args) => onCheckpoint?.(...args),
     },
   });
 
   return { dispatcher, logger, sentMessages, thread };
 }
+
+test('WAR_ROOM_CREATE delivers a fully rendered Milcom counter after checkpoint and callback', async () => {
+  const events = [];
+  let starterPayload;
+  let callbackPayload;
+  const { dispatcher, sentMessages } = createWarRoomContext({
+    onThreadCreate: (payload, thread) => {
+      events.push('create');
+      starterPayload = payload;
+      return thread;
+    },
+    onCheckpoint: () => events.push('checkpoint'),
+    onMilcomAttach: (payload) => {
+      events.push('attach');
+      callbackPayload = payload;
+    },
+    onThreadSend: () => events.push('send'),
+  });
+
+  const result = await dispatcher.dispatch({
+    id: '703456789012345678',
+    action: 'WAR_ROOM_CREATE',
+    lease_token: 'lease-token',
+    created_at: '2026-08-02T12:00:00Z',
+    payload: {
+      forum_channel_id: FORUM_ID,
+      forum_tag_ids: [TAG_ID],
+      defense_role_id: ROLE_ID,
+      dispatch_id: 901,
+      source: {
+        type: 'milcom_objective',
+        id: 123,
+        operation_id: 45,
+        operation_type: 'counter',
+        name: 'Coalition @everyone Dawn',
+        url: 'https://nexus.example/admin/milcom/counters/123',
+      },
+      objective: {
+        priority_tier: 'critical',
+        priority_score: 98,
+        wave: { name: 'Immediate response' },
+      },
+      target: {
+        id: 99,
+        leader_name: 'Target Leader',
+        nation_name: 'Target Nation',
+        score: 1234,
+        cities: 20,
+        offensive_wars: 1,
+        defensive_wars: 2,
+        beige_turns: 0,
+        alliance: { name: 'Target Alliance', acronym: 'TA' },
+        military: { soldiers: 1000, tanks: 200, aircraft: 50, ships: 10, spies: 20, missiles: 1, nukes: 0 },
+      },
+      attacked_member: {
+        discord_id: '523456789012345678',
+        leader_name: 'Defending Leader',
+        nation_name: 'Defending Nation',
+        nation_id: 101,
+        links: { nation: 'https://politicsandwar.com/nation/id=101' },
+      },
+      assigned_members: [{
+        discord_id: '623456789012345678',
+        leader_name: 'Friendly Leader',
+        nation_name: 'Friendly Nation',
+        nation_id: 102,
+        score: 1100,
+        cities: 19,
+        match_score: 95,
+        offensive_wars: 0,
+        defensive_wars: 1,
+        role: 'counter',
+        links: { nation: 'https://politicsandwar.com/nation/id=102' },
+      }],
+      war_type: { key: 'ordinary', label: 'Ordinary' },
+      reason: 'Defensive response <@999999999999999999>',
+      links: {
+        target_nation: 'https://politicsandwar.com/nation/id=99',
+        declare_war: 'https://politicsandwar.com/nation/war/declare/id=99',
+        war_simulators: 'https://nexus.example/tools/war-simulators',
+        operation: 'https://nexus.example/admin/milcom/operations/45',
+      },
+    },
+  });
+
+  assert.deepEqual(result, { success: true });
+  assert.deepEqual(events.slice(0, 3), ['create', 'checkpoint', 'attach']);
+  assert.deepEqual(callbackPayload, {
+    objective_id: 123,
+    dispatch_id: 901,
+    discord_channel_id: THREAD_ID,
+  });
+  assert.deepEqual(starterPayload.appliedTags, [TAG_ID]);
+  assert.match(starterPayload.message.content, /## Milcom Objective Ready/);
+  assert.match(starterPayload.message.content, /Coalition @everyone Dawn/);
+  assert.deepEqual(starterPayload.message.allowedMentions, {
+    parse: [],
+    users: ['523456789012345678'],
+    roles: [],
+    repliedUser: false,
+  });
+
+  const embed = starterPayload.message.embeds[0].toJSON();
+  assert.deepEqual(embed.fields.map((field) => field.name), [
+    'Objective', 'Operation', 'Target status', 'Military', 'Links',
+  ]);
+  assert.match(embed.fields[0].value, /War type:\*\* Ordinary/);
+  assert.match(embed.fields[1].value, /Coalition @everyone Dawn \(#45\)/);
+  assert.match(embed.fields[1].value, /Immediate response.*Critical.*98/s);
+  assert.match(embed.fields.at(-1).value, /Nexus objective.*Operation/s);
+
+  const defensePing = sentMessages.find((message) => message.content?.includes(`<@&${ROLE_ID}>`));
+  const participantPing = sentMessages.find((message) => /Participant Notifications/.test(message.content));
+  const assignmentMessage = sentMessages.find((message) => /## Assignments/.test(message.content));
+  assert.deepEqual(defensePing.allowedMentions, {
+    parse: [],
+    users: [],
+    roles: [ROLE_ID],
+    repliedUser: false,
+  });
+  assert.deepEqual(participantPing.allowedMentions, {
+    parse: [],
+    users: ['523456789012345678', '623456789012345678'],
+    roles: [],
+    repliedUser: false,
+  });
+  assert.deepEqual(assignmentMessage.allowedMentions, { parse: [], repliedUser: false });
+  assert.match(assignmentMessage.content, /### Counter team/);
+  assert.match(assignmentMessage.content, /War type:\*\* Ordinary/);
+  assert.ok(sentMessages.every((message) => message.enforceNonce === true));
+});
+
+test('WAR_ROOM_CREATE reuses a Milcom checkpoint and deterministic nonces on duplicate delivery', async () => {
+  let creates = 0;
+  let checkpoint = null;
+  const callbacks = [];
+  const { dispatcher, sentMessages } = createWarRoomContext({
+    onThreadCreate: (_payload, thread) => {
+      creates += 1;
+      return thread;
+    },
+    onCheckpoint: (_id, _leaseToken, result) => { checkpoint = result; },
+    onMilcomAttach: (payload) => callbacks.push(payload),
+  });
+  const command = {
+    id: '713456789012345678',
+    action: 'WAR_ROOM_CREATE',
+    lease_token: 'lease-token',
+    payload: {
+      forum_channel_id: FORUM_ID,
+      dispatch_id: 902,
+      source: {
+        type: 'milcom_objective',
+        id: 124,
+        operation_id: 46,
+        operation_type: 'plan',
+        name: 'Second Wave',
+        url: 'https://nexus.example/admin/milcom/plans/124',
+      },
+      target: { id: 100, nation_name: 'Another Target' },
+      assigned_members: [{
+        discord_id: '633456789012345678',
+        nation_id: 103,
+        nation_name: 'Assigned Nation',
+      }],
+    },
+  };
+
+  assert.deepEqual(await dispatcher.dispatch(command), { success: true });
+  const firstDeliveryNonces = sentMessages.map((message) => message.nonce);
+  assert.deepEqual(await dispatcher.dispatch({ ...command, result: checkpoint }), { success: true });
+  const secondDeliveryNonces = sentMessages.slice(firstDeliveryNonces.length).map((message) => message.nonce);
+
+  assert.equal(creates, 1);
+  assert.deepEqual(checkpoint, { discord_channel_id: THREAD_ID });
+  assert.deepEqual(secondDeliveryNonces, firstDeliveryNonces);
+  assert.equal(new Set(firstDeliveryNonces).size, firstDeliveryNonces.length);
+  assert.equal(callbacks.length, 2);
+  assert.deepEqual(callbacks[0], callbacks[1]);
+});
 
 test('WAR_ROOM_CREATE checkpoints before attaching and sending follow-up steps', async () => {
   const events = [];
