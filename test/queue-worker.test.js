@@ -208,8 +208,13 @@ test('QueueWorker does not acknowledge inside the lease safety window', async ()
 test('QueueWorker fails a successful dispatch when its lease was lost during the final call', async () => {
   const logger = createLogger();
   let status;
+  let claimed = false;
   const apiService = {
-    claimDiscordQueue: async () => ({ data: leased('queue-1', 'SLOW') }),
+    claimDiscordQueue: async () => {
+      if (claimed) return { data: null };
+      claimed = true;
+      return { data: leased('queue-1', 'SLOW') };
+    },
     renewDiscordQueueLease: async () => {
       throw new Error('lease service unavailable');
     },
@@ -219,7 +224,9 @@ test('QueueWorker fails a successful dispatch when its lease was lost during the
   };
   const dispatcher = {
     dispatch: async () => {
-      await new Promise((resolve) => setTimeout(resolve, 15));
+      await waitFor(() => logger.entries.error.some(
+        ([message]) => message.includes('Queue lease renewal failed'),
+      ), { timeoutMs: 1000 });
       return { success: true };
     },
   };
@@ -232,7 +239,7 @@ test('QueueWorker fails a successful dispatch when its lease was lost during the
   });
 
   worker.start();
-  await waitFor(() => status === 'failed');
+  await waitFor(() => status === 'failed', { timeoutMs: 1000 });
   await worker.stop();
 
   assert.equal(status, 'failed');
@@ -266,6 +273,7 @@ test('QueueWorker shutdown drains an item returned by an in-flight claim', async
   const logger = createLogger();
   const events = [];
   let releaseClaim;
+  let renewals = 0;
   const apiService = {
     claimDiscordQueue: async () => {
       events.push('claim-start');
@@ -273,7 +281,10 @@ test('QueueWorker shutdown drains an item returned by an in-flight claim', async
       events.push('claim-finish');
       return { data: leased('queue-1', 'OK') };
     },
-    renewDiscordQueueLease: async () => ({ data: { leased_until: futureLease() } }),
+    renewDiscordQueueLease: async () => {
+      renewals += 1;
+      return { data: { leased_until: futureLease() } };
+    },
     updateDiscordQueueStatus: async () => { events.push('ack'); },
   };
   const worker = new QueueWorker({
@@ -281,11 +292,13 @@ test('QueueWorker shutdown drains an item returned by an in-flight claim', async
     dispatcher: {
       dispatch: async () => {
         events.push('dispatch');
+        await new Promise((resolve) => setTimeout(resolve, 10));
         return { success: true };
       },
     },
     logger,
     pollIntervalMs: 60_000,
+    leaseRenewIntervalMs: 1,
   });
 
   worker.start();
@@ -296,4 +309,152 @@ test('QueueWorker shutdown drains an item returned by an in-flight claim', async
 
   assert.deepEqual(events, ['claim-start', 'claim-finish', 'dispatch', 'ack']);
   assert.deepEqual(result, { drained: true });
+  assert.equal(renewals, 0);
+});
+
+test('QueueWorker shutdown stops extending an active lease while it drains', async () => {
+  let releaseDispatch;
+  let dispatchStarted = false;
+  let renewals = 0;
+  let claimed = false;
+  const worker = new QueueWorker({
+    apiService: {
+      claimDiscordQueue: async () => {
+        if (claimed) return { data: null };
+        claimed = true;
+        return { data: leased('queue-active', 'SLOW') };
+      },
+      renewDiscordQueueLease: async () => {
+        renewals += 1;
+        return { data: { leased_until: futureLease() } };
+      },
+      updateDiscordQueueStatus: async () => {},
+    },
+    dispatcher: {
+      dispatch: async () => {
+        dispatchStarted = true;
+        await new Promise((resolve) => { releaseDispatch = resolve; });
+        return { success: true };
+      },
+    },
+    logger: createLogger(),
+    pollIntervalMs: 60_000,
+    leaseRenewIntervalMs: 20,
+  });
+
+  worker.start();
+  await waitFor(() => dispatchStarted);
+  const stopping = worker.stop({ timeoutMs: 100 });
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.equal(renewals, 0);
+
+  releaseDispatch();
+  assert.deepEqual(await stopping, { drained: true });
+});
+
+test('QueueWorker shutdown ignores a late renewal response and remains bounded', async () => {
+  let releaseDispatch;
+  let releaseRenewal;
+  let dispatchStarted = false;
+  let renewalFinished = false;
+  let renewalStarted = false;
+  let renewals = 0;
+  let claimed = false;
+  const worker = new QueueWorker({
+    apiService: {
+      claimDiscordQueue: async () => {
+        if (claimed) return { data: null };
+        claimed = true;
+        return { data: leased('queue-renewing', 'SLOW') };
+      },
+      renewDiscordQueueLease: async () => {
+        renewals += 1;
+        renewalStarted = true;
+        await new Promise((resolve) => { releaseRenewal = resolve; });
+        renewalFinished = true;
+        return { data: { leased_until: futureLease() } };
+      },
+      updateDiscordQueueStatus: async () => {},
+    },
+    dispatcher: {
+      dispatch: async () => {
+        dispatchStarted = true;
+        await new Promise((resolve) => { releaseDispatch = resolve; });
+        return { success: true };
+      },
+    },
+    logger: createLogger(),
+    pollIntervalMs: 60_000,
+    leaseRenewIntervalMs: 1,
+  });
+
+  worker.start();
+  await waitFor(() => dispatchStarted && renewalStarted);
+  const stopping = worker.stop({ timeoutMs: 100 });
+  releaseDispatch();
+  assert.deepEqual(await stopping, { drained: true });
+  assert.equal(renewalFinished, false);
+  assert.equal(renewals, 1);
+
+  releaseRenewal();
+  await waitFor(() => renewalFinished);
+});
+
+test('QueueWorker refuses new workflow steps inside the lease safety window', async () => {
+  const item = leased('queue-expiring', 'MULTI_STEP');
+  item.leased_until = new Date(Date.now() + 30).toISOString();
+  let canContinue = null;
+  let claimed = false;
+  const worker = new QueueWorker({
+    apiService: {
+      claimDiscordQueue: async () => {
+        if (claimed) return { data: null };
+        claimed = true;
+        return { data: item };
+      },
+      renewDiscordQueueLease: async () => ({ data: { leased_until: futureLease() } }),
+      updateDiscordQueueStatus: async () => {},
+    },
+    dispatcher: {
+      dispatch: async (_item, context) => {
+        await new Promise((resolve) => setTimeout(resolve, 35));
+        canContinue = context.canContinue();
+        return { success: false, reason: 'lease_window_closed' };
+      },
+    },
+    logger: createLogger(),
+    pollIntervalMs: 60_000,
+    leaseRenewIntervalMs: 60_000,
+    leaseSafetyMs: 10,
+  });
+
+  worker.start();
+  await waitFor(() => canContinue !== null);
+  await worker.stop({ timeoutMs: 50 });
+
+  assert.equal(canContinue, false);
+});
+
+test('QueueWorker default shutdown deadline stays inside the active lease safety window', { timeout: 1000 }, async () => {
+  let releaseWork;
+  const worker = new QueueWorker({
+    apiService: {},
+    dispatcher: {},
+    logger: createLogger(),
+    leaseSafetyMs: 10,
+  });
+  worker.activeLease = {
+    healthy: true,
+    expiresAt: Date.now() + 60,
+  };
+  worker.currentWork = new Promise((resolve) => { releaseWork = resolve; });
+
+  const startedAt = Date.now();
+  const result = await worker.stop();
+  const elapsedMs = Date.now() - startedAt;
+  releaseWork();
+
+  assert.deepEqual(result, { drained: false });
+  assert.equal(elapsedMs >= 10, true);
+  assert.equal(elapsedMs < 500, true);
 });

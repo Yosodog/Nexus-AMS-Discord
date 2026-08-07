@@ -40,7 +40,7 @@ export class QueueWorker {
     this.currentWork = null;
     this.activeLease = null;
     this.leaseTimer = null;
-    this.leaseRenewing = false;
+    this.leaseRenewalPromise = null;
   }
 
   start() {
@@ -53,8 +53,8 @@ export class QueueWorker {
     this.#scheduleNextPoll(0);
   }
 
-  /** Permanently stop new claims and wait briefly for the active item to finish and acknowledge. */
-  async stop({ timeoutMs = 25_000 } = {}) {
+  /** Stop new claims and drain only while the current lease remains safe to use. */
+  async stop({ timeoutMs } = {}) {
     if (this.stopped) {
       return { drained: !(this.currentWork ?? this.pollPromise) };
     }
@@ -64,26 +64,24 @@ export class QueueWorker {
       clearTimeout(this.pollTimer);
       this.pollTimer = null;
     }
+    this.#stopLeaseRenewal();
 
     const drainingWork = this.currentWork ?? this.pollPromise;
     if (!drainingWork) {
-      this.#stopLeaseRenewal();
       this.logger.info('Queue worker stopped', { workerId: this.workerId, drained: true });
       return { drained: true };
     }
 
+    const drainTimeoutMs = timeoutMs ?? this.#shutdownDrainTimeoutMs();
     let timeout;
     const drained = await Promise.race([
       drainingWork.then(() => true, () => true),
       new Promise((resolve) => {
-        timeout = setTimeout(() => resolve(false), Math.max(0, timeoutMs));
+        timeout = setTimeout(() => resolve(false), Math.max(0, drainTimeoutMs));
       }),
     ]);
     clearTimeout(timeout);
 
-    if (!drained) {
-      this.#stopLeaseRenewal();
-    }
     this.logger.info('Queue worker stopped', { workerId: this.workerId, drained });
     return { drained };
   }
@@ -143,6 +141,7 @@ export class QueueWorker {
       id: item.id,
       token: item.lease_token,
       healthy: true,
+      renewable: false,
       expiresAt: this.#parseLeaseExpiry(item.leased_until),
     };
     this.#startLeaseRenewal(item, claimRequestId);
@@ -150,7 +149,7 @@ export class QueueWorker {
     let dispatchResult;
     try {
       dispatchResult = await this.dispatcher.dispatch(item, {
-        canContinue: () => Boolean(this.activeLease?.healthy),
+        canContinue: () => Boolean(this.activeLease?.healthy) && this.#hasAcknowledgementTime(),
         workerId: this.workerId,
         claimRequestId,
       });
@@ -243,44 +242,72 @@ export class QueueWorker {
 
   #startLeaseRenewal(item, claimRequestId) {
     this.#stopLeaseRenewal();
-    this.leaseTimer = setInterval(async () => {
-      if (!this.activeLease || this.leaseRenewing) {
+
+    if (this.stopped) {
+      return;
+    }
+
+    this.activeLease.renewable = true;
+    this.leaseTimer = setInterval(() => {
+      if (!this.activeLease || this.leaseRenewalPromise) {
         return;
       }
 
-      this.leaseRenewing = true;
-      try {
-        const response = await this.apiService.renewDiscordQueueLease(item.id, item.lease_token);
-        const renewedUntil = response?.data?.leased_until ?? response?.leased_until;
-        this.activeLease.expiresAt = this.#parseLeaseExpiry(renewedUntil);
-        this.logger.debug('Renewed queue lease', {
-          workerId: this.workerId,
-          claimRequestId,
-          queueId: item.id,
-          leaseExpiresAt: new Date(this.activeLease.expiresAt).toISOString(),
-        });
-      } catch (error) {
-        this.activeLease.healthy = false;
-        this.logger.error('Queue lease renewal failed; no further workflow steps will start', {
-          workerId: this.workerId,
-          claimRequestId,
-          queueId: item.id,
-          status: error?.response?.status ?? null,
-          errorCode: error?.code ?? null,
-        });
-        this.#stopLeaseRenewal();
-      } finally {
-        this.leaseRenewing = false;
-      }
+      const activeLease = this.activeLease;
+      const renewalPromise = this.#renewLease(item, claimRequestId, activeLease);
+      this.leaseRenewalPromise = renewalPromise;
+      const clearRenewalPromise = () => {
+        if (this.leaseRenewalPromise === renewalPromise) {
+          this.leaseRenewalPromise = null;
+        }
+      };
+      void renewalPromise.then(clearRenewalPromise, clearRenewalPromise);
     }, this.leaseRenewIntervalMs);
     this.leaseTimer.unref?.();
   }
 
+  async #renewLease(item, claimRequestId, activeLease) {
+    try {
+      const response = await this.apiService.renewDiscordQueueLease(item.id, item.lease_token);
+      if (this.activeLease !== activeLease || !activeLease.renewable) {
+        return;
+      }
+
+      const renewedUntil = response?.data?.leased_until ?? response?.leased_until;
+      activeLease.expiresAt = this.#parseLeaseExpiry(renewedUntil);
+      this.logger.debug('Renewed queue lease', {
+        workerId: this.workerId,
+        claimRequestId,
+        queueId: item.id,
+        leaseExpiresAt: new Date(activeLease.expiresAt).toISOString(),
+      });
+    } catch (error) {
+      if (this.activeLease !== activeLease || !activeLease.renewable) {
+        return;
+      }
+
+      activeLease.healthy = false;
+      this.logger.error('Queue lease renewal failed; no further workflow steps will start', {
+        workerId: this.workerId,
+        claimRequestId,
+        queueId: item.id,
+        status: error?.response?.status ?? null,
+        errorCode: error?.code ?? null,
+      });
+      this.#stopLeaseRenewal();
+    }
+  }
+
   #stopLeaseRenewal() {
+    if (this.activeLease) {
+      this.activeLease.renewable = false;
+    }
+
     if (this.leaseTimer) {
       clearInterval(this.leaseTimer);
       this.leaseTimer = null;
     }
+    this.leaseRenewalPromise = null;
   }
 
   #parseLeaseExpiry(value) {
@@ -290,6 +317,18 @@ export class QueueWorker {
 
   #hasAcknowledgementTime() {
     return Date.now() < (this.activeLease?.expiresAt ?? 0) - this.leaseSafetyMs;
+  }
+
+  #shutdownDrainTimeoutMs() {
+    const now = Date.now();
+    const leaseExpiresAt = Number.isFinite(this.activeLease?.expiresAt)
+      ? this.activeLease.expiresAt
+      : now + DEFAULT_LEASE_MS;
+
+    return Math.max(
+      0,
+      Math.min(leaseExpiresAt - now, DEFAULT_LEASE_MS) - this.leaseSafetyMs,
+    );
   }
 
   #scheduleNextPoll(delay = this.currentPollIntervalMs) {

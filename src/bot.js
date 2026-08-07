@@ -77,7 +77,7 @@ const bootstrap = async () => {
 
     shutdownSignal = signal;
     logger.info('Graceful shutdown started', { signal });
-    const { drained } = await queueWorker.stop({ timeoutMs: 25_000 });
+    const { drained } = await queueWorker.stop();
     client.destroy();
     logger.info('Graceful shutdown finished', { signal, drained });
     process.exit(drained ? 0 : 1);

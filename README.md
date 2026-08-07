@@ -121,7 +121,13 @@ Recommended rollout order:
 
 ## Shutdown Behavior
 
-`SIGTERM` or `SIGINT` stops new queue claims, gives the active item up to 25 seconds to finish and acknowledge, closes the Discord client, and exits. A second signal forces immediate termination. Process managers should allow at least a 30-second termination grace period.
+`SIGTERM` or `SIGINT` stops new queue claims and stops scheduling lease
+renewals, then lets an active item (or a claim already in flight) finish and
+acknowledge only while its last confirmed five-minute lease remains safe to
+use. The Discord client stays available during that bounded drain. A second
+signal forces immediate termination. Process managers should allow at least
+310 seconds before sending `SIGKILL`; most shutdowns finish immediately when
+no item is active.
 
 ## Development and CI
 
