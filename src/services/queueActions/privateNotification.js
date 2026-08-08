@@ -18,8 +18,6 @@ const EVENT_TEMPLATES = Object.freeze([
   { prefix: 'war_aid_', title: 'War Aid Update', label: 'war aid request', tone: 'military' },
   { prefix: 'rebuilding_', title: 'Rebuilding Update', label: 'rebuilding request', tone: 'info' },
   { prefix: 'application_', title: 'Application Update', label: 'application', tone: 'info' },
-  { prefix: 'war_assignment_', title: 'War Assignment Update', label: 'war assignment', tone: 'military' },
-  { prefix: 'spy_assignment_', title: 'Spy Assignment Update', label: 'spy assignment', tone: 'intelligence' },
   { prefix: 'audit_', title: 'Audit Findings Need Attention', label: 'audit findings', tone: 'warning' },
   { prefix: 'watchlist_', title: 'Watchlist Alert', label: 'watchlist', tone: 'warning' },
   { prefix: 'blockade_relief_', title: 'Blockade Relief', label: 'blockade relief request', tone: 'military' },

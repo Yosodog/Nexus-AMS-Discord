@@ -18,6 +18,8 @@ export class QueueWorker {
     leaseSafetyMs = 5000,
     workerId = randomUUID(),
     createRequestId = randomUUID,
+    lane = null,
+    enabled = true,
   }) {
     this.apiService = apiService;
     this.dispatcher = dispatcher;
@@ -30,6 +32,8 @@ export class QueueWorker {
     this.leaseSafetyMs = leaseSafetyMs;
     this.workerId = workerId;
     this.createRequestId = createRequestId;
+    this.lane = typeof lane === 'string' && lane.trim() !== '' ? lane.trim() : null;
+    this.enabled = enabled;
 
     this.pollTimer = null;
     this.polling = false;
@@ -44,12 +48,16 @@ export class QueueWorker {
   }
 
   start() {
-    if (this.started || this.stopped) {
+    if (this.started || this.stopped || !this.enabled) {
+      if (!this.enabled && !this.started) {
+        this.started = true;
+        this.logger.info('Queue worker disabled', { workerId: this.workerId, lane: this.lane });
+      }
       return;
     }
 
     this.started = true;
-    this.logger.info('Starting leased Nexus queue worker', { workerId: this.workerId });
+    this.logger.info('Starting leased Nexus queue worker', { workerId: this.workerId, lane: this.lane });
     this.#scheduleNextPoll(0);
   }
 
@@ -108,13 +116,14 @@ export class QueueWorker {
 
     try {
       const requestId = this.createRequestId();
-      const response = await this.apiService.claimDiscordQueue(this.workerId, requestId);
-      const item = response?.data ?? null;
+      const response = await this.apiService.claimDiscordQueue(this.workerId, requestId, this.lane);
+      const item = response?.data?.item ?? response?.data ?? response?.item ?? null;
       this.#resetBackoff();
 
       if (!item) {
         this.logger.debug('No leased Discord command available', {
           workerId: this.workerId,
+          lane: this.lane,
           claimRequestId: requestId,
         });
       } else {
@@ -127,6 +136,7 @@ export class QueueWorker {
       nextDelay = this.currentPollIntervalMs;
       this.logger.warn('Failed to claim Nexus Discord queue item', {
         workerId: this.workerId,
+        lane: this.lane,
         status: error?.response?.status ?? null,
         errorCode: error?.code ?? null,
       });
@@ -185,6 +195,7 @@ export class QueueWorker {
 
     this.logger.info('Finished leased queue item', {
       workerId: this.workerId,
+      lane: this.lane,
       claimRequestId,
       queueId: item.id,
       action: item.action ?? null,
@@ -203,12 +214,12 @@ export class QueueWorker {
     while (this.#hasAcknowledgementTime()) {
       attempt += 1;
       try {
-        const outcomeDetails = status === 'failed'
-          ? {
-              error_code: dispatchResult?.reason ?? undefined,
-              error_message: dispatchResult?.message ?? undefined,
-            }
-          : dispatchResult?.result !== undefined ? { result: dispatchResult.result } : {};
+        const outcomeDetails = {};
+        if (dispatchResult?.result !== undefined) outcomeDetails.result = dispatchResult.result;
+        if (status === 'failed') {
+          outcomeDetails.error_code = dispatchResult?.reason ?? undefined;
+          outcomeDetails.error_message = dispatchResult?.message ?? undefined;
+        }
         await this.apiService.updateDiscordQueueStatus(item.id, status, item.lease_token, outcomeDetails);
         return true;
       } catch (error) {

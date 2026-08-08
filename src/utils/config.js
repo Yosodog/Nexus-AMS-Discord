@@ -36,4 +36,7 @@ export const config = {
     commit: safeIdentifier(process.env.BUILD_COMMIT),
     release: safeIdentifier(process.env.NEXUS_RELEASE_ID),
   },
+  queue: {
+    laneAware: process.env.NEXUS_QUEUE_LANE_AWARE !== 'false',
+  },
 };

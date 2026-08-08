@@ -9,6 +9,7 @@ import { Logger } from './services/Logger.js';
 import { ProcessHealth } from './services/ProcessHealth.js';
 import { QueueDispatcher } from './services/QueueDispatcher.js';
 import { QueueWorker } from './services/QueueWorker.js';
+import { alertRendererRegistry } from './services/queueActions/alertRendererRegistry.js';
 import { config } from './utils/config.js';
 import { validateEnv } from './utils/validateEnv.js';
 
@@ -25,6 +26,28 @@ const requiredEnv = [
 validateEnv(requiredEnv);
 
 const logger = new Logger('Bot');
+
+const aggregateQueueHealth = (workers) => {
+  const snapshots = workers.map((worker) => ({
+    lane: worker.lane ?? 'compatibility',
+    ...worker.getHealthSnapshot(),
+  }));
+  const leaseStates = snapshots
+    .map((snapshot) => snapshot.lease_healthy)
+    .filter((state) => state !== null);
+
+  return {
+    started: snapshots.length > 0 && snapshots.every((snapshot) => snapshot.started),
+    stopped: snapshots.length > 0 && snapshots.every((snapshot) => snapshot.stopped),
+    polling: snapshots.some((snapshot) => snapshot.polling),
+    active_item: snapshots.some((snapshot) => snapshot.active_item),
+    lease_healthy: leaseStates.includes(false)
+      ? false
+      : (leaseStates.includes(true) ? true : null),
+    backoff_attempts: Math.max(0, ...snapshots.map((snapshot) => snapshot.backoff_attempts)),
+    workers: snapshots,
+  };
+};
 
 const bootstrap = async () => {
   const client = new Client({
@@ -51,24 +74,62 @@ const bootstrap = async () => {
       guildId: config.discord.guildId,
     }),
   });
+
+  let alertManifestResponse = null;
+  let alertManifestStatus = { valid: false, reason: 'alert_manifest_unverified' };
+  try {
+    alertManifestResponse = await apiService.getAlertRendererManifest();
+    alertManifestStatus = alertRendererRegistry.verifyManifest(alertManifestResponse);
+    if (!alertManifestStatus.valid) {
+      logger.error('Alert lane disabled because the renderer manifest did not verify', alertManifestStatus);
+    } else {
+      logger.info('Alert renderer manifest verified', {
+        contractVersion: alertManifestStatus.contract_version,
+      });
+    }
+  } catch (error) {
+    logger.error('Alert lane disabled because the renderer manifest could not be fetched', {
+      status: error?.response?.status ?? null,
+      errorCode: error?.code ?? null,
+    });
+  }
+
+  const manifestCapabilities = alertManifestResponse?.capabilities
+    ?? alertManifestResponse?.data?.capabilities
+    ?? alertManifestResponse?.manifest?.capabilities
+    ?? alertManifestResponse?.data?.manifest?.capabilities
+    ?? {};
+  const laneAware = config.queue.laneAware
+    && alertManifestStatus.valid
+    && manifestCapabilities.queue_lanes === true;
   const queueDispatcher = new QueueDispatcher({
     client,
     logger: new Logger('QueueDispatcher'),
     guildId: config.discord.guildId,
     apiService,
+    alertLaneEnabled: alertManifestStatus.valid,
   });
 
-  const queueWorker = new QueueWorker({
+  const workerDefinitions = laneAware
+    ? [
+        { lane: 'side_effects', enabled: true },
+        { lane: 'alerts', enabled: alertManifestStatus.valid },
+        { lane: 'digests', enabled: alertManifestStatus.valid },
+      ]
+    : [{ lane: null, enabled: true }];
+  const queueWorkers = workerDefinitions.map(({ lane, enabled }) => new QueueWorker({
     apiService,
     dispatcher: queueDispatcher,
-    logger: new Logger('QueueWorker'),
-  });
+    logger: new Logger(lane ? `QueueWorker:${lane}` : 'QueueWorker'),
+    lane,
+    enabled,
+  }));
   const processHealth = new ProcessHealth({
     healthFile: config.processHealth.file,
     intervalMs: config.processHealth.intervalMs,
     staleAfterMs: config.processHealth.staleAfterMs,
     build: config.build,
-    queueStatus: () => queueWorker.getHealthSnapshot(),
+    queueStatus: () => aggregateQueueHealth(queueWorkers),
     scopeStatus: () => ({ guild_configured: client.guilds.cache.has(config.discord.guildId) }),
     logger: new Logger('ProcessHealth'),
   });
@@ -96,7 +157,8 @@ const bootstrap = async () => {
       healthWritten = false;
       logger.error('Failed to mark Discord process as stopping', { errorCode: 'HEALTH_WRITE_FAILED' });
     }
-    const { drained } = await queueWorker.stop();
+    const results = await Promise.all(queueWorkers.map((worker) => worker.stop()));
+    const drained = results.every(({ drained: workerDrained }) => workerDrained);
     client.destroy();
     try {
       await processHealth.stop({ signal, drained });
@@ -129,7 +191,7 @@ const bootstrap = async () => {
         process.exit(1);
       }
 
-      queueWorker.start();
+      queueWorkers.forEach((worker) => worker.start());
       await processHealth.markReady();
       logger.info('Bot Ready');
     })().catch(async () => {

@@ -43,24 +43,30 @@ export class QueueActionRuntime {
   }
 
   async resolveChannel(channelId) {
+    const result = await this.resolveChannelWithError(channelId);
+    return result.value;
+  }
+
+  async resolveChannelWithError(channelId) {
     if (!isDiscordSnowflake(channelId)) {
-      return null;
+      return { value: null, error: null };
     }
 
     const cached = this.client.channels.cache.get(channelId);
     if (cached?.guildId === this.guildId) {
-      return cached;
+      return { value: cached, error: null };
     }
 
     try {
       const fetched = await this.client.channels.fetch(channelId);
-      return fetched?.guildId === this.guildId ? fetched : null;
+      if (fetched?.guildId !== this.guildId) return { value: null, error: null };
+      return { value: fetched, error: null };
     } catch (error) {
       this.logger.warn('Channel fetch failed or inaccessible', {
         channelId,
         error: error?.message ?? error,
       });
-      return null;
+      return { value: null, error };
     }
   }
 
@@ -87,17 +93,22 @@ export class QueueActionRuntime {
   }
 
   async resolveUser(userId) {
-    if (!isDiscordSnowflake(userId)) return null;
+    const result = await this.resolveUserWithError(userId);
+    return result.value;
+  }
+
+  async resolveUserWithError(userId) {
+    if (!isDiscordSnowflake(userId)) return { value: null, error: null };
     const cached = this.client.users?.cache?.get?.(userId);
-    if (cached) return cached;
+    if (cached) return { value: cached, error: null };
     try {
-      return (await this.client.users?.fetch?.(userId)) ?? null;
+      return { value: (await this.client.users?.fetch?.(userId)) ?? null, error: null };
     } catch (error) {
       this.logger.warn('User fetch failed or inaccessible', {
         userId,
         errorCode: error?.code ?? null,
       });
-      return null;
+      return { value: null, error };
     }
   }
 

@@ -14,6 +14,7 @@ const USER_ID = '223456789012345678';
 
 test('every registered queue action exposes validate and execute boundaries', () => {
   assert.deepEqual(Object.keys(queueActions).sort(), [
+    'ALERT_DELIVERY_V1',
     'ALLIANCE_DEPARTURE',
     'ALLIANCE_ROLE_REMOVAL',
     'BEIGE_ALERT',
@@ -49,6 +50,14 @@ test('PRIVATE_NOTIFICATION accepts only versioned structured events and reports 
     reason: 'unsafe_notification_payload',
   });
   assert.deepEqual(action.validate({ ...payload, event_type: 'arbitrary' }), {
+    valid: false,
+    reason: 'invalid_event_type',
+  });
+  assert.deepEqual(action.validate({ ...payload, event_type: 'war_assignment_changed' }), {
+    valid: false,
+    reason: 'invalid_event_type',
+  });
+  assert.deepEqual(action.validate({ ...payload, event_type: 'spy_assignment_changed' }), {
     valid: false,
     reason: 'invalid_event_type',
   });
