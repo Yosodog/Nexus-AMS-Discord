@@ -129,6 +129,7 @@ export class ApiService {
     params,
     actor,
     retryMode = RetryMode.NEVER,
+    includeMeta = false,
   } = {}) {
     const normalizedMethod = `${method}`.toLowerCase();
     const isWrite = !['get', 'head', 'options'].includes(normalizedMethod);
@@ -166,7 +167,8 @@ export class ApiService {
       throw error;
     }
 
-    return this.#unwrapDiscordEnvelope(envelope);
+    const responseData = this.#unwrapDiscordEnvelope(envelope);
+    return includeMeta ? { data: responseData, meta: envelope.meta } : responseData;
   }
 
   getMyAccounts(actor, params = {}) {
@@ -400,6 +402,30 @@ export class ApiService {
       params: selectQueryParams(params, ['type', 'status', 'limit']),
       retryMode: RetryMode.SAFE,
     });
+  }
+
+  getStaffWorkItems(actor, params = {}) {
+    return this.#requestDiscord('staff/work-items', {
+      actor,
+      params: selectQueryParams(params, [
+        'q', 'type', 'urgency', 'owner', 'domain_owner', 'team', 'priority', 'severity',
+        'attention_reason', 'assignee', 'requester', 'next_actor', 'overdue', 'blocked',
+        'watched', 'due_from', 'due_to', 'changed_from', 'changed_to', 'freshness',
+        'sort', 'direction', 'page', 'per_page',
+      ]),
+      retryMode: RetryMode.SAFE,
+      includeMeta: true,
+    });
+  }
+
+  getStaffWorkItem(actor, type, id) {
+    if (`${type ?? ''}`.trim() === '' || `${id ?? ''}`.trim() === '') {
+      throw new TypeError('A work-item source and identifier are required.');
+    }
+    return this.#requestDiscord(
+      `staff/work-items/${encodeURIComponent(type)}/${encodeURIComponent(id)}`,
+      { actor, retryMode: RetryMode.SAFE },
+    );
   }
 
   getMyAlerts(actor) {

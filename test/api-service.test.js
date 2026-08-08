@@ -278,6 +278,25 @@ const endpointCases = [
     query: { type: 'grant', status: 'open', limit: '20' }, relay: 'actor',
   },
   {
+    name: 'getStaffWorkItems',
+    invoke: (service) => service.getStaffWorkItems(ACTOR, {
+      q: 'blocked loan', type: 'loans', priority: 'p1', severity: 'high', urgency: 'urgent',
+      blocked: true, freshness: 'fresh', sort: 'age', direction: 'desc', page: 2, per_page: 10,
+      status: 'ignored', limit: 100,
+    }),
+    method: 'get', pathname: '/api/v1/discord/staff/work-items',
+    query: {
+      q: 'blocked loan', type: 'loans', priority: 'p1', severity: 'high', urgency: 'urgent',
+      blocked: 'true', freshness: 'fresh', sort: 'age', direction: 'desc', page: '2', per_page: '10',
+    },
+    relay: 'actor',
+  },
+  {
+    name: 'getStaffWorkItem',
+    invoke: (service) => service.getStaffWorkItem(ACTOR, 'loan reviews', 'loan / 42'),
+    method: 'get', pathname: '/api/v1/discord/staff/work-items/loan%20reviews/loan%20%2F%2042', relay: 'actor',
+  },
+  {
     name: 'getMyAlerts',
     invoke: (service) => service.getMyAlerts(ACTOR),
     method: 'get', pathname: '/api/v1/discord/me/alerts', relay: 'actor',
@@ -599,6 +618,31 @@ test('ApiService actor transport accepts a valid contract-1 envelope', async () 
   });
 
   assert.deepEqual(await service.getMyAccounts(ACTOR), { accounts: [{ id: 1 }] });
+});
+
+test('ApiService preserves Nexus metadata for the Operations projection', async () => {
+  const service = createApiService();
+  service.http.request = async () => ({
+    data: {
+      data: [{ work_key: 'loans:42' }],
+      meta: {
+        contract_version: 1,
+        provider: 'nexus_operations',
+        complete: false,
+        unavailable_sources: [{ type: 'applications', label: 'Applications' }],
+      },
+    },
+  });
+
+  assert.deepEqual(await service.getStaffWorkItems(ACTOR), {
+    data: [{ work_key: 'loans:42' }],
+    meta: {
+      contract_version: 1,
+      provider: 'nexus_operations',
+      complete: false,
+      unavailable_sources: [{ type: 'applications', label: 'Applications' }],
+    },
+  });
 });
 
 test('ApiService actor transport rejects missing data and unsupported contract versions', async () => {
