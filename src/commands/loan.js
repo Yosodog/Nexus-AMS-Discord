@@ -20,14 +20,29 @@ export const data = new SlashCommandBuilder().setName('loan').setDescription('Ap
     .addStringOption((option) => option.setName('account').setDescription('Source account').setRequired(true).setAutocomplete(true)))
   .setDMPermission(false);
 
+const loanSearchValues = (loan) => [
+  loan?.label,
+  loan?.name,
+  loan?.reference,
+  loan?.token,
+  loan?.id,
+].filter((value) => value !== undefined && value !== null).map((value) => `${value}`.toLowerCase());
+
+const filterLoans = (loans, query, exact = false) => {
+  const normalizedQuery = `${query ?? ''}`.trim().toLowerCase();
+  if (!normalizedQuery) return loans;
+  return loans.filter((loan) => loanSearchValues(loan).some((value) => (
+    exact ? value === normalizedQuery : value.includes(normalizedQuery)
+  )));
+};
+
 const loanChoices = async (interaction, apiService) => {
-  const data = await apiService.getMyLoans(actorFromInteraction(interaction), {
-    query: interaction.options.getFocused()?.trim?.() ?? '', limit: 25,
-  });
-  return normalizeCollection(data).items.slice(0, 25).map((loan) => ({
+  const query = interaction.options.getFocused()?.trim?.() ?? '';
+  const data = await apiService.getMyLoans(actorFromInteraction(interaction));
+  return filterLoans(normalizeCollection(data).items, query).slice(0, 25).map((loan) => ({
     name: `${loan.label ?? loan.name ?? `Loan ${loan.reference ?? ''}`}`.slice(0, 100),
     value: `${loan.token ?? loan.id}`.slice(0, 100),
-  }));
+  })).filter((choice) => choice.value && choice.value !== 'undefined');
 };
 export const autocomplete = (interaction, { apiService }) => executeAutocomplete(
   interaction, apiService, interaction.options.getFocused(true).name === 'loan' ? loanChoices : accountChoices,
@@ -45,14 +60,17 @@ export const execute = async (interaction, context) => {
   if (subcommand === 'status') {
     await deferEphemeral(interaction);
     try {
-      const result = await context.apiService.getMyLoans(actorFromInteraction(interaction), {
-        loan: interaction.options.getString('loan') ?? undefined,
-      });
+      const selectedLoan = interaction.options.getString('loan')?.trim() ?? '';
+      const result = await context.apiService.getMyLoans(actorFromInteraction(interaction));
+      const collection = normalizeCollection(result);
+      const visibleLoans = selectedLoan
+        ? normalizeCollection(filterLoans(collection.items, selectedLoan, true))
+        : collection;
       await interaction.editReply(collectionMessage({
-        title: 'Your Loans', collection: normalizeCollection(result), empty: 'No loans found.',
+        title: 'Your Loans', collection: visibleLoans, empty: 'No loans found.',
         commandName: 'loan', userId: interaction.user.id, sessions: context.sessions,
         variant: 'loan', baseUrl: context.apiService.baseUrl,
-        description: interaction.options.getString('loan')
+        description: selectedLoan
           ? 'Showing the selected loan with its current balance and payment schedule.'
           : 'Current loans, balances, and upcoming payment details.',
       }));

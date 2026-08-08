@@ -40,16 +40,15 @@ test('market alert forwards a typed payload to Nexus', async () => {
   });
   await execute(subject, {
     apiService: {
-      requestDiscord: async (path, options) => {
-        calls.push({ path, options });
+      createAlert: async (actor, payload) => {
+        calls.push({ actor, payload });
         return { id: 7, name: 'Cheap steel' };
       },
     },
   });
 
-  assert.equal(calls[0].path, 'me/alerts');
-  assert.equal(calls[0].options.method, 'post');
-  assert.deepEqual(calls[0].options.data, {
+  assert.equal(calls[0].actor.discordUserId, subject.user.id);
+  assert.deepEqual(calls[0].payload, {
     name: 'Cheap steel', cooldown_minutes: 30, type: 'market', resource: 'steel', direction: 'below', threshold: 3000,
   });
   const embed = embedJson(subject.replies[0]);
@@ -62,12 +61,17 @@ test('manage pause sends an ownership-scoped status update', async () => {
   const calls = [];
   const subject = interaction('manage', { id: 9, action: 'pause' });
   await execute(subject, {
-    apiService: { requestDiscord: async (path, options) => { calls.push({ path, options }); return {}; } },
+    apiService: {
+      updateAlertStatus: async (actor, id, isActive) => {
+        calls.push({ actor, id, isActive });
+        return {};
+      },
+    },
   });
 
-  assert.equal(calls[0].path, 'me/alerts/9/status');
-  assert.equal(calls[0].options.method, 'patch');
-  assert.deepEqual(calls[0].options.data, { is_active: false });
+  assert.equal(calls[0].actor.discordUserId, subject.user.id);
+  assert.equal(calls[0].id, 9);
+  assert.equal(calls[0].isActive, false);
 });
 
 test('watchlist private notification payload is accepted by the shared renderer', () => {

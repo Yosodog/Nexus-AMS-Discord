@@ -12,8 +12,7 @@ export const data = new SlashCommandBuilder()
 
 const render = async (interaction, context, state = {}) => {
   const account = state.account ?? interaction.options?.getString?.('account') ?? undefined;
-  const page = state.page ?? 1;
-  const result = await context.apiService.getMyAccounts(actorFromInteraction(interaction), { account, page });
+  const result = await context.apiService.getMyAccounts(actorFromInteraction(interaction), { account });
   const message = collectionMessage({
     title: 'Your Nexus Accounts', collection: normalizeCollection(result),
     empty: 'No linked accounts were found.', commandName: 'accounts', userId: interaction.user.id,

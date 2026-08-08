@@ -32,7 +32,7 @@ export const execute = async (interaction, context) => {
       account_id: Number(interaction.options.getString('account', true)),
       note: interaction.options.getString('note') ?? undefined,
     };
-    const preview = await context.apiService.previewRebuildRequest(actorFromInteraction(interaction), payload);
+    const preview = await context.apiService.previewRebuildRequest(actorFromInteraction(interaction));
     if (!preview?.enabled || !preview?.eligible) {
       throw Object.assign(new Error(preview?.reason ?? 'This nation is not eligible for rebuilding support.'), { code: 'VALIDATION_ERROR' });
     }

@@ -6,6 +6,7 @@ import { validate as validatePrivateNotification } from '../src/services/queueAc
 import { createLogger } from './helpers.js';
 
 const USER_ID = '223456789012345678';
+const GUILD_ID = '323456789012345678';
 
 const payload = {
   contract_version: 1,
@@ -25,6 +26,57 @@ test('unblockade command exposes request, listing, claim, and cancel operations'
   assert.equal(json.name, 'unblockade');
   assert.deepEqual(json.options.map((option) => option.name), ['request', 'mine', 'available', 'claim', 'cancel']);
   assert.equal(json.dm_permission, false);
+});
+
+test('unblockade command uses named API methods for every operation', async () => {
+  const calls = [];
+  const apiService = {
+    baseUrl: 'https://nexus.example',
+    createBlockadeReliefRequest: async (actor, body) => {
+      calls.push({ name: 'create', actor, body });
+      return { id: 7, deadline_at: '2026-07-10T20:00:00Z' };
+    },
+    getMyBlockadeReliefRequests: async (actor) => {
+      calls.push({ name: 'mine', actor });
+      return [];
+    },
+    getAvailableBlockadeReliefRequests: async (actor) => {
+      calls.push({ name: 'available', actor });
+      return [];
+    },
+    claimBlockadeReliefRequest: async (actor, id) => {
+      calls.push({ name: 'claim', actor, id });
+      return { id, status: 'claimed' };
+    },
+    cancelBlockadeReliefRequest: async (actor, id) => {
+      calls.push({ name: 'cancel', actor, id });
+      return { id, status: 'cancelled' };
+    },
+  };
+  const subject = (subcommand, values = {}) => ({
+    id: '423456789012345678',
+    guildId: GUILD_ID,
+    user: { id: USER_ID },
+    options: {
+      getSubcommand: () => subcommand,
+      getInteger: (name) => values[name] ?? null,
+      getString: (name) => values[name] ?? null,
+    },
+    deferReply: async () => {},
+    editReply: async () => {},
+  });
+
+  await command.execute(subject('request', { war: 44, note: '  Please help  ' }), { apiService });
+  await command.execute(subject('mine'), { apiService });
+  await command.execute(subject('available'), { apiService });
+  await command.execute(subject('claim', { request: 8 }), { apiService });
+  await command.execute(subject('cancel', { request: 9 }), { apiService });
+
+  assert.deepEqual(calls.map(({ name }) => name), ['create', 'mine', 'available', 'claim', 'cancel']);
+  assert.equal(calls.every(({ actor }) => actor.discordUserId === USER_ID), true);
+  assert.deepEqual(calls[0].body, { war_id: 44, deadline_hours: 6, note: 'Please help' });
+  assert.equal(calls[3].id, 8);
+  assert.equal(calls[4].id, 9);
 });
 
 test('blockade relief queue action validates a strict operational payload', () => {

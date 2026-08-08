@@ -13,14 +13,25 @@ export const data = new SlashCommandBuilder().setName('war').setDescription('Vie
     .addStringOption((option) => option.setName('war').setDescription('War').setRequired(true).setAutocomplete(true)))
   .setDMPermission(false);
 
+const warSearchValues = (war) => [
+  war?.label,
+  war?.name,
+  war?.summary,
+  war?.token,
+  war?.id,
+].filter((value) => value !== undefined && value !== null).map((value) => `${value}`.toLowerCase());
+
 const warChoices = async (interaction, apiService) => {
-  const result = await apiService.getMyActiveWars(actorFromInteraction(interaction), {
-    query: interaction.options.getFocused()?.trim?.() ?? '', limit: 25,
-  });
-  return normalizeCollection(result).items.slice(0, 25).map((war) => ({
+  const query = `${interaction.options.getFocused()?.trim?.() ?? ''}`.toLowerCase();
+  const result = await apiService.getMyActiveWars(actorFromInteraction(interaction));
+  return normalizeCollection(result).items
+    .filter((war) => !query || warSearchValues(war).some((value) => value.includes(query)))
+    .slice(0, 25)
+    .map((war) => ({
     name: `${war.label ?? war.name ?? war.summary ?? 'Active war'}`.slice(0, 100),
     value: `${war.token ?? war.id}`.slice(0, 100),
-  }));
+    }))
+    .filter((choice) => choice.value && choice.value !== 'undefined');
 };
 export const autocomplete = (interaction, { apiService }) => executeAutocomplete(interaction, apiService, warChoices);
 

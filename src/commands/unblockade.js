@@ -34,14 +34,10 @@ export const execute = async (interaction, context) => {
 
   try {
     if (subcommand === 'request') {
-      const result = await context.apiService.requestDiscord('me/blockade-relief', {
-        method: 'post',
-        actor,
-        data: {
-          war_id: interaction.options.getInteger('war', true),
-          deadline_hours: interaction.options.getInteger('deadline') ?? 6,
-          note: interaction.options.getString('note')?.trim() || null,
-        },
+      const result = await context.apiService.createBlockadeReliefRequest(actor, {
+        war_id: interaction.options.getInteger('war', true),
+        deadline_hours: interaction.options.getInteger('deadline') ?? 6,
+        note: interaction.options.getString('note')?.trim() || null,
       });
       await interaction.editReply(statusMessage({
         title: 'Relief Request Opened',
@@ -54,9 +50,9 @@ export const execute = async (interaction, context) => {
 
     if (subcommand === 'claim' || subcommand === 'cancel') {
       const id = interaction.options.getInteger('request', true);
-      const result = await context.apiService.requestDiscord(`me/blockade-relief/${id}/${subcommand}`, {
-        method: 'post', actor, data: {},
-      });
+      const result = subcommand === 'claim'
+        ? await context.apiService.claimBlockadeReliefRequest(actor, id)
+        : await context.apiService.cancelBlockadeReliefRequest(actor, id);
       const status = escapeMarkdown(titleCase(result?.status ?? 'updated'));
       await interaction.editReply(statusMessage({
         title: subcommand === 'claim' ? 'Relief Request Claimed' : 'Relief Request Cancelled',
@@ -67,8 +63,9 @@ export const execute = async (interaction, context) => {
       return;
     }
 
-    const path = subcommand === 'available' ? 'me/blockade-relief/available' : 'me/blockade-relief';
-    const result = await context.apiService.requestDiscord(path, { actor });
+    const result = subcommand === 'available'
+      ? await context.apiService.getAvailableBlockadeReliefRequests(actor)
+      : await context.apiService.getMyBlockadeReliefRequests(actor);
     const collection = requestCollection(result);
     await interaction.editReply(collectionMessage({
       title: subcommand === 'available' ? 'Available Blockade Relief' : 'Your Blockade Relief Requests',

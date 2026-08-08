@@ -108,7 +108,7 @@ export const execute = async (interaction, context) => {
 
   try {
     if (subcommand === 'list') {
-      const alerts = await context.apiService.requestDiscord('me/alerts', { actor });
+      const alerts = await context.apiService.getMyAlerts(actor);
       await interaction.editReply(collectionMessage({
         title: 'Your Nexus Alerts',
         collection: normalizeCollection(alerts?.alerts ?? alerts),
@@ -128,13 +128,11 @@ export const execute = async (interaction, context) => {
       const id = interaction.options.getInteger('id');
       const action = interaction.options.getString('action');
       if (action === 'delete') {
-        await context.apiService.requestDiscord(`me/alerts/${id}`, { method: 'delete', actor });
+        await context.apiService.deleteAlert(actor, id);
       } else if (action === 'test') {
-        await context.apiService.requestDiscord(`me/alerts/${id}/test`, { method: 'post', actor, data: {} });
+        await context.apiService.testAlert(actor, id);
       } else {
-        await context.apiService.requestDiscord(`me/alerts/${id}/status`, {
-          method: 'patch', actor, data: { is_active: action === 'resume' },
-        });
+        await context.apiService.updateAlertStatus(actor, id, action === 'resume');
       }
       const resultLabel = { pause: 'paused', resume: 'resumed', test: 'tested', delete: 'deleted' }[action];
       const title = {
@@ -149,9 +147,10 @@ export const execute = async (interaction, context) => {
       return;
     }
 
-    const created = await context.apiService.requestDiscord('me/alerts', {
-      method: 'post', actor, data: createPayload(interaction, subcommand),
-    });
+    const created = await context.apiService.createAlert(
+      actor,
+      createPayload(interaction, subcommand),
+    );
     const name = escapeMarkdown(truncate(created?.name ?? 'New alert', 100));
     await interaction.editReply(statusMessage({
       title: 'Alert Created',

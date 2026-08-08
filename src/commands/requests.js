@@ -24,8 +24,8 @@ const render = async (interaction, context, state = {}) => {
     page: state.page ?? 1,
   };
   const apiFilters = {
-    ...filters,
     type: filters.type === 'all' ? undefined : filters.type.replaceAll('-', '_'),
+    status: filters.status,
   };
   const actor = actorFromInteraction(interaction);
   const result = filters.scope === 'staff-queue'

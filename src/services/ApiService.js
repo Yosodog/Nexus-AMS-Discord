@@ -6,6 +6,15 @@ export const RetryMode = Object.freeze({
   NEVER: 'never',
 });
 
+const selectQueryParams = (params, supportedKeys) => {
+  const values = params ?? {};
+  return Object.fromEntries(
+    supportedKeys
+      .filter((key) => Object.hasOwn(values, key))
+      .map((key) => [key, values[key]]),
+  );
+};
+
 export class ApiContractError extends Error {
   constructor(message, { code = 'INVALID_RESPONSE', status = null, details = null } = {}) {
     super(message);
@@ -114,7 +123,7 @@ export class ApiService {
    * Nexus owns authorization and all financial/business calculations; the bot only
    * forwards strings selected or entered by the Discord actor.
    */
-  async requestDiscord(path, {
+  async #requestDiscord(path, {
     method = 'get',
     data,
     params,
@@ -161,33 +170,37 @@ export class ApiService {
   }
 
   getMyAccounts(actor, params = {}) {
-    return this.requestDiscord('me/accounts', { actor, params, retryMode: RetryMode.SAFE });
+    return this.#requestDiscord('me/accounts', {
+      actor,
+      params: selectQueryParams(params, ['account', 'query', 'limit']),
+      retryMode: RetryMode.SAFE,
+    });
   }
 
   createDepositRequest(actor, accountToken, payload) {
-    return this.requestDiscord(`me/accounts/${encodeURIComponent(accountToken)}/deposit-requests`, {
+    return this.#requestDiscord(`me/accounts/${encodeURIComponent(accountToken)}/deposit-requests`, {
       method: 'post', actor, data: payload,
     });
   }
 
   createWithdrawalDraft(actor, payload) {
-    return this.requestDiscord('me/withdrawals/drafts', { method: 'post', actor, data: payload });
+    return this.#requestDiscord('me/withdrawals/drafts', { method: 'post', actor, data: payload });
   }
 
   getWithdrawalIntent(actor, intentToken) {
-    return this.requestDiscord(`me/withdrawals/${encodeURIComponent(intentToken)}`, {
+    return this.#requestDiscord(`me/withdrawals/${encodeURIComponent(intentToken)}`, {
       actor, retryMode: RetryMode.SAFE,
     });
   }
 
   confirmWithdrawal(actor, intentToken) {
-    return this.requestDiscord(`me/withdrawals/${encodeURIComponent(intentToken)}/confirm`, {
+    return this.#requestDiscord(`me/withdrawals/${encodeURIComponent(intentToken)}/confirm`, {
       method: 'post', actor, data: {},
     });
   }
 
   cancelWithdrawal(actor, intentToken) {
-    return this.requestDiscord(`me/withdrawals/${encodeURIComponent(intentToken)}/cancel`, {
+    return this.#requestDiscord(`me/withdrawals/${encodeURIComponent(intentToken)}/cancel`, {
       method: 'post', actor, data: {},
     });
   }
@@ -195,150 +208,177 @@ export class ApiService {
   getMyTransactions(actor, params = {}) {
     const account = params.account;
     if (!account) throw new TypeError('An opaque account token is required.');
-    const { account: _account, ...query } = params;
-    return this.requestDiscord(`me/accounts/${encodeURIComponent(account)}/transactions`, {
-      actor, params: query, retryMode: RetryMode.SAFE,
+    return this.#requestDiscord(`me/accounts/${encodeURIComponent(account)}/transactions`, {
+      actor,
+      params: selectQueryParams(params, ['type', 'status', 'page', 'per_page']),
+      retryMode: RetryMode.SAFE,
     });
   }
 
   getMyRequests(actor, params = {}) {
-    return this.requestDiscord('me/requests', { actor, params, retryMode: RetryMode.SAFE });
+    return this.#requestDiscord('me/requests', {
+      actor,
+      params: selectQueryParams(params, ['type', 'status']),
+      retryMode: RetryMode.SAFE,
+    });
   }
 
   getGrantPrograms(actor, params = {}) {
-    return this.requestDiscord('me/grants', { actor, params, retryMode: RetryMode.SAFE });
+    return this.#requestDiscord('me/grants', {
+      actor,
+      params: selectQueryParams(params, ['eligible_only', 'query', 'limit']),
+      retryMode: RetryMode.SAFE,
+    });
   }
 
   previewGrantApplication(actor, payload) {
-    return this.requestDiscord('me/grant-applications/preview', { method: 'post', actor, data: payload });
+    return this.#requestDiscord('me/grant-applications/preview', { method: 'post', actor, data: payload });
   }
 
   confirmGrantApplication(actor, payload) {
-    return this.requestDiscord('me/grant-applications/confirm', { method: 'post', actor, data: payload });
+    return this.#requestDiscord('me/grant-applications/confirm', { method: 'post', actor, data: payload });
   }
 
   previewCityGrantRequest(actor, payload) {
-    return this.requestDiscord('me/city-grant-requests/preview', { method: 'post', actor, data: payload });
+    return this.#requestDiscord('me/city-grant-requests/preview', { method: 'post', actor, data: payload });
   }
 
   confirmCityGrantRequest(actor, payload) {
-    return this.requestDiscord('me/city-grant-requests/confirm', { method: 'post', actor, data: payload });
+    return this.#requestDiscord('me/city-grant-requests/confirm', { method: 'post', actor, data: payload });
   }
 
   getMyGrantRequests(actor, params = {}) {
-    return this.requestDiscord('me/requests', { actor, params: { ...params, type: 'grant' }, retryMode: RetryMode.SAFE });
+    return this.#requestDiscord('me/requests', {
+      actor,
+      params: { type: 'grant', ...selectQueryParams(params, ['status']) },
+      retryMode: RetryMode.SAFE,
+    });
   }
 
   previewLoanApplication(actor, payload) {
-    return this.requestDiscord('me/loan-applications/preview', { method: 'post', actor, data: payload });
+    return this.#requestDiscord('me/loan-applications/preview', { method: 'post', actor, data: payload });
   }
 
   confirmLoanApplication(actor, payload) {
-    return this.requestDiscord('me/loan-applications/confirm', { method: 'post', actor, data: payload });
+    return this.#requestDiscord('me/loan-applications/confirm', { method: 'post', actor, data: payload });
   }
 
-  getMyLoans(actor, params = {}) {
-    return this.requestDiscord('me/loans', { actor, params, retryMode: RetryMode.SAFE });
+  getMyLoans(actor) {
+    return this.#requestDiscord('me/loans', { actor, retryMode: RetryMode.SAFE });
   }
 
   previewLoanPayment(actor, payload) {
-    return this.requestDiscord('me/loan-payments/preview', { method: 'post', actor, data: payload });
+    return this.#requestDiscord('me/loan-payments/preview', { method: 'post', actor, data: payload });
   }
 
   confirmLoanPayment(actor, payload) {
-    return this.requestDiscord('me/loan-payments/confirm', { method: 'post', actor, data: payload });
+    return this.#requestDiscord('me/loan-payments/confirm', { method: 'post', actor, data: payload });
   }
 
   createWarAidDraft(actor, payload) {
-    return this.requestDiscord('me/war-aid/draft', { method: 'post', actor, data: payload });
+    return this.#requestDiscord('me/war-aid/draft', { method: 'post', actor, data: payload });
   }
 
   reviewWarAidDraft(actor, payload) {
-    return this.requestDiscord('me/war-aid/review', { method: 'post', actor, data: payload });
+    return this.#requestDiscord('me/war-aid/review', { method: 'post', actor, data: payload });
   }
 
   confirmWarAidRequest(actor, payload) {
-    return this.requestDiscord('me/war-aid/confirm', { method: 'post', actor, data: payload });
+    return this.#requestDiscord('me/war-aid/confirm', { method: 'post', actor, data: payload });
   }
 
-  getMyWarAidRequests(actor, params = {}) {
-    return this.requestDiscord('me/war-aid', { actor, params, retryMode: RetryMode.SAFE });
+  getMyWarAidRequests(actor) {
+    return this.#requestDiscord('me/war-aid', { actor, retryMode: RetryMode.SAFE });
   }
 
   confirmRebuildRequest(actor, payload) {
-    return this.requestDiscord('me/rebuilding/confirm', { method: 'post', actor, data: payload });
+    return this.#requestDiscord('me/rebuilding/confirm', { method: 'post', actor, data: payload });
   }
 
-  previewRebuildRequest(actor, payload) {
-    return this.requestDiscord('me/rebuilding/preview', { actor, params: payload, retryMode: RetryMode.SAFE });
+  previewRebuildRequest(actor) {
+    return this.#requestDiscord('me/rebuilding/preview', { actor, retryMode: RetryMode.SAFE });
   }
 
   getMyRebuildRequests(actor, params = {}) {
-    return this.requestDiscord('me/requests', { actor, params: { ...params, type: 'rebuilding' }, retryMode: RetryMode.SAFE });
+    return this.#requestDiscord('me/requests', {
+      actor,
+      params: { type: 'rebuilding', ...selectQueryParams(params, ['status']) },
+      retryMode: RetryMode.SAFE,
+    });
   }
 
   getMyRaidAssignments(actor, params = {}) {
-    return this.requestDiscord('me/raids', { actor, params, retryMode: RetryMode.SAFE });
+    return this.#requestDiscord('me/raids', {
+      actor,
+      params: selectQueryParams(params, ['nation_id', 'sort', 'limit']),
+      retryMode: RetryMode.SAFE,
+    });
   }
 
-  getMyWarAssignments(actor, params = {}) {
-    return this.requestDiscord('me/war-assignments', { actor, params, retryMode: RetryMode.SAFE });
+  getMyWarAssignments(actor) {
+    return this.#requestDiscord('me/war-assignments', { actor, retryMode: RetryMode.SAFE });
   }
 
-  getMyActiveWars(actor, params = {}) {
-    return this.requestDiscord('me/wars', { actor, params, retryMode: RetryMode.SAFE });
+  getMyActiveWars(actor) {
+    return this.#requestDiscord('me/wars', { actor, retryMode: RetryMode.SAFE });
   }
 
   respondToWarAssignment(actor, type, id, payload) {
     if (!['plan', 'counter'].includes(type)) throw new TypeError('War assignment type must be plan or counter.');
-    return this.requestDiscord(`me/war-assignments/${type}/${encodeURIComponent(id)}/response`, {
+    return this.#requestDiscord(`me/war-assignments/${encodeURIComponent(type)}/${encodeURIComponent(id)}/response`, {
       method: 'post', actor, data: payload,
     });
   }
 
   getWarCounterRecommendation(actor, nationId) {
-    return this.requestDiscord('me/wars', {
-      actor, params: { view: 'counter', nation_id: nationId }, retryMode: RetryMode.SAFE,
+    return this.#requestDiscord('me/wars/counter', {
+      actor, params: { nation_id: nationId }, retryMode: RetryMode.SAFE,
     });
   }
 
   getWarSimulation(actor, warToken) {
-    return this.requestDiscord('me/wars', {
-      actor, params: { view: 'simulate', war: warToken }, retryMode: RetryMode.SAFE,
+    return this.#requestDiscord(`me/wars/${encodeURIComponent(warToken)}/simulation`, {
+      actor, retryMode: RetryMode.SAFE,
     });
   }
 
-  getMySpyAssignments(actor, params = {}) {
-    return this.requestDiscord('me/spy-assignments', { actor, params, retryMode: RetryMode.SAFE });
+  getMySpyAssignments(actor) {
+    return this.#requestDiscord('me/spy-assignments', { actor, retryMode: RetryMode.SAFE });
   }
 
   getMyAuditFindings(actor) {
-    return this.requestDiscord('me/audits', { actor, retryMode: RetryMode.SAFE });
+    return this.#requestDiscord('me/audits', { actor, retryMode: RetryMode.SAFE });
   }
 
   acknowledgeAuditFinding(actor, findingId, payload = {}) {
-    return this.requestDiscord(`me/audits/${encodeURIComponent(findingId)}/acknowledge`, {
+    return this.#requestDiscord(`me/audits/${encodeURIComponent(findingId)}/acknowledge`, {
       method: 'post', actor, data: payload,
     });
   }
 
   snoozeAuditFinding(actor, findingId, payload) {
-    return this.requestDiscord(`me/audits/${encodeURIComponent(findingId)}/snooze`, {
+    return this.#requestDiscord(`me/audits/${encodeURIComponent(findingId)}/snooze`, {
       method: 'post', actor, data: payload,
     });
   }
 
   getStaffApplications(actor, params = {}) {
-    return this.requestDiscord('staff/applications', { actor, params, retryMode: RetryMode.SAFE });
+    return this.#requestDiscord('staff/applications', {
+      actor,
+      params: selectQueryParams(params, [
+        'status', 'filter', 'query', 'applicant_discord_id', 'discord_channel_id', 'limit',
+      ]),
+      retryMode: RetryMode.SAFE,
+    });
   }
 
-  getMyApplications(actor, params = {}) {
-    return this.requestDiscord('me/applications', { actor, params, retryMode: RetryMode.SAFE });
+  getMyApplications(actor) {
+    return this.#requestDiscord('me/applications', { actor, retryMode: RetryMode.SAFE });
   }
 
   getStaffApplicationReview(actor, params = {}) {
     if (!params.application) throw new TypeError('An opaque application token is required.');
-    return this.requestDiscord(`staff/applications/${encodeURIComponent(params.application)}`, {
+    return this.#requestDiscord(`staff/applications/${encodeURIComponent(params.application)}`, {
       actor, retryMode: RetryMode.SAFE,
     });
   }
@@ -347,7 +387,7 @@ export class ApiService {
     if (!['approve', 'deny'].includes(decision)) {
       throw new TypeError('Application decision must be approve or deny.');
     }
-    return this.requestDiscord(`staff/applications/${encodeURIComponent(applicationToken)}/${decision}`, {
+    return this.#requestDiscord(`staff/applications/${encodeURIComponent(applicationToken)}/${encodeURIComponent(decision)}`, {
       method: 'post',
       actor,
       data: payload,
@@ -355,7 +395,61 @@ export class ApiService {
   }
 
   getStaffRequests(actor, params = {}) {
-    return this.requestDiscord('staff/requests', { actor, params, retryMode: RetryMode.SAFE });
+    return this.#requestDiscord('staff/requests', {
+      actor,
+      params: selectQueryParams(params, ['type', 'status', 'limit']),
+      retryMode: RetryMode.SAFE,
+    });
+  }
+
+  getMyAlerts(actor) {
+    return this.#requestDiscord('me/alerts', { actor, retryMode: RetryMode.SAFE });
+  }
+
+  createAlert(actor, payload) {
+    return this.#requestDiscord('me/alerts', { method: 'post', actor, data: payload });
+  }
+
+  updateAlertStatus(actor, alertId, isActive) {
+    return this.#requestDiscord(`me/alerts/${encodeURIComponent(alertId)}/status`, {
+      method: 'patch', actor, data: { is_active: isActive },
+    });
+  }
+
+  testAlert(actor, alertId) {
+    return this.#requestDiscord(`me/alerts/${encodeURIComponent(alertId)}/test`, {
+      method: 'post', actor, data: {},
+    });
+  }
+
+  deleteAlert(actor, alertId) {
+    return this.#requestDiscord(`me/alerts/${encodeURIComponent(alertId)}`, {
+      method: 'delete', actor,
+    });
+  }
+
+  getMyBlockadeReliefRequests(actor) {
+    return this.#requestDiscord('me/blockade-relief', { actor, retryMode: RetryMode.SAFE });
+  }
+
+  getAvailableBlockadeReliefRequests(actor) {
+    return this.#requestDiscord('me/blockade-relief/available', { actor, retryMode: RetryMode.SAFE });
+  }
+
+  createBlockadeReliefRequest(actor, payload) {
+    return this.#requestDiscord('me/blockade-relief', { method: 'post', actor, data: payload });
+  }
+
+  claimBlockadeReliefRequest(actor, requestId) {
+    return this.#requestDiscord(`me/blockade-relief/${encodeURIComponent(requestId)}/claim`, {
+      method: 'post', actor, data: {},
+    });
+  }
+
+  cancelBlockadeReliefRequest(actor, requestId) {
+    return this.#requestDiscord(`me/blockade-relief/${encodeURIComponent(requestId)}/cancel`, {
+      method: 'post', actor, data: {},
+    });
   }
 
   /**
@@ -386,7 +480,10 @@ export class ApiService {
 
   /** Renew an active queue lease. */
   async renewDiscordQueueLease(id, leaseToken) {
-    const endpointUrl = new URL(`/api/v1/discord/queue/${id}/lease`, this.baseUrl).toString();
+    const endpointUrl = new URL(
+      `/api/v1/discord/queue/${encodeURIComponent(id)}/lease`,
+      this.baseUrl,
+    ).toString();
 
     return this.request({
       method: 'post',
@@ -397,7 +494,10 @@ export class ApiService {
 
   /** Persist an action-specific durable checkpoint. */
   async checkpointDiscordQueue(id, leaseToken, result) {
-    const endpointUrl = new URL(`/api/v1/discord/queue/${id}/checkpoint`, this.baseUrl).toString();
+    const endpointUrl = new URL(
+      `/api/v1/discord/queue/${encodeURIComponent(id)}/checkpoint`,
+      this.baseUrl,
+    ).toString();
 
     return this.request({
       method: 'patch',
@@ -413,7 +513,10 @@ export class ApiService {
    * @returns {Promise<any>} response payload
    */
   async updateDiscordQueueStatus(id, status, leaseToken = null, outcomeDetails = {}) {
-    const endpointUrl = new URL(`/api/v1/discord/queue/${id}/status`, this.baseUrl);
+    const endpointUrl = new URL(
+      `/api/v1/discord/queue/${encodeURIComponent(id)}/status`,
+      this.baseUrl,
+    );
 
     const data = { status };
     if (leaseToken) {
@@ -438,13 +541,19 @@ export class ApiService {
 
   /** Fetch the current persisted war-counter record. */
   async getWarCounter(id) {
-    const endpointUrl = new URL(`/api/v1/discord/war-counters/${id}`, this.baseUrl).toString();
+    const endpointUrl = new URL(
+      `/api/v1/discord/war-counters/${encodeURIComponent(id)}`,
+      this.baseUrl,
+    ).toString();
     return this.request({ method: 'get', url: endpointUrl }, RetryMode.SAFE);
   }
 
   /** Fetch the current persisted Milcom objective for room reconciliation. */
   async getMilcomObjective(id) {
-    const endpointUrl = new URL(`/api/v1/discord/milcom/objectives/${id}`, this.baseUrl).toString();
+    const endpointUrl = new URL(
+      `/api/v1/discord/milcom/objectives/${encodeURIComponent(id)}`,
+      this.baseUrl,
+    ).toString();
     return this.request({ method: 'get', url: endpointUrl }, RetryMode.SAFE);
   }
 
