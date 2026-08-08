@@ -26,6 +26,18 @@ export const data = new SlashCommandBuilder()
       )))
   .setDMPermission(false);
 
+export const help = Object.freeze({
+  audience: 'Members and staff',
+  topic: Object.freeze(['member', 'staff']),
+  examples: Object.freeze([
+    '/audit status',
+    '/audit explain finding:<finding>',
+    '/audit acknowledge finding:<finding> note:<note>',
+    '/audit snooze finding:<finding> hours:<hours>',
+  ]),
+  related: Object.freeze(['requests', 'help']),
+});
+
 const findingId = (finding) => finding?.id ?? finding?.audit_result_id ?? finding?.finding_id;
 
 const findingName = (finding) => finding?.name ?? 'Audit finding';

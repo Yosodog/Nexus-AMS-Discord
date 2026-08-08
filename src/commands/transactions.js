@@ -24,6 +24,13 @@ export const data = new SlashCommandBuilder()
   })
   .setDMPermission(false);
 
+export const help = Object.freeze({
+  audience: 'Members',
+  topic: Object.freeze(['member', 'finance']),
+  examples: Object.freeze(['/transactions account:<account> type:<type> status:<status>']),
+  related: Object.freeze(['accounts', 'deposit', 'withdraw']),
+});
+
 const render = async (interaction, context, state = {}) => {
   const filters = {
     account: state.account ?? interaction.options?.getString?.('account'),

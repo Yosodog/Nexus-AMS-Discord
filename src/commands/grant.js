@@ -18,6 +18,13 @@ export const data = new SlashCommandBuilder().setName('grant').setDescription('B
   .addSubcommand((sub) => sub.setName('status').setDescription('View your grant requests.'))
   .setDMPermission(false);
 
+export const help = Object.freeze({
+  audience: 'Members',
+  topic: Object.freeze(['member', 'finance']),
+  examples: Object.freeze(['/grant browse', '/grant apply grant:<grant> account:<account>', '/grant status']),
+  related: Object.freeze(['accounts', 'deposit', 'loan']),
+});
+
 const grantChoices = async (interaction, apiService) => {
   const query = interaction.options.getFocused()?.trim?.() ?? '';
   const result = await apiService.getGrantPrograms(actorFromInteraction(interaction), { query, limit: 25 });

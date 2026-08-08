@@ -23,6 +23,13 @@ export const data = new SlashCommandBuilder()
   )
   .setDMPermission(false);
 
+export const help = Object.freeze({
+  audience: 'Everyone',
+  topic: Object.freeze(['getting-started']),
+  examples: Object.freeze(['/verify code:<verification-code>']),
+  related: Object.freeze(['help', 'accounts']),
+});
+
 /**
  * Execute handler for /verify.
  * Collects Discord identity details, validates the provided code, calls Nexus, and responds with embeds.

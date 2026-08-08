@@ -24,6 +24,13 @@ export const data = new SlashCommandBuilder()
   )
   .setDMPermission(false);
 
+export const help = Object.freeze({
+  audience: 'Staff',
+  topic: Object.freeze(['finance', 'staff']),
+  examples: Object.freeze(['/sweepbank', '/sweepbank note:<note>']),
+  related: Object.freeze(['accounts', 'transactions', 'audit']),
+});
+
 /**
  * @param {import('discord.js').ChatInputCommandInteraction} interaction
  * @param {{ logger: import('../services/Logger.js').Logger, apiService: import('../services/ApiService.js').ApiService }} context

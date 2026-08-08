@@ -6,90 +6,55 @@ import {
 } from '../utils/discordUi.js';
 
 /**
- * Discoverability metadata for /help.
- *
- * This catalog is intentionally not an authorization map. Nexus remains the
- * source of truth for whether a member may execute a command.
+ * Topic labels and descriptions are presentation-only. Command membership is
+ * declared by each command module's help metadata below its command data.
  */
 const HELP_TOPICS = Object.freeze([
   Object.freeze({
     value: 'getting-started',
     name: 'Getting started',
     description: 'Link your account, check the bot, and find the right command.',
-    audience: 'Everyone',
-    commands: ['help', 'ping', 'verify'],
   }),
   Object.freeze({
     value: 'member',
     name: 'Member tools',
     description: 'Review your Nexus account, requests, audits, and support workflows.',
-    audience: 'Members',
-    commands: [
-      'accounts', 'alerts', 'audit', 'deposit', 'grant', 'loan', 'raid', 'rebuild',
-      'requests', 'spy', 'transactions', 'unblockade', 'war', 'waraid', 'withdraw',
-    ],
   }),
   Object.freeze({
     value: 'finance',
     name: 'Finance',
     description: 'Check accounts and submit or review finance requests.',
-    audience: 'Members and finance staff',
-    commands: ['accounts', 'deposit', 'grant', 'loan', 'sweepbank', 'transactions', 'withdraw'],
   }),
   Object.freeze({
     value: 'applications',
     name: 'Applications',
     description: 'Start, continue, review, and decide Nexus applications.',
-    audience: 'Applicants and application staff',
-    commands: ['apply', 'applications', 'approve', 'deny'],
   }),
   Object.freeze({
     value: 'military',
     name: 'Military',
     description: 'Review current military information and support requests.',
-    audience: 'Members and military staff',
-    commands: ['raid', 'spy', 'unblockade', 'war', 'waraid'],
   }),
   Object.freeze({
     value: 'staff',
     name: 'Staff tools',
     description: 'Find staff-facing queues and management actions.',
-    audience: 'Staff',
-    commands: ['applications', 'approve', 'audit', 'deny', 'raid', 'requests', 'sweepbank'],
+  }),
+  Object.freeze({
+    value: 'uncategorized',
+    name: 'Uncategorized',
+    description: 'Loaded commands without recognized help metadata are shown here.',
   }),
 ]);
 
-/**
- * Command-specific guidance that is difficult to infer from SlashCommandBuilder.
- * Descriptions and option details are always read from the loaded command data.
- */
-const COMMAND_HELP = Object.freeze({
-  help: Object.freeze({
-    audience: 'Everyone',
-    examples: ['/help', '/help command:war', '/help topic:finance'],
-    related: ['ping', 'verify'],
-  }),
-  applications: Object.freeze({
-    examples: ['/applications status', '/applications review'],
-    related: ['apply', 'approve', 'deny'],
-  }),
-  audit: Object.freeze({
-    examples: ['/audit status', '/audit acknowledge'],
-    related: ['requests', 'help'],
-  }),
-  alerts: Object.freeze({
-    examples: ['/alerts list', '/alerts nation'],
-    related: ['war', 'audit'],
-  }),
-  war: Object.freeze({
-    examples: ['/war active', '/war counter', '/war simulate'],
-    related: ['raid', 'spy', 'waraid'],
-  }),
-});
+const HELP_TOPIC_BY_VALUE = Object.freeze(Object.fromEntries(
+  HELP_TOPICS.map((topic) => [topic.value, topic]),
+));
 
 const GUIDE_PATH = '/user/discord-bot-guide';
 
 const MAX_AUTOCOMPLETE_CHOICES = 25;
+const MAX_FIELD_VALUE = 1_024;
 const OPTION_TYPES = Object.freeze({
   1: 'subcommand',
   2: 'subcommand group',
@@ -102,6 +67,13 @@ const OPTION_TYPES = Object.freeze({
   9: 'mentionable',
   10: 'number',
   11: 'attachment',
+});
+
+export const help = Object.freeze({
+  audience: 'Everyone',
+  topic: Object.freeze(['getting-started']),
+  examples: Object.freeze(['/help', '/help command:war', '/help topic:finance']),
+  related: Object.freeze(['ping', 'verify']),
 });
 
 export const data = new SlashCommandBuilder()
@@ -135,24 +107,23 @@ const serializeCommand = (candidate) => {
       : dataCandidate;
     const name = typeof serialized?.name === 'string' ? serialized.name.trim().toLowerCase() : '';
     if (!name) return null;
-    return { ...serialized, name };
+    return {
+      ...serialized,
+      name,
+      help: candidate?.help ?? candidate?.helpMetadata,
+    };
   } catch {
     return null;
   }
 };
 
 /**
- * Resolve the loaded command metadata without importing the command loader.
- * The running bot exposes its Collection on interaction.client; tests and
- * other callers may provide commands or commandData in the execution context.
+ * Resolve serialized command data and help metadata from loaded command
+ * modules. The running bot exposes those modules on interaction.client.
+ * Tests and other callers may provide the same collection through context.
  */
 export const loadedCommandData = (interaction, context = {}) => {
-  const sources = [
-    context.commands,
-    interaction?.client?.commands,
-    context.commandData,
-    interaction?.client?.commandData,
-  ];
+  const sources = [interaction?.client?.commands, context.commands];
   const commands = new Map();
 
   for (const source of sources) {
@@ -167,13 +138,33 @@ export const loadedCommandData = (interaction, context = {}) => {
 
 const normalizedValue = (value) => String(value ?? '').trim().toLowerCase().replace(/^\//, '');
 
-const topicFor = (commandName) => HELP_TOPICS.filter((topic) => topic.commands.includes(commandName));
+const metadataFor = (command) => {
+  const metadata = command?.help;
+  return metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? metadata : {};
+};
 
-const metadataFor = (commandName) => COMMAND_HELP[commandName] ?? {};
+const topicValuesFor = (command) => {
+  const topic = metadataFor(command).topic;
+  const values = Array.isArray(topic) ? topic : [topic];
+  return [...new Set(values
+    .map(normalizedValue)
+    .filter((value) => Boolean(HELP_TOPIC_BY_VALUE[value]) && value !== 'uncategorized'))];
+};
 
-const audienceFor = (command) => metadataFor(command.name).audience
-  ?? topicFor(command.name)[0]?.audience
-  ?? 'Members and staff';
+const topicsFor = (command) => topicValuesFor(command).map((value) => HELP_TOPIC_BY_VALUE[value]);
+
+const topicCommands = (topic, commands) => commands.filter((command) => {
+  const values = topicValuesFor(command);
+  return topic.value === 'uncategorized' ? values.length === 0 : values.includes(topic.value);
+});
+
+const availableTopics = (commands) => HELP_TOPICS.filter((topic) => topicCommands(topic, commands).length > 0);
+
+const audienceFor = (command) => {
+  const audience = metadataFor(command).audience;
+  if (Array.isArray(audience)) return audience.filter(Boolean).join(', ') || 'Members and staff';
+  return typeof audience === 'string' && audience.trim() ? audience : 'Members and staff';
+};
 
 const descriptionFor = (command) => command.description || 'No description is available for this command yet.';
 
@@ -220,16 +211,53 @@ const usageFor = (command) => {
   return [`/${command.name} ${parts.join(' ')}`];
 };
 
+const examplesFor = (command) => {
+  const examples = metadataFor(command).examples;
+  if (Array.isArray(examples)) {
+    const usable = examples.filter((example) => typeof example === 'string' && example.trim());
+    if (usable.length) return usable;
+  }
+  return usageFor(command).slice(0, 4);
+};
+
 const relatedFor = (command, commands) => {
   const available = new Set(commands.map(({ name }) => name));
-  const explicit = metadataFor(command.name).related ?? [];
-  const sameTopic = topicFor(command.name)
-    .flatMap((topic) => topic.commands)
-    .filter((name) => name !== command.name);
-  return [...new Set([...explicit, ...sameTopic])]
-    .filter((name) => available.has(name))
+  const related = metadataFor(command).related;
+  const explicit = Array.isArray(related) ? related : [related];
+  return [...new Set(explicit
+    .filter((name) => typeof name === 'string')
+    .map(normalizedValue)
+    .filter((name) => name && name !== command.name && available.has(name)))]
     .slice(0, 6);
 };
+
+const capabilityAvailabilityFor = (command, context = {}) => {
+  const capability = metadataFor(command).capability;
+  if (typeof capability !== 'string' || !capability.trim()) return null;
+
+  const source = context.capabilities
+    ?? context.availableCapabilities
+    ?? context.capabilityAvailability;
+  if (source === undefined || source === null) return null;
+
+  const availabilityValue = (value) => {
+    if (typeof value === 'boolean') return value;
+    if (value && typeof value === 'object' && typeof value.available === 'boolean') return value.available;
+    return null;
+  };
+
+  if (typeof source === 'function') return availabilityValue(source(capability, command));
+  if (source instanceof Set || Array.isArray(source)) return source.has?.(capability) ?? source.includes(capability);
+  if (source instanceof Map) return source.has(capability) ? availabilityValue(source.get(capability)) : null;
+  if (typeof source === 'object' && Object.prototype.hasOwnProperty.call(source, capability)) {
+    return availabilityValue(source[capability]);
+  }
+  return null;
+};
+
+const availabilityNoteFor = (command, context) => capabilityAvailabilityFor(command, context) === false
+  ? 'Setup or upgrade may be required before this command is available. Nexus will confirm access when you run it.'
+  : null;
 
 const guideUrlFor = (context = {}) => resolveDeepLink(
   context.apiService?.baseUrl ?? context.nexusBaseUrl ?? config.nexusApi.baseUrl,
@@ -240,53 +268,63 @@ const guideText = (guideUrl) => markdownLink('Open the full Nexus Discord guide'
 
 const commonFooter = 'Help metadata is for discoverability; Nexus enforces permissions and command availability.';
 
+const fieldValue = (value, fallback = '—') => truncate(value, MAX_FIELD_VALUE, fallback);
+
+const commandLabel = (command, context) => {
+  const availabilityNote = availabilityNoteFor(command, context);
+  return `/${command.name}${availabilityNote ? ' — setup or upgrade may be required' : ''}`;
+};
+
 const commandHelpMessage = (command, commands, context, topicValue = null) => {
   const guideUrl = guideUrlFor(context);
-  const metadata = metadataFor(command.name);
-  const examples = metadata.examples?.length ? metadata.examples : usageFor(command).slice(0, 4);
+  const examples = examplesFor(command);
   const options = leafOptions(command.options ?? []);
   const related = relatedFor(command, commands);
-  const topics = topicFor(command.name).map(({ name }) => name).join(', ');
-  const ignoredTopic = topicValue && !topicFor(command.name).some(({ value }) => value === topicValue)
-    ? `\nThe topic filter was ignored because command help was requested.`
+  const topics = topicsFor(command).map(({ name }) => name).join(', ');
+  const ignoredTopic = topicValue && !topicValuesFor(command).includes(topicValue)
+    ? '\nThe topic filter was ignored because command help was requested.'
     : '';
+  const availabilityNote = availabilityNoteFor(command, context);
 
   return statusMessage({
     title: `/${command.name}`,
     description: [
       escapeMarkdown(descriptionFor(command)),
+      availabilityNote ? `\n${escapeMarkdown(availabilityNote)}` : null,
       '',
       guideText(guideUrl),
       ignoredTopic,
     ].filter(Boolean).join('\n'),
     fields: [
-      { name: 'Audience', value: escapeMarkdown(audienceFor(command)), inline: true },
-      { name: 'Topics', value: escapeMarkdown(topics || 'General'), inline: true },
-      { name: 'Usage', value: examples.map((example) => `\`${escapeMarkdown(example)}\``).join('\n') },
-      ...(options.length ? [{ name: 'Options and subcommands', value: options.join('\n') }] : []),
-      ...(related.length ? [{ name: 'Related commands', value: related.map((name) => `\`/${name}\``).join(' · ') }] : []),
+      { name: 'Audience', value: fieldValue(escapeMarkdown(audienceFor(command))), inline: true },
+      { name: 'Topics', value: fieldValue(escapeMarkdown(topics || 'Uncategorized')), inline: true },
+      { name: 'Usage', value: fieldValue(examples.map((example) => `\`${escapeMarkdown(example)}\``).join('\n')) },
+      ...(options.length ? [{ name: 'Options and subcommands', value: fieldValue(options.join('\n')) }] : []),
+      ...(related.length ? [{ name: 'Related commands', value: fieldValue(related.map((name) => `\`/${name}\``).join(' · ')) }] : []),
     ],
     footer: commonFooter,
     url: guideUrl,
   });
 };
 
+const topicAudience = (topic, commands) => {
+  const audiences = [...new Set(topicCommands(topic, commands).map(audienceFor))];
+  return audiences.length ? audiences.join(', ') : 'Members and staff';
+};
+
 const topicHelpMessage = (topic, commands, context) => {
   const guideUrl = guideUrlFor(context);
-  const available = new Map(commands.map((command) => [command.name, command]));
-  const listed = topic.commands
-    .map((name) => available.get(name))
-    .filter(Boolean);
+  const listed = topicCommands(topic, commands);
   const commandLines = listed.length
-    ? listed.map((command) => `\`/${command.name}\` — ${escapeMarkdown(descriptionFor(command))}`).join('\n')
+    ? listed.map((command) => `\`${commandLabel(command, context)}\` — ${escapeMarkdown(descriptionFor(command))}`).join('\n')
     : 'No loaded commands are currently associated with this topic.';
 
   return statusMessage({
     title: topic.name,
     description: [escapeMarkdown(topic.description), '', guideText(guideUrl)].join('\n'),
     fields: [
-      { name: 'Audience', value: escapeMarkdown(topic.audience), inline: true },
-      { name: 'Commands', value: commandLines },
+      { name: 'Audience', value: fieldValue(escapeMarkdown(topicAudience(topic, commands)), 'Members and staff'), inline: true },
+      { name: 'Commands', value: fieldValue(commandLines, 'No loaded commands are currently associated with this topic.') },
     ],
     footer: commonFooter,
     url: guideUrl,
@@ -295,20 +333,16 @@ const topicHelpMessage = (topic, commands, context) => {
 
 const overviewMessage = (commands, context) => {
   const guideUrl = guideUrlFor(context);
-  const available = new Set(commands.map(({ name }) => name));
   const fields = HELP_TOPICS
     .map((topic) => {
-      const names = topic.commands.filter((name) => available.has(name));
-      if (!names.length) return null;
+      const listed = topicCommands(topic, commands);
+      if (!listed.length) return null;
       return {
         name: topic.name,
-        value: names.map((name) => `\`/${name}\``).join(' · '),
+        value: fieldValue(listed.map((command) => `\`${commandLabel(command, context)}\``).join(' · ')),
       };
     })
     .filter(Boolean);
-  const categorized = new Set(HELP_TOPICS.flatMap((topic) => topic.commands));
-  const other = commands.filter(({ name }) => !categorized.has(name)).map(({ name }) => `\`/${name}\``);
-  if (other.length) fields.push({ name: 'Other loaded commands', value: other.join(' · ') });
 
   return statusMessage({
     title: 'Nexus Discord Help',
@@ -347,8 +381,7 @@ export const autocomplete = async (interaction, context = {}) => {
   const query = normalizedValue(focused.value);
   const commands = loadedCommandData(interaction, context);
   const choices = focused.name === 'topic'
-    ? HELP_TOPICS
-      .filter((topic) => commands.length === 0 || topic.commands.some((name) => commands.some((command) => command.name === name)))
+    ? availableTopics(commands)
       .filter((topic) => !query || `${topic.value} ${topic.name} ${topic.description}`.toLowerCase().includes(query))
       .map((topic) => ({ name: topic.name, value: topic.value }))
     : focused.name === 'command'
@@ -371,15 +404,17 @@ export const execute = async (interaction, context = {}) => {
   const commandName = normalizedValue(commandValue);
   const topicName = normalizedValue(topicValue);
   const command = commandName ? commands.find(({ name }) => name === commandName) : null;
-  const topic = topicName ? HELP_TOPICS.find(({ value, name }) => normalizedValue(value) === topicName || normalizedValue(name) === topicName) : null;
+  const topic = topicName
+    ? HELP_TOPICS.find(({ value, name }) => normalizedValue(value) === topicName || normalizedValue(name) === topicName)
+    : null;
 
   let payload;
   if (commandValue && !command) {
     payload = notFoundMessage('command', commandValue, commands.map(({ name }) => `/${name}`), context);
   } else if (!commandValue && topicValue && !topic) {
-    payload = notFoundMessage('topic', topicValue, HELP_TOPICS.map(({ value }) => value), context);
+    payload = notFoundMessage('topic', topicValue, availableTopics(commands).map(({ value }) => value), context);
   } else if (command) {
-    payload = commandHelpMessage(command, commands, context, topic?.value ?? null);
+    payload = commandHelpMessage(command, commands, context, topic?.value ?? (topicValue ? topicName : null));
   } else if (topic) {
     payload = topicHelpMessage(topic, commands, context);
   } else {

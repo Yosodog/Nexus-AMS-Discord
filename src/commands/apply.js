@@ -38,6 +38,13 @@ export const data = new SlashCommandBuilder()
   )
   .setDMPermission(false);
 
+export const help = Object.freeze({
+  audience: 'Applicants',
+  topic: Object.freeze(['applications']),
+  examples: Object.freeze(['/apply nationid:<nation-id>']),
+  related: Object.freeze(['applications', 'verify']),
+});
+
 /**
  * Execute handler for /apply.
  * @param {import('discord.js').ChatInputCommandInteraction} interaction incoming command

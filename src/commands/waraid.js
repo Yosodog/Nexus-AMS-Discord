@@ -13,6 +13,14 @@ export const data = new SlashCommandBuilder().setName('waraid').setDescription('
     .addStringOption((option) => option.setName('note').setDescription('Why the aid is needed').setRequired(true).setMaxLength(255)))
   .addSubcommand((sub) => sub.setName('status').setDescription('View your war aid requests.'))
   .setDMPermission(false);
+
+export const help = Object.freeze({
+  audience: 'Members and military staff',
+  topic: Object.freeze(['member', 'military']),
+  examples: Object.freeze(['/waraid apply account:<account> note:<note>', '/waraid status']),
+  related: Object.freeze(['war', 'accounts', 'unblockade']),
+});
+
 export const autocomplete = (interaction, { apiService }) => executeAutocomplete(interaction, apiService, accountChoices);
 export const execute = async (interaction, context) => {
   if (interaction.options.getSubcommand() === 'apply') {

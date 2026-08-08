@@ -10,6 +10,13 @@ export const data = new SlashCommandBuilder()
   .addStringOption((option) => option.setName('account').setDescription('Account to view').setAutocomplete(true))
   .setDMPermission(false);
 
+export const help = Object.freeze({
+  audience: 'Members',
+  topic: Object.freeze(['member', 'finance']),
+  examples: Object.freeze(['/accounts', '/accounts account:<account>']),
+  related: Object.freeze(['deposit', 'withdraw', 'transactions']),
+});
+
 const render = async (interaction, context, state = {}) => {
   const account = state.account ?? interaction.options?.getString?.('account') ?? undefined;
   const result = await context.apiService.getMyAccounts(actorFromInteraction(interaction), { account });

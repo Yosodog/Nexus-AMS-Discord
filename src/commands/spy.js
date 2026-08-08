@@ -5,6 +5,14 @@ export const data = new SlashCommandBuilder()
   .setName('spy').setDescription('View spy operations.')
   .addSubcommand((sub) => sub.setName('assignments').setDescription('View your spy assignments.'))
   .setDMPermission(false);
+
+export const help = Object.freeze({
+  audience: 'Members and military staff',
+  topic: Object.freeze(['member', 'military']),
+  examples: Object.freeze(['/spy assignments']),
+  related: Object.freeze(['war', 'raid', 'waraid']),
+});
+
 export const execute = async (interaction, context) => {
   await deferEphemeral(interaction);
   try {

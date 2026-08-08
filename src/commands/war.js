@@ -13,6 +13,13 @@ export const data = new SlashCommandBuilder().setName('war').setDescription('Vie
     .addStringOption((option) => option.setName('war').setDescription('War').setRequired(true).setAutocomplete(true)))
   .setDMPermission(false);
 
+export const help = Object.freeze({
+  audience: 'Members and military staff',
+  topic: Object.freeze(['member', 'military']),
+  examples: Object.freeze(['/war active', '/war counter nation:<nation-id>', '/war simulate war:<war>']),
+  related: Object.freeze(['raid', 'spy', 'waraid']),
+});
+
 const warSearchValues = (war) => [
   war?.label,
   war?.name,

@@ -10,6 +10,13 @@ export const data = new SlashCommandBuilder().setName('deposit').setDescription(
   .addStringOption((option) => option.setName('account').setDescription('Destination account').setRequired(true).setAutocomplete(true))
   .setDMPermission(false);
 
+export const help = Object.freeze({
+  audience: 'Members',
+  topic: Object.freeze(['member', 'finance']),
+  examples: Object.freeze(['/deposit account:<account>']),
+  related: Object.freeze(['accounts', 'withdraw', 'transactions']),
+});
+
 const selectedAccount = async (interaction, apiService, accountId) => {
   const result = await apiService.getMyAccounts(actorFromInteraction(interaction), {
     account: accountId,

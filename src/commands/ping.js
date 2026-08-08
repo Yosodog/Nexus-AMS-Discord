@@ -10,6 +10,13 @@ export const data = new SlashCommandBuilder()
   .setDescription('Check whether the bot is alive and responding.')
   .setDMPermission(false);
 
+export const help = Object.freeze({
+  audience: 'Everyone',
+  topic: Object.freeze(['getting-started']),
+  examples: Object.freeze(['/ping']),
+  related: Object.freeze(['help', 'verify']),
+});
+
 /**
  * Execute handler for /ping.
  * @param {import('discord.js').ChatInputCommandInteraction} interaction incoming command interaction

@@ -13,6 +13,14 @@ export const data = new SlashCommandBuilder().setName('rebuild').setDescription(
     .addStringOption((option) => option.setName('note').setDescription('Optional note').setMaxLength(255)))
   .addSubcommand((sub) => sub.setName('status').setDescription('View your rebuilding requests.'))
   .setDMPermission(false);
+
+export const help = Object.freeze({
+  audience: 'Members',
+  topic: Object.freeze(['member']),
+  examples: Object.freeze(['/rebuild apply account:<account> note:<note>', '/rebuild status']),
+  related: Object.freeze(['accounts', 'waraid', 'unblockade']),
+});
+
 export const autocomplete = (interaction, { apiService }) => executeAutocomplete(interaction, apiService, accountChoices);
 
 export const execute = async (interaction, context) => {

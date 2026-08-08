@@ -11,6 +11,13 @@ export const data = new SlashCommandBuilder()
     { name: '5', value: 5 }, { name: '10', value: 10 },
   )).setDMPermission(false);
 
+export const help = Object.freeze({
+  audience: 'Members and military staff',
+  topic: Object.freeze(['member', 'military', 'staff']),
+  examples: Object.freeze(['/raid', '/raid nation:<nation-id> sort:<sort> limit:<count>']),
+  related: Object.freeze(['war', 'spy', 'waraid']),
+});
+
 export const execute = async (interaction, context) => {
   await deferEphemeral(interaction);
   try {

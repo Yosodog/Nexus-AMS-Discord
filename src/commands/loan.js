@@ -20,6 +20,13 @@ export const data = new SlashCommandBuilder().setName('loan').setDescription('Ap
     .addStringOption((option) => option.setName('account').setDescription('Source account').setRequired(true).setAutocomplete(true)))
   .setDMPermission(false);
 
+export const help = Object.freeze({
+  audience: 'Members',
+  topic: Object.freeze(['member', 'finance']),
+  examples: Object.freeze(['/loan apply account:<account>', '/loan status', '/loan pay loan:<loan> account:<account>']),
+  related: Object.freeze(['accounts', 'grant', 'deposit']),
+});
+
 const loanSearchValues = (loan) => [
   loan?.label,
   loan?.name,

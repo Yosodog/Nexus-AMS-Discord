@@ -7,6 +7,14 @@ import {
 export const data = new SlashCommandBuilder().setName('withdraw').setDescription('Create and confirm a Nexus withdrawal.')
   .addStringOption((option) => option.setName('account').setDescription('Source account').setRequired(true).setAutocomplete(true))
   .setDMPermission(false);
+
+export const help = Object.freeze({
+  audience: 'Members',
+  topic: Object.freeze(['member', 'finance']),
+  examples: Object.freeze(['/withdraw account:<account>']),
+  related: Object.freeze(['accounts', 'deposit', 'transactions']),
+});
+
 export const execute = (interaction, { sessions }) => interaction.reply(resourcePickerPayload({
   commandName: 'withdraw', interaction, sessions, account: interaction.options.getString('account', true), kind: 'withdrawal',
 }));

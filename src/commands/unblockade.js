@@ -27,6 +27,19 @@ export const data = new SlashCommandBuilder()
     .addIntegerOption((option) => option.setName('request').setDescription('Relief request ID').setRequired(true).setMinValue(1)))
   .setDMPermission(false);
 
+export const help = Object.freeze({
+  audience: 'Members and military staff',
+  topic: Object.freeze(['member', 'military']),
+  examples: Object.freeze([
+    '/unblockade request war:<war-id>',
+    '/unblockade mine',
+    '/unblockade available',
+    '/unblockade claim request:<request-id>',
+    '/unblockade cancel request:<request-id>',
+  ]),
+  related: Object.freeze(['war', 'waraid', 'requests']),
+});
+
 const requestCollection = (result) => normalizeCollection(result?.requests ?? result);
 
 const actionCopy = {

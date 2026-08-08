@@ -25,6 +25,13 @@ export const data = new SlashCommandBuilder()
   )
   .setDMPermission(false);
 
+export const help = Object.freeze({
+  audience: 'Application staff',
+  topic: Object.freeze(['applications', 'staff']),
+  examples: Object.freeze(['/deny user:<member>']),
+  related: Object.freeze(['applications', 'apply', 'approve']),
+});
+
 /**
  * Execute handler for /deny.
  * @param {import('discord.js').ChatInputCommandInteraction} interaction command interaction

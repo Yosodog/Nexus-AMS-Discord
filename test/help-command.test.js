@@ -4,10 +4,24 @@ import { SlashCommandBuilder } from 'discord.js';
 import { autocomplete, data, execute, loadedCommandData } from '../src/commands/help.js';
 import { embedJson } from './helpers.js';
 
-const command = (name, description, addOptions = () => {}) => {
+const helpMetadata = ({
+  audience = 'Members',
+  topic = 'member',
+  examples = [`/${topic}`],
+  related = [],
+  capability,
+} = {}) => Object.freeze({
+  audience,
+  topic: Object.freeze(Array.isArray(topic) ? topic : [topic]),
+  examples: Object.freeze(examples),
+  related: Object.freeze(related),
+  ...(capability ? { capability } : {}),
+});
+
+const command = (name, description, addOptions = () => {}, help) => {
   const builder = new SlashCommandBuilder().setName(name).setDescription(description);
   addOptions(builder);
-  return { data: builder, execute: async () => {} };
+  return { data: builder, help, execute: async () => {} };
 };
 
 const makeInteraction = ({ values = {}, focused = {}, client, commandData } = {}) => {
@@ -46,22 +60,26 @@ test('/help is guild-only and exposes autocomplete command/topic options', () =>
 });
 
 test('loadedCommandData reads command builders from the loaded collection', () => {
+  const warHelp = helpMetadata({ topic: 'military', examples: ['/war active'], related: ['ping'] });
   const commands = new Map([
     ['war', command('war', 'Review active wars.', (builder) => builder.addSubcommand((subcommand) => subcommand
-      .setName('active').setDescription('List active wars.')))],
+      .setName('active').setDescription('List active wars.')), warHelp)],
     ['ping', command('ping', 'Check the bot.')],
   ]);
 
-  const loaded = loadedCommandData({ client: { commands } }, {});
+  const loaded = loadedCommandData({ client: { commands }, commandData: [{ name: 'phantom' }] }, {});
   assert.deepEqual(loaded.map(({ name }) => name), ['war', 'ping']);
   assert.equal(loaded[0].options[0].name, 'active');
+  assert.equal(loaded[0].help, warHelp);
 });
 
 test('/help command renders inferred description/options and the configured guide link', async () => {
   const commands = new Map([
     ['war', command('war', 'Review active wars.', (builder) => builder.addSubcommand((subcommand) => subcommand
-      .setName('active').setDescription('List active wars.')))],
-    ['raid', command('raid', 'Review raid targets.')],
+      .setName('active').setDescription('List active wars.')), helpMetadata({
+        audience: 'Members and military staff', topic: 'military', examples: ['/war active'], related: ['raid'],
+      }))],
+    ['raid', command('raid', 'Review raid targets.', () => {}, helpMetadata({ topic: 'military' }))],
   ]);
   const interaction = makeInteraction({
     values: { command: 'war' },
@@ -82,8 +100,8 @@ test('/help command renders inferred description/options and the configured guid
 
 test('/help defaults to a categorized ephemeral overview', async () => {
   const commands = new Map([
-    ['accounts', command('accounts', 'Review accounts.')],
-    ['ping', command('ping', 'Check the bot.')],
+    ['accounts', command('accounts', 'Review accounts.', () => {}, helpMetadata({ topic: ['member', 'finance'] }))],
+    ['ping', command('ping', 'Check the bot.', () => {}, helpMetadata({ audience: 'Everyone', topic: 'getting-started' }))],
   ]);
   const interaction = makeInteraction({ client: { commands } });
 
@@ -97,8 +115,8 @@ test('/help defaults to a categorized ephemeral overview', async () => {
 
 test('/help topic lists only loaded commands', async () => {
   const commands = new Map([
-    ['accounts', command('accounts', 'Review accounts.')],
-    ['withdraw', command('withdraw', 'Request a withdrawal.')],
+    ['accounts', command('accounts', 'Review accounts.', () => {}, helpMetadata({ topic: 'finance' }))],
+    ['withdraw', command('withdraw', 'Request a withdrawal.', () => {}, helpMetadata({ topic: 'finance' }))],
   ]);
   const interaction = makeInteraction({ values: { topic: 'finance' }, client: { commands } });
 
@@ -125,19 +143,48 @@ test('/help autocomplete uses loaded commands/topics and caps results', async ()
   assert.equal(commandInteraction.responses[0][0].value, 'cmd00');
 
   const topicCommands = new Map(commands);
-  topicCommands.set('accounts', command('accounts', 'Review account balances.'));
+  topicCommands.set('accounts', command('accounts', 'Review account balances.', () => {}, helpMetadata({ topic: 'finance' })));
   const topicInteraction = makeInteraction({ focused: { name: 'topic', value: 'fin' }, client: { commands: topicCommands } });
   await autocomplete(topicInteraction, {});
   assert.deepEqual(topicInteraction.responses[0], [{ name: 'Finance', value: 'finance' }]);
 });
 
+test('/help puts metadata-free loaded modules in an uncategorized fallback', async () => {
+  const commands = new Map([
+    ['custom', command('custom', 'A command added by another branch.')],
+    ['ping', command('ping', 'Check the bot.', () => {}, helpMetadata({ audience: 'Everyone', topic: 'getting-started' }))],
+  ]);
+  const interaction = makeInteraction({ client: { commands } });
+
+  await execute(interaction, {});
+
+  const embed = embedJson(interaction.replies[0]);
+  assert.match(embed.fields.find(({ name }) => name === 'Uncategorized').value, /\/custom/);
+  assert.doesNotMatch(embed.fields.find(({ name }) => name === 'Getting started').value, /\/custom/);
+});
+
+test('/help shows explicit capability setup guidance without hiding the loaded command', async () => {
+  const commands = new Map([
+    ['premium', command('premium', 'Use a premium command.', () => {}, helpMetadata({
+      topic: 'member', capability: 'premium.command', examples: ['/premium'],
+    }))],
+  ]);
+  const interaction = makeInteraction({ values: { command: 'premium' }, client: { commands } });
+
+  await execute(interaction, { capabilities: { 'premium.command': false } });
+
+  const embed = embedJson(interaction.replies[0]);
+  assert.match(embed.description, /setup or upgrade/i);
+  assert.match(embed.footer.text, /discoverability/);
+});
+
 test('/help gives a useful response for stale command and topic choices', async () => {
-  const commandInteraction = makeInteraction({ values: { command: 'removed' }, commandData: [] });
+  const commandInteraction = makeInteraction({ values: { command: 'removed' }, client: { commands: new Map() } });
   await execute(commandInteraction, { apiService: { baseUrl: 'https://nexus.example' } });
   assert.match(embedJson(commandInteraction.replies[0]).description, /choice may be stale/);
   assert.match(embedJson(commandInteraction.replies[0]).description, /discord-bot-guide/);
 
-  const topicInteraction = makeInteraction({ values: { topic: 'removed-topic' }, commandData: [] });
+  const topicInteraction = makeInteraction({ values: { topic: 'removed-topic' }, client: { commands: new Map() } });
   await execute(topicInteraction, {});
   assert.match(embedJson(topicInteraction.replies[0]).description, /removed\\-topic/);
   assert.match(embedJson(topicInteraction.replies[0]).description, /autocomplete/);

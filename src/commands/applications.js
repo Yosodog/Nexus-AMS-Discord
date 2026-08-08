@@ -32,6 +32,13 @@ export const data = new SlashCommandBuilder().setName('applications').setDescrip
     .addStringOption((option) => option.setName('application').setDescription('Application').setRequired(true).setAutocomplete(true)))
   .setDMPermission(false);
 
+export const help = Object.freeze({
+  audience: 'Applicants and application staff',
+  topic: Object.freeze(['applications', 'staff']),
+  examples: Object.freeze(['/applications status', '/applications queue', '/applications review']),
+  related: Object.freeze(['apply', 'approve', 'deny']),
+});
+
 const applicationChoices = async (interaction, apiService) => {
   const result = await apiService.getStaffApplications(actorFromInteraction(interaction), {
     query: interaction.options.getFocused()?.trim?.() ?? '', limit: 25,

@@ -16,6 +16,13 @@ export const data = new SlashCommandBuilder()
   .addStringOption((option) => choices(option.setName('status').setDescription('Request status'), STATUSES))
   .setDMPermission(false);
 
+export const help = Object.freeze({
+  audience: 'Members and staff',
+  topic: Object.freeze(['member', 'staff']),
+  examples: Object.freeze(['/requests scope:mine', '/requests scope:staff']),
+  related: Object.freeze(['audit', 'applications', 'unblockade']),
+});
+
 const render = async (interaction, context, state = {}) => {
   const filters = {
     scope: state.scope ?? interaction.options?.getString?.('scope') ?? 'mine',
