@@ -253,3 +253,106 @@ test('alias lookup fails closed for ambiguous applications and unknown controls 
   assert.deepEqual(calls.decisions, []);
   assert.equal(embedJson(unknown.replies[0]).title, 'Request Failed');
 });
+
+test('/applications status renders Nexus-owned steps, remediation, freshness, and a safe continuation', async () => {
+  const interaction = baseInteraction();
+  interaction.options = { getSubcommand: () => 'status' };
+  const apiService = {
+    baseUrl: BASE_URL,
+    getMyApplications: async () => ({
+      data: [{
+        id: 42,
+        status: 'pending',
+        created_at: '2026-08-08T12:00:00Z',
+        updated_at: '2026-08-08T12:05:00Z',
+        deep_link_path: '/apply?application=42',
+        channel_health: {
+          state: 'ready',
+          label: 'Private interview channel is ready.',
+          channel_id: '523456789012345678',
+        },
+        progress: {
+          facts: [
+            { key: 'submitted', label: 'Application submitted to Nexus', complete: true },
+            { key: 'staff_decision', label: 'Staff decision recorded', complete: false },
+          ],
+          blockers: [{
+            code: 'discord_follow_up_needs_staff',
+            message: 'Staff need to repair one Discord follow-up step.',
+          }],
+          next_action: {
+            label: 'Continue your application in Nexus',
+            deep_link_path: '/apply?application=42',
+          },
+        },
+        reconciliation: {
+          state: 'attention',
+          label: 'Discord follow-up needs staff attention.',
+          revision: 2,
+          issues_count: 1,
+          updated_at: '2026-08-08T12:05:00Z',
+        },
+      }],
+      meta: { total: 1 },
+    }),
+  };
+
+  await executeApplications(interaction, { apiService, sessions: createSessions() });
+
+  const payload = interaction.edits[0];
+  const embed = embedJson(payload);
+  const rendered = JSON.stringify(embed);
+  assert.equal(embed.title, 'Your Applications');
+  assert.match(rendered, /Application submitted to Nexus/);
+  assert.match(rendered, /Staff decision recorded/);
+  assert.ok(embed.fields[0].value.includes('Staff need to repair one Discord follow\\-up step\\.'));
+  assert.match(rendered, /<#523456789012345678>/);
+  assert.match(rendered, /Updated/);
+  assert.deepEqual(payload.allowedMentions, { parse: [] });
+  assert.equal(payload.components[0].toJSON().components[0].style, 5);
+  assert.equal(
+    payload.components[0].toJSON().components[0].url,
+    'https://nexus.example/apply?application=42',
+  );
+});
+
+test('/applications status supports old Nexus projections and rejects external continuation links', async () => {
+  const legacy = baseInteraction();
+  legacy.options = { getSubcommand: () => 'status' };
+  await executeApplications(legacy, {
+    apiService: {
+      baseUrl: BASE_URL,
+      getMyApplications: async () => [{
+        id: 41,
+        status: 'pending',
+        created_at: '2026-08-08T12:00:00Z',
+        deep_link_path: '/apply?application=41',
+      }],
+    },
+    sessions: createSessions(),
+  });
+  assert.equal(embedJson(legacy.edits[0]).title, 'Your Applications');
+
+  const external = baseInteraction();
+  external.options = { getSubcommand: () => 'status' };
+  await executeApplications(external, {
+    apiService: {
+      baseUrl: BASE_URL,
+      getMyApplications: async () => [{
+        id: 42,
+        status: 'pending',
+        deep_link_path: 'https://attacker.example/apply',
+        channel_health: { state: 'unknown', label: 'Channel status is unknown.' },
+        progress: {
+          facts: [],
+          blockers: [],
+          next_action: { label: 'Leave Nexus', deep_link_path: 'https://attacker.example/' },
+        },
+        reconciliation: { state: 'not_requested', label: 'Not requested.' },
+      }],
+    },
+    sessions: createSessions(),
+  });
+  assert.deepEqual(external.edits[0].components, []);
+  assert.doesNotMatch(JSON.stringify(external.edits[0]), /attacker\.example|Leave Nexus/);
+});

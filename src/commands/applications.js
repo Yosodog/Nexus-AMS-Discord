@@ -6,6 +6,7 @@ import {
   actorFromInteraction, collectionMessage, deferEphemeral, executeAutocomplete,
   normalizeCollection, replyError,
 } from '../utils/commandSupport.js';
+import { isDiscordSnowflake } from '../utils/boundaryValidators.js';
 import {
   buildEmbed,
   escapeMarkdown,
@@ -77,6 +78,103 @@ const applicationLink = (application, baseUrl, fallbackTarget = undefined) => {
     ?? application?.url
     ?? (identifier ? `/admin/applications/${encodeURIComponent(identifier)}` : null);
   return markdownLink(label, resolveDeepLink(baseUrl, path));
+};
+
+const sameOriginApplicationUrl = (baseUrl, path) => {
+  const resolved = resolveDeepLink(baseUrl, path);
+  if (!resolved) return null;
+  try {
+    return new URL(resolved).origin === new URL(baseUrl).origin ? resolved : null;
+  } catch {
+    return null;
+  }
+};
+
+const applicationStatusValue = (application, baseUrl) => {
+  const facts = Array.isArray(application?.progress?.facts)
+    ? application.progress.facts.slice(0, 8)
+    : [];
+  const blockers = Array.isArray(application?.progress?.blockers)
+    ? application.progress.blockers.slice(0, 2)
+    : [];
+  const channel = application?.channel_health;
+  const reconciliation = application?.reconciliation;
+  const lines = [
+    application?.created_at ? `Submitted: ${formatDiscordTime(application.created_at)}` : null,
+    ...facts.map((fact) => (
+      typeof fact?.complete === 'boolean' && typeof fact?.label === 'string'
+        ? `${fact.complete ? '✓' : '○'} ${escapeMarkdown(truncate(fact.label, 160))}`
+        : null
+    )),
+    channel?.label && typeof channel.label === 'string'
+      ? `**Discord:** ${escapeMarkdown(truncate(channel.label, 240))}`
+      : null,
+    channel?.state === 'ready' && isDiscordSnowflake(channel?.channel_id)
+      ? `Channel: <#${channel.channel_id}>`
+      : null,
+    reconciliation?.label && typeof reconciliation.label === 'string'
+      ? `**Reconciliation:** ${escapeMarkdown(truncate(reconciliation.label, 240))}`
+      : null,
+    ...blockers.map((blocker) => (
+      typeof blocker?.message === 'string'
+        ? `**What needs attention:** ${escapeMarkdown(truncate(blocker.message, 500))}`
+        : null
+    )),
+  ].filter(Boolean);
+  const nextAction = application?.progress?.next_action;
+  const nextUrl = sameOriginApplicationUrl(baseUrl, nextAction?.deep_link_path);
+  if (nextUrl && typeof nextAction?.label === 'string') {
+    lines.push(markdownLink(truncate(nextAction.label, 100), nextUrl));
+  } else {
+    const fallbackUrl = sameOriginApplicationUrl(baseUrl, application?.deep_link_path);
+    if (fallbackUrl) lines.push(markdownLink('Open application in Nexus', fallbackUrl));
+  }
+  if (application?.updated_at) lines.push(`Updated: ${formatDiscordTime(application.updated_at)}`);
+
+  return truncate(lines.join('\n'), 1_024, 'No application progress is available.');
+};
+
+const applicationStatusMessage = (result, baseUrl) => {
+  const collection = normalizeCollection(result);
+  const applications = collection.items.slice(0, 5);
+  const hasProjection = applications.some((application) => (
+    application?.progress && application?.channel_health && application?.reconciliation
+  ));
+  if (!hasProjection) return null;
+
+  const firstAction = applications
+    .map((application) => application?.progress?.next_action)
+    .find((action) => sameOriginApplicationUrl(baseUrl, action?.deep_link_path));
+  const firstActionUrl = sameOriginApplicationUrl(baseUrl, firstAction?.deep_link_path);
+  const components = firstActionUrl && typeof firstAction?.label === 'string'
+    ? [new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setLabel(truncate(firstAction.label, 80))
+        .setStyle(ButtonStyle.Link)
+        .setURL(firstActionUrl),
+    )]
+    : [];
+
+  return {
+    embeds: [buildEmbed({
+      title: 'Your Applications',
+      tone: 'info',
+      description: applications.length
+        ? 'Nexus-calculated application progress, Discord follow-up, and next steps.'
+        : 'No applications are linked to your Discord account yet.',
+      fields: applications.map((application, index) => ({
+        name: `Application #${application?.id ?? index + 1}${
+          application?.status ? ` · ${statusLabel(application.status)}` : ''
+        }`,
+        value: applicationStatusValue(application, baseUrl),
+      })),
+      footer: applications.length < collection.total
+        ? `Showing ${applications.length} of ${collection.total} applications.`
+        : null,
+    })],
+    components,
+    allowedMentions: { parse: [] },
+  };
 };
 
 const decisionSelection = ({ application, applicantDiscordId, target } = {}) => {
@@ -180,7 +278,8 @@ export const execute = async (interaction, context) => {
   try {
     if (subcommand === 'status') {
       const result = await context.apiService.getMyApplications(actor);
-      await interaction.editReply(collectionMessage({
+      const enhanced = applicationStatusMessage(result, context.apiService.baseUrl);
+      await interaction.editReply(enhanced ?? collectionMessage({
         title: 'Your Applications',
         collection: normalizeCollection(result),
         empty: 'No applications are linked to your Discord account yet.',
