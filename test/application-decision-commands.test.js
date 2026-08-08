@@ -1,137 +1,255 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ChannelType } from 'discord.js';
 import { execute as executeApprove } from '../src/commands/approve.js';
 import { execute as executeDeny } from '../src/commands/deny.js';
-import { buildApplicationChannelTopic } from '../src/utils/applicationChannels.js';
-import { createLogger, embedJson } from './helpers.js';
+import {
+  button as handleApplicationButton,
+  execute as executeApplications,
+  modal as handleApplicationModal,
+} from '../src/commands/applications.js';
+import { InteractionSessionStore } from '../src/services/InteractionSessionStore.js';
+import { embedJson } from './helpers.js';
 
 const GUILD_ID = '123456789012345678';
 const APPLICANT_ID = '223456789012345678';
 const MODERATOR_ID = '323456789012345678';
-const CHANNEL_ID = '423456789012345678';
-const APPLICANT_ROLE_ID = '523456789012345678';
-const MEMBER_ROLE_ID = '623456789012345678';
-const ANNOUNCEMENT_CHANNEL_ID = '823456789012345678';
+const BASE_URL = 'https://nexus.example';
 
-function createDecisionInteraction(channel, roleOperations) {
-  const member = {
-    roles: {
-      remove: async (roleId) => roleOperations.push(['remove', roleId]),
-      add: async (roleId) => roleOperations.push(['add', roleId]),
-    },
-  };
+const createSessions = () => {
+  let sequence = 0;
+  return new InteractionSessionStore({
+    createToken: () => `${++sequence}`.padStart(16, '0'),
+  });
+};
+
+const componentId = (message) => message.components[0].toJSON().components[0].custom_id;
+
+const baseInteraction = () => {
   const interaction = {
-    id: '723456789012345678',
+    id: '423456789012345678',
     guildId: GUILD_ID,
-    guild: {
-      id: GUILD_ID,
-      members: { fetch: async () => member },
-      channels: {
-        cache: new Map(),
-        fetch: async (id) => (id === CHANNEL_ID ? channel : null),
-      },
-    },
-    client: { channels: { fetch: async () => null } },
     user: { id: MODERATOR_ID },
-    options: {
-      getUser: () => ({ id: APPLICANT_ID, toString: () => `<@${APPLICANT_ID}>` }),
-    },
+    deferred: false,
+    replied: false,
     replies: [],
     edits: [],
-    deferReply: async () => {},
-    reply: async (payload) => interaction.replies.push(payload),
-    editReply: async (payload) => interaction.edits.push(payload),
+    updates: [],
+    modals: [],
+    reply: async (payload) => {
+      interaction.replied = true;
+      interaction.replies.push(payload);
+      return payload;
+    },
+    deferReply: async () => { interaction.deferred = true; },
+    deferUpdate: async () => { interaction.deferred = true; },
+    editReply: async (payload) => {
+      interaction.edits.push(payload);
+      return payload;
+    },
+    update: async (payload) => {
+      interaction.replied = true;
+      interaction.updates.push(payload);
+      return payload;
+    },
+    showModal: async (payload) => {
+      interaction.replied = true;
+      interaction.modals.push(payload);
+      return payload;
+    },
   };
   return interaction;
-}
+};
 
-function createInterviewChannel(overrides = {}) {
+const aliasInteraction = () => {
+  const interaction = baseInteraction();
+  interaction.options = {
+    getUser: () => ({
+      id: APPLICANT_ID,
+      username: 'applicant.example',
+      globalName: 'Applicant Example',
+    }),
+  };
+  return interaction;
+};
+
+const decisionApi = ({ matches = [{ token: 'opaque-application', leader_name: 'Applicant Example' }] } = {}) => {
+  const calls = { lookups: [], decisions: [] };
   return {
-    id: CHANNEL_ID,
-    guildId: GUILD_ID,
-    type: ChannelType.GuildText,
-    name: 'app-42-9001-test-leader',
-    topic: buildApplicationChannelTopic(42, 9001),
-    delete: async () => {},
-    ...overrides,
-  };
-}
-
-test('/approve removes/adds roles and deletes only the verified Nexus channel', async () => {
-  const roleOperations = [];
-  let deleted = false;
-  const channel = createInterviewChannel({ delete: async () => { deleted = true; } });
-  const interaction = createDecisionInteraction(channel, roleOperations);
-  let announcement = null;
-  interaction.client.channels.fetch = async (id) => ({
-    id,
-    guildId: GUILD_ID,
-    isTextBased: () => true,
-    send: async (payload) => { announcement = payload; },
-  });
-  const apiService = {
-    approveApplication: async () => ({
-      application: { id: 42, nation_id: 9001, discord_channel_id: CHANNEL_ID },
-      config: {
-        applicant_role_id: APPLICANT_ROLE_ID,
-        member_role_id: MEMBER_ROLE_ID,
-        approval_announcement_channel_id: ANNOUNCEMENT_CHANNEL_ID,
-        approval_message_template: '@everyone Welcome aboard',
+    calls,
+    service: {
+      baseUrl: BASE_URL,
+      getStaffApplications: async (actor, query) => {
+        calls.lookups.push({ actor, query });
+        return { items: matches };
       },
-    }),
+      decideStaffApplication: async (actor, application, decision, payload) => {
+        calls.decisions.push({ actor, application, decision, payload });
+        return {
+          application: {
+            id: 42,
+            token: application,
+            leader_name: 'Applicant Example',
+            status: decision === 'approve' ? 'approved' : 'denied',
+            deep_link_path: '/admin/applications/42',
+          },
+        };
+      },
+    },
   };
+};
 
-  await executeApprove(interaction, { logger: createLogger(), apiService, guildId: GUILD_ID });
+test('/approve is a confirmation-only alias of the canonical applications handler', async () => {
+  const sessions = createSessions();
+  const interaction = aliasInteraction();
+  const { service: apiService, calls } = decisionApi();
 
-  assert.equal(deleted, true);
-  assert.deepEqual(roleOperations, [
-    ['remove', APPLICANT_ROLE_ID],
-    ['add', MEMBER_ROLE_ID],
-  ]);
-  assert.deepEqual(announcement.allowedMentions, { parse: [], repliedUser: false });
-  assert.equal(embedJson(interaction.edits[0]).title, 'Applicant Approved');
-});
+  await executeApprove(interaction, { apiService, sessions });
 
-test('/approve reports cleanup pending and never deletes an unrelated cached channel', async () => {
-  const roleOperations = [];
-  let unrelatedDeleted = false;
-  const unrelated = createInterviewChannel({ delete: async () => { unrelatedDeleted = true; } });
-  const interaction = createDecisionInteraction(null, roleOperations);
-  interaction.guild.channels.cache.set(CHANNEL_ID, unrelated);
-  const apiService = {
-    approveApplication: async () => ({
-      application: { id: 42, nation_id: 9001, discord_channel_id: null },
-      config: { applicant_role_id: APPLICANT_ROLE_ID, member_role_id: MEMBER_ROLE_ID },
-    }),
-  };
+  assert.equal(interaction.replies.length, 1);
+  assert.equal(interaction.replies[0].ephemeral, true);
+  assert.equal(embedJson(interaction.replies[0]).title, 'Confirm Application Approval');
+  assert.deepEqual(calls.decisions, []);
 
-  await executeApprove(interaction, { logger: createLogger(), apiService, guildId: GUILD_ID });
-
-  assert.equal(unrelatedDeleted, false);
-  assert.match(embedJson(interaction.edits[0]).title, /Cleanup Pending/);
-  assert.match(embedJson(interaction.edits[0]).description, /approved in Nexus/i);
-});
-
-test('/deny refuses a mismatched authoritative channel and reports partial success', async () => {
-  const roleOperations = [];
-  let deleted = false;
-  const channel = createInterviewChannel({
-    topic: buildApplicationChannelTopic(99, 9001),
-    delete: async () => { deleted = true; },
+  const session = sessions.resolve(componentId(interaction.replies[0]), MODERATOR_ID);
+  assert.deepEqual(session, {
+    commandName: 'applications',
+    userId: MODERATOR_ID,
+    event: 'approve-confirm',
+    state: { applicantDiscordId: APPLICANT_ID, target: 'Applicant Example' },
+    oneShot: true,
+    expiresAt: session.expiresAt,
   });
-  const interaction = createDecisionInteraction(channel, roleOperations);
-  const apiService = {
-    denyApplication: async () => ({
-      application: { id: 42, nation_id: 9001, discord_channel_id: CHANNEL_ID },
-      config: { applicant_role_id: APPLICANT_ROLE_ID },
-    }),
+
+  const confirmation = baseInteraction();
+  await handleApplicationButton(confirmation, { apiService, sessions, session });
+
+  assert.deepEqual(calls.lookups, [{
+    actor: {
+      discordUserId: MODERATOR_ID,
+      discordGuildId: GUILD_ID,
+      discordInteractionId: confirmation.id,
+      discordCommand: 'applications',
+    },
+    query: { applicant_discord_id: APPLICANT_ID, filter: 'pending', limit: 2 },
+  }]);
+  assert.deepEqual(calls.decisions, [{
+    actor: {
+      discordUserId: MODERATOR_ID,
+      discordGuildId: GUILD_ID,
+      discordInteractionId: confirmation.id,
+      discordCommand: 'applications',
+    },
+    application: 'opaque-application',
+    decision: 'approve',
+    payload: {},
+  }]);
+  assert.equal(embedJson(confirmation.edits[0]).title, 'Application Approved');
+  assert.equal('guild' in confirmation, false, 'the canonical handler must not mutate Discord directly');
+});
+
+test('/deny uses the canonical reason modal, confirmation, lookup, and decision handler', async () => {
+  const sessions = createSessions();
+  const interaction = aliasInteraction();
+  const { service: apiService, calls } = decisionApi();
+
+  await executeDeny(interaction, { apiService, sessions });
+
+  assert.equal(interaction.modals.length, 1);
+  assert.deepEqual(calls.decisions, []);
+  const modalJson = interaction.modals[0].toJSON();
+  const reasonId = modalJson.components[0].components[0].custom_id;
+  const modalSession = sessions.resolve(modalJson.custom_id, MODERATOR_ID);
+  assert.equal(modalSession.commandName, 'applications');
+  assert.equal(modalSession.event, 'deny-reason');
+  assert.equal(modalSession.state.applicantDiscordId, APPLICANT_ID);
+
+  const submission = baseInteraction();
+  submission.fields = { getTextInputValue: (field) => {
+    assert.equal(field, reasonId);
+    return 'Application requirements were not completed.';
+  } };
+  await handleApplicationModal(submission, {
+    apiService,
+    sessions,
+    session: modalSession,
+  });
+
+  assert.equal(embedJson(submission.replies[0]).title, 'Confirm Application Denial');
+  const confirmationSession = sessions.resolve(componentId(submission.replies[0]), MODERATOR_ID);
+  assert.equal(confirmationSession.commandName, 'applications');
+  assert.equal(confirmationSession.event, 'deny-confirm');
+
+  const confirmation = baseInteraction();
+  await handleApplicationButton(confirmation, {
+    apiService,
+    sessions,
+    session: confirmationSession,
+  });
+
+  assert.equal(calls.decisions.length, 1);
+  assert.deepEqual(calls.decisions[0], {
+    actor: {
+      discordUserId: MODERATOR_ID,
+      discordGuildId: GUILD_ID,
+      discordInteractionId: confirmation.id,
+      discordCommand: 'applications',
+    },
+    application: 'opaque-application',
+    decision: 'deny',
+    payload: { reason: 'Application requirements were not completed.' },
+  });
+  assert.equal(embedJson(confirmation.edits[0]).title, 'Application Denied');
+  assert.equal('guild' in confirmation, false, 'the canonical handler must not mutate Discord directly');
+});
+
+test('/applications approve and /approve create the same canonical confirmation event', async () => {
+  const canonicalSessions = createSessions();
+  const canonical = baseInteraction();
+  canonical.options = {
+    getSubcommand: () => 'approve',
+    getString: () => 'opaque-application',
   };
+  await executeApplications(canonical, {
+    apiService: { baseUrl: BASE_URL },
+    sessions: canonicalSessions,
+  });
+  const canonicalSession = canonicalSessions.resolve(componentId(canonical.edits[0]), MODERATOR_ID);
 
-  await executeDeny(interaction, { logger: createLogger(), apiService, guildId: GUILD_ID });
+  const aliasSessions = createSessions();
+  const alias = aliasInteraction();
+  await executeApprove(alias, {
+    apiService: { baseUrl: BASE_URL },
+    sessions: aliasSessions,
+  });
+  const aliasSession = aliasSessions.resolve(componentId(alias.replies[0]), MODERATOR_ID);
 
-  assert.equal(deleted, false);
-  assert.deepEqual(roleOperations, [['remove', APPLICANT_ROLE_ID]]);
-  assert.match(embedJson(interaction.edits[0]).title, /Cleanup Pending/);
-  assert.match(embedJson(interaction.edits[0]).description, /denied in Nexus/i);
+  assert.equal(canonicalSession.commandName, 'applications');
+  assert.equal(aliasSession.commandName, 'applications');
+  assert.equal(canonicalSession.event, 'approve-confirm');
+  assert.equal(aliasSession.event, canonicalSession.event);
+});
+
+test('alias lookup fails closed for ambiguous applications and unknown controls never mutate', async () => {
+  const sessions = createSessions();
+  const interaction = aliasInteraction();
+  const { service: apiService, calls } = decisionApi({
+    matches: [{ token: 'first' }, { token: 'second' }],
+  });
+  await executeApprove(interaction, { apiService, sessions });
+  const session = sessions.resolve(componentId(interaction.replies[0]), MODERATOR_ID);
+  const confirmation = baseInteraction();
+  await handleApplicationButton(confirmation, { apiService, sessions, session });
+
+  assert.deepEqual(calls.decisions, []);
+  assert.equal(embedJson(confirmation.edits[0]).title, 'Request Failed');
+  assert.match(embedJson(confirmation.edits[0]).description, /More than one pending application/);
+
+  const unknown = baseInteraction();
+  await handleApplicationButton(unknown, {
+    apiService,
+    sessions,
+    session: { event: 'unexpected', state: {} },
+  });
+  assert.deepEqual(calls.decisions, []);
+  assert.equal(embedJson(unknown.replies[0]).title, 'Request Failed');
 });

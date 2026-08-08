@@ -79,8 +79,23 @@ const applicationLink = (application, baseUrl, fallbackTarget = undefined) => {
   return markdownLink(label, resolveDeepLink(baseUrl, path));
 };
 
-const approvalConfirmation = (interaction, context, application, target = undefined) => {
-  const reference = applicationLink(application, context.apiService.baseUrl, target);
+const decisionSelection = ({ application, applicantDiscordId, target } = {}) => {
+  const selectedApplication = applicationIdentifier(application);
+  const selectedApplicant = `${applicantDiscordId ?? ''}`.trim();
+  const hasSelectedApplicant = /^\d{17,20}$/.test(selectedApplicant);
+  if (!selectedApplication && !hasSelectedApplicant) {
+    throw new TypeError('An application or applicant Discord user is required.');
+  }
+  return {
+    ...(selectedApplication ? { application } : {}),
+    ...(hasSelectedApplicant ? { applicantDiscordId: selectedApplicant } : {}),
+    ...(target ? { target: truncate(target, 100) } : {}),
+  };
+};
+
+export const approvalConfirmation = (interaction, context, selection) => {
+  const state = decisionSelection(selection);
+  const reference = applicationLink(state.application, context.apiService.baseUrl, state.target);
   return statusMessage({
     title: 'Confirm Application Approval',
     tone: 'warning',
@@ -88,16 +103,17 @@ const approvalConfirmation = (interaction, context, application, target = undefi
     footer: 'The decision will be recorded in Nexus.',
     components: [new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(context.sessions.create({ commandName: 'applications', userId: interaction.user.id,
-        event: 'approve-confirm', state: { application, target }, oneShot: true }))
+        event: 'approve-confirm', state, oneShot: true }))
         .setLabel('Approve application').setStyle(ButtonStyle.Success),
     )],
   });
 };
 
-const denialModal = (interaction, context, application, target = undefined) => {
+export const denialModal = (interaction, context, selection) => {
+  const state = decisionSelection(selection);
   const reasonId = context.sessions.create({ commandName: 'applications', userId: interaction.user.id, event: 'field', oneShot: true });
   const modalId = context.sessions.create({ commandName: 'applications', userId: interaction.user.id,
-    event: 'deny-reason', state: { application, reasonId, target }, oneShot: true });
+    event: 'deny-reason', state: { ...state, reasonId }, oneShot: true });
   return new ModalBuilder().setCustomId(modalId).setTitle('Deny application')
     .addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId(reasonId)
       .setLabel('Reason').setMaxLength(500).setRequired(true).setStyle(TextInputStyle.Paragraph)));
@@ -153,7 +169,9 @@ export const execute = async (interaction, context) => {
   const subcommand = interaction.options.getSubcommand();
   if (subcommand === 'deny') {
     await interaction.showModal(denialModal(
-      interaction, context, interaction.options.getString('application', true),
+      interaction,
+      context,
+      { application: interaction.options.getString('application', true) },
     ));
     return;
   }
@@ -214,23 +232,25 @@ export const execute = async (interaction, context) => {
         embeds: [applicationReviewEmbed(review, context.apiService.baseUrl, result?.summary)],
         components: [new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId(context.sessions.create({ commandName: 'applications', userId: interaction.user.id,
-            event: 'approve-start', state: { application, target }, oneShot: true }))
+            event: 'approve-start', state: decisionSelection({ application, target }), oneShot: true }))
             .setLabel('Approve').setStyle(ButtonStyle.Success),
           new ButtonBuilder().setCustomId(context.sessions.create({ commandName: 'applications', userId: interaction.user.id,
-            event: 'deny-start', state: { application, target }, oneShot: true }))
+            event: 'deny-start', state: decisionSelection({ application, target }), oneShot: true }))
             .setLabel('Deny').setStyle(ButtonStyle.Danger),
         )],
       });
       return;
     }
     await interaction.editReply(approvalConfirmation(
-      interaction, context, interaction.options.getString('application', true),
+      interaction,
+      context,
+      { application: interaction.options.getString('application', true) },
     ));
   } catch (error) { await replyError(interaction, error); }
 };
 
 export const modal = async (interaction, context) => {
-  const { application, reasonId, target } = context.session.state;
+  const { reasonId, ...selection } = context.session.state;
   const reason = interaction.fields.getTextInputValue(reasonId).trim();
   if (!reason) {
     await interaction.reply({
@@ -244,8 +264,8 @@ export const modal = async (interaction, context) => {
     return;
   }
   const confirmId = context.sessions.create({ commandName: 'applications', userId: interaction.user.id,
-    event: 'deny-confirm', state: { application, reason, target }, oneShot: true });
-  const reference = applicationLink(application, context.apiService.baseUrl, target);
+    event: 'deny-confirm', state: { ...decisionSelection(selection), reason }, oneShot: true });
+  const reference = applicationLink(selection.application, context.apiService.baseUrl, selection.target);
   await interaction.reply({
     ...statusMessage({
       title: 'Confirm Application Denial',
@@ -266,8 +286,7 @@ export const button = async (interaction, context) => {
     await interaction.showModal(denialModal(
       interaction,
       context,
-      context.session.state.application,
-      context.session.state.target,
+      context.session.state,
     ));
     return;
   }
@@ -275,24 +294,60 @@ export const button = async (interaction, context) => {
     await interaction.update(approvalConfirmation(
       interaction,
       context,
-      context.session.state.application,
-      context.session.state.target,
+      context.session.state,
     ));
+    return;
+  }
+  if (!['approve-confirm', 'deny-confirm'].includes(context.session.event)) {
+    await replyError(interaction, Object.assign(new Error('This application control is no longer valid.'), {
+      code: 'VALIDATION_ERROR',
+    }));
     return;
   }
   await interaction.deferUpdate();
   const decision = context.session.event === 'approve-confirm' ? 'approve' : 'deny';
   try {
+    let application = context.session.state.application;
+    let target = context.session.state.target;
+    if (!applicationIdentifier(application)) {
+      const lookup = await context.apiService.getStaffApplications(
+        actorFromInteraction(interaction, 'applications'),
+        {
+          applicant_discord_id: context.session.state.applicantDiscordId,
+          filter: 'pending',
+          limit: 2,
+        },
+      );
+      const matches = normalizeCollection(lookup).items;
+      if (matches.length === 0) {
+        throw Object.assign(new Error('No pending application was found for that Discord user.'), {
+          code: 'NOT_FOUND',
+        });
+      }
+      if (matches.length > 1) {
+        throw Object.assign(new Error('More than one pending application matched that Discord user. Review it with /applications.'), {
+          code: 'VALIDATION_ERROR',
+        });
+      }
+      application = matches[0];
+      target = applicationTarget(application, target);
+    }
+    const identifier = applicationIdentifier(application);
+    if (!identifier) {
+      throw Object.assign(new Error('Nexus did not return a usable application reference.'), {
+        code: 'VALIDATION_ERROR',
+      });
+    }
     const result = await context.apiService.decideStaffApplication(
-      actorFromInteraction(interaction), context.session.state.application, decision,
+      actorFromInteraction(interaction, 'applications'), identifier, decision,
       decision === 'deny' ? { reason: context.session.state.reason } : {},
     );
     const decidedApplication = result?.application ?? result;
     const outcome = decision === 'approve' ? 'approved' : 'denied';
     const reference = applicationLink(
-      decidedApplication ?? context.session.state.application,
+      decidedApplication ?? application,
       context.apiService.baseUrl,
-      context.session.state.target,
+      target,
     );
     await interaction.editReply({
       content: null,
