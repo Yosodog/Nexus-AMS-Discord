@@ -355,8 +355,9 @@ const endpointCases = [
   },
   {
     name: 'claimDiscordQueue',
-    invoke: (service) => service.claimDiscordQueue('worker-1', 'request-1'),
-    method: 'post', pathname: '/api/v1/discord/queue/claim', body: { worker_id: 'worker-1', request_id: 'request-1' },
+    invoke: (service) => service.claimDiscordQueue('worker-1', 'request-1', 'alerts'),
+    method: 'post', pathname: '/api/v1/discord/queue/claim',
+    body: { worker_id: 'worker-1', request_id: 'request-1', lanes: ['alerts'], guild_id: GUILD_ID },
   },
   {
     name: 'renewDiscordQueueLease',
@@ -374,6 +375,11 @@ const endpointCases = [
     invoke: (service) => service.updateDiscordQueueStatus('queue / 3', 'complete', 'lease-3', { result: { sent: true } }),
     method: 'post', pathname: '/api/v1/discord/queue/queue%20%2F%203/status',
     body: { status: 'complete', lease_token: 'lease-3', result: { sent: true } },
+  },
+  {
+    name: 'getAlertRendererManifest',
+    invoke: (service) => service.getAlertRendererManifest(),
+    method: 'get', pathname: '/api/v1/discord/alerts/manifest', relay: 'service',
   },
   {
     name: 'getWarCounter',
@@ -477,17 +483,23 @@ test('ApiService builds leased queue and war-counter requests', async () => {
     return { data: { ok: true } };
   };
 
-  await service.claimDiscordQueue('worker-1', 'request-1');
+  await service.claimDiscordQueue('worker-1', 'request-1', 'alerts');
   await service.renewDiscordQueueLease('queue-1', 'lease-1');
   await service.checkpointDiscordQueue('queue-1', 'lease-1', { discord_channel_id: '123' });
   await service.updateDiscordQueueStatus('queue-1', 'failed', 'lease-1', {
     error_code: 'send_failed',
     error_message: 'Discord rejected the message',
+    result: { delivery: 'failed', retryable: true },
   });
   await service.getWarCounter(77);
 
   assert.deepEqual(requests.map(({ method }) => method), ['post', 'post', 'patch', 'post', 'get']);
-  assert.deepEqual(requests[0].data, { worker_id: 'worker-1', request_id: 'request-1' });
+  assert.deepEqual(requests[0].data, {
+    worker_id: 'worker-1',
+    request_id: 'request-1',
+    lanes: ['alerts'],
+    guild_id: GUILD_ID,
+  });
   assert.deepEqual(requests[2].data, {
     lease_token: 'lease-1',
     result: { discord_channel_id: '123' },
@@ -497,6 +509,7 @@ test('ApiService builds leased queue and war-counter requests', async () => {
     lease_token: 'lease-1',
     error_code: 'send_failed',
     error_message: 'Discord rejected the message',
+    result: { delivery: 'failed', retryable: true },
   });
   assert.equal(requests[4].url, 'https://nexus.example/api/v1/discord/war-counters/77');
 });

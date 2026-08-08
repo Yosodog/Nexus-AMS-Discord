@@ -24,6 +24,13 @@ const addCommonOptions = (subcommand) => subcommand
   .addStringOption((option) => option.setName('name').setDescription('Optional label').setMaxLength(100))
   .addIntegerOption((option) => option.setName('cooldown').setDescription('Minutes between alerts').setMinValue(5).setMaxValue(10080));
 
+export const help = Object.freeze({
+  audience: 'Members',
+  topic: Object.freeze(['member']),
+  examples: Object.freeze(['/alerts list', '/alerts nation nation:<nation> event:<event>', '/alerts manage id:<id> action:test']),
+  related: Object.freeze(['audit', 'war', 'spy']),
+});
+
 export const data = new SlashCommandBuilder()
   .setName('alerts')
   .setDescription('Manage private Nexus alerts and watchlists.')

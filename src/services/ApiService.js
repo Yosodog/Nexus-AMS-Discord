@@ -493,14 +493,21 @@ export class ApiService {
     }, RetryMode.SAFE);
   }
 
-  /** Claim one queue item with an idempotent request identifier. */
-  async claimDiscordQueue(workerId, requestId) {
+  /** Claim one queue item with an idempotent request identifier and optional lane. */
+  async claimDiscordQueue(workerId, requestId, lane = null, guildId = this.relaySigner?.guildId ?? null) {
     const endpointUrl = new URL('/api/v1/discord/queue/claim', this.baseUrl).toString();
+    const data = { worker_id: workerId, request_id: requestId };
+    if (typeof lane === 'string' && lane.trim() !== '') {
+      data.lanes = [lane.trim()];
+    }
+    if (typeof guildId === 'string' && guildId.trim() !== '') {
+      data.guild_id = guildId.trim();
+    }
 
     return this.request({
       method: 'post',
       url: endpointUrl,
-      data: { worker_id: workerId, request_id: requestId },
+      data,
     }, RetryMode.IDEMPOTENT);
   }
 
@@ -548,7 +555,7 @@ export class ApiService {
     if (leaseToken) {
       data.lease_token = leaseToken;
     }
-    if (status === 'complete' && outcomeDetails?.result !== undefined) {
+    if (outcomeDetails?.result !== undefined) {
       data.result = outcomeDetails.result;
     }
     if (status === 'failed' && outcomeDetails?.error_code) {
@@ -563,6 +570,17 @@ export class ApiService {
       url: endpointUrl.toString(),
       data,
     }, leaseToken ? RetryMode.IDEMPOTENT : RetryMode.NEVER);
+  }
+
+  /** Fetch the Nexus renderer manifest before claiming alert-lane work. */
+  async getAlertRendererManifest() {
+    const endpointUrl = new URL('/api/v1/discord/alerts/manifest', this.baseUrl).toString();
+
+    return this.request({
+      method: 'get',
+      url: endpointUrl,
+      headers: this.#serviceRelayHeaders('alerts.manifest'),
+    }, RetryMode.SAFE);
   }
 
   /** Fetch the current persisted war-counter record. */
