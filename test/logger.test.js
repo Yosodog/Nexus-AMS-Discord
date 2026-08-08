@@ -5,13 +5,17 @@ import { Logger } from '../src/services/Logger.js';
 test('Logger filters levels, redacts credentials, and preserves correlation ids', (t) => {
   const previousToken = process.env.DISCORD_BOT_TOKEN;
   const previousKey = process.env.NEXUS_API_KEY;
+  const previousRelayKey = process.env.NEXUS_DISCORD_RELAY_PRIVATE_KEY;
   process.env.DISCORD_BOT_TOKEN = 'bot-secret-value';
   process.env.NEXUS_API_KEY = 'api-secret-value';
+  process.env.NEXUS_DISCORD_RELAY_PRIVATE_KEY = 'relay-private-secret-value';
   t.after(() => {
     if (previousToken === undefined) delete process.env.DISCORD_BOT_TOKEN;
     else process.env.DISCORD_BOT_TOKEN = previousToken;
     if (previousKey === undefined) delete process.env.NEXUS_API_KEY;
     else process.env.NEXUS_API_KEY = previousKey;
+    if (previousRelayKey === undefined) delete process.env.NEXUS_DISCORD_RELAY_PRIVATE_KEY;
+    else process.env.NEXUS_DISCORD_RELAY_PRIVATE_KEY = previousRelayKey;
   });
 
   const output = [];
@@ -23,10 +27,11 @@ test('Logger filters levels, redacts credentials, and preserves correlation ids'
     token: 'bot-secret-value',
     apiKey: 'api-secret-value',
   });
+  logger.info('relay-private-secret-value');
 
-  assert.equal(output.length, 1);
+  assert.equal(output.length, 2);
   assert.match(output[0], /123456789012345678/);
-  assert.doesNotMatch(output[0], /bot-secret-value|api-secret-value/);
+  assert.doesNotMatch(output.join('\n'), /bot-secret-value|api-secret-value|relay-private-secret-value/);
 });
 
 test('Logger does not serialize Axios response bodies from direct Error arguments', (t) => {

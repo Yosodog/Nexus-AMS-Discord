@@ -17,6 +17,7 @@ Discord integration for Nexus AMS. The bot provides account verification, applic
 - `src/commands/` — slash command modules.
 - `src/listeners/` — Discord interaction and message listeners.
 - `src/services/` — Nexus API transport, leased queue worker, stable dispatcher, and logging.
+- `src/healthcheck.js` — validates the local process heartbeat without contacting Discord or Nexus.
 - `src/services/queueActions/` — validated action modules; each exports `validate(payload)` and `execute(command, context)`.
 - `src/utils/` — configuration, boundary validation, and channel identity helpers.
 - `src/registerCommands.js` — publishes the complete command set to the configured guild.
@@ -44,6 +45,11 @@ Configure:
 - `NEXUS_API_URL`: Nexus base URL. Development may use HTTP; production startup requires HTTPS.
 - `NEXUS_API_KEY`: shared bot credential issued by Nexus.
 - `NEXUS_DISCORD_RELAY_PRIVATE_KEY`: base64 PKCS#8 Ed25519 private key used to sign the actual Gateway interaction identity and command sent to Nexus.
+- `PROCESS_HEALTH_FILE`: local atomic readiness file; defaults to `data/process-health.json`.
+- `PROCESS_HEALTH_INTERVAL_MS`: heartbeat interval; defaults to 15 seconds.
+- `PROCESS_HEALTH_STALE_AFTER_MS`: maximum accepted heartbeat age; defaults to 45 seconds.
+- `BUILD_COMMIT`: immutable source/image revision exposed in local build metadata.
+- `NEXUS_RELEASE_ID`: server-assigned release identifier exposed in local build metadata.
 
 Generate the asymmetric relay key pair once:
 
@@ -71,6 +77,12 @@ Start the bot:
 
 ```bash
 npm start
+```
+
+Probe the already-running process without making a Discord or Nexus request:
+
+```bash
+npm run healthcheck
 ```
 
 Command loading is atomic. An import failure, malformed command export, serialization error, or duplicate command name aborts startup/registration; the registration script never replaces Discord commands with a partial set.
@@ -119,6 +131,21 @@ Recommended rollout order:
 6. Smoke-test account reads, a deposit code, a within-limit withdrawal, an above-limit review case, and DM failure handling.
 7. Enable private Discord notifications in Nexus when delivery results are healthy.
 
+## Readiness and Build Metadata
+
+The bot writes an atomic JSON heartbeat with mode `0600`. Readiness is reported
+only after Discord emits `ClientReady`, the configured guild is present in the
+client cache, and the leased queue worker has started. Missing, malformed,
+future-dated, stale, stopping, stopped, failed-guild, stopped-worker, and
+unhealthy-lease states all make `npm run healthcheck` exit nonzero.
+
+The heartbeat contains the package version, sanitized build/release identifiers,
+booleans and counters for the worker, and whether the configured guild is
+available. It deliberately omits guild IDs, worker IDs, queue IDs, lease tokens,
+Nexus URLs, Discord/Nexus credentials, relay keys, command payloads, and API
+responses. Place `PROCESS_HEALTH_FILE` on the writable runtime mount used by the
+bot and run the probe as the same non-root user.
+
 ## Shutdown Behavior
 
 `SIGTERM` or `SIGINT` stops new queue claims and stops scheduling lease
@@ -135,6 +162,7 @@ no item is active.
 npm run lint          # syntax-check src/ and test/
 npm test              # run the Node test suite
 npm run check         # lint, then run tests
+npm run healthcheck   # validate the local running-process heartbeat
 npm run test:coverage # full src/**/*.js coverage with enforced gates
 npm audit --omit=dev --audit-level=high
 ```

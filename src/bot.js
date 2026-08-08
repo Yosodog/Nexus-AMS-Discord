@@ -6,6 +6,7 @@ import { registerMessageListener } from './listeners/messageCreate.js';
 import { ApiService } from './services/ApiService.js';
 import { DiscordRelaySigner } from './services/DiscordRelaySigner.js';
 import { Logger } from './services/Logger.js';
+import { ProcessHealth } from './services/ProcessHealth.js';
 import { QueueDispatcher } from './services/QueueDispatcher.js';
 import { QueueWorker } from './services/QueueWorker.js';
 import { config } from './utils/config.js';
@@ -62,11 +63,22 @@ const bootstrap = async () => {
     dispatcher: queueDispatcher,
     logger: new Logger('QueueWorker'),
   });
+  const processHealth = new ProcessHealth({
+    healthFile: config.processHealth.file,
+    intervalMs: config.processHealth.intervalMs,
+    staleAfterMs: config.processHealth.staleAfterMs,
+    build: config.build,
+    queueStatus: () => queueWorker.getHealthSnapshot(),
+    scopeStatus: () => ({ guild_configured: client.guilds.cache.has(config.discord.guildId) }),
+    logger: new Logger('ProcessHealth'),
+  });
 
   const commandContext = { apiService, guildId: config.discord.guildId };
 
   registerInteractionListener(client, client.commands, logger, commandContext, config.discord.guildId);
   registerMessageListener(client, apiService, new Logger('MessageListener'), config.discord.guildId);
+
+  await processHealth.start();
 
   let shutdownSignal = null;
   const shutdown = async (signal) => {
@@ -77,18 +89,55 @@ const bootstrap = async () => {
 
     shutdownSignal = signal;
     logger.info('Graceful shutdown started', { signal });
+    let healthWritten = true;
+    try {
+      await processHealth.markStopping(signal);
+    } catch {
+      healthWritten = false;
+      logger.error('Failed to mark Discord process as stopping', { errorCode: 'HEALTH_WRITE_FAILED' });
+    }
     const { drained } = await queueWorker.stop();
     client.destroy();
+    try {
+      await processHealth.stop({ signal, drained });
+    } catch {
+      healthWritten = false;
+      logger.error('Failed to write final Discord process health state', { errorCode: 'HEALTH_WRITE_FAILED' });
+    }
     logger.info('Graceful shutdown finished', { signal, drained });
-    process.exit(drained ? 0 : 1);
+    process.exit(drained && healthWritten ? 0 : 1);
   };
 
-  process.on('SIGTERM', () => void shutdown('SIGTERM'));
-  process.on('SIGINT', () => void shutdown('SIGINT'));
+  const handleShutdown = (signal) => {
+    void shutdown(signal).catch(async () => {
+      logger.error('Graceful shutdown failed', { errorCode: 'SHUTDOWN_FAILED' });
+      client.destroy();
+      await processHealth.stop({ signal, drained: false }).catch(() => undefined);
+      process.exit(1);
+    });
+  };
+
+  process.on('SIGTERM', () => handleShutdown('SIGTERM'));
+  process.on('SIGINT', () => handleShutdown('SIGINT'));
 
   client.once(Events.ClientReady, () => {
-    logger.info('Bot Ready');
-    queueWorker.start();
+    void (async () => {
+      if (!client.guilds.cache.has(config.discord.guildId)) {
+        logger.error('Configured Discord guild is unavailable; refusing readiness');
+        await processHealth.failStartup().catch(() => undefined);
+        client.destroy();
+        process.exit(1);
+      }
+
+      queueWorker.start();
+      await processHealth.markReady();
+      logger.info('Bot Ready');
+    })().catch(async () => {
+      logger.error('Failed to publish Discord readiness', { errorCode: 'HEALTH_WRITE_FAILED' });
+      await processHealth.failStartup().catch(() => undefined);
+      client.destroy();
+      process.exit(1);
+    });
   });
 
   try {
@@ -96,6 +145,7 @@ const bootstrap = async () => {
     logger.info('Logged in to Discord.');
   } catch (error) {
     logger.error('Discord login failed', error);
+    await processHealth.failStartup().catch(() => undefined);
     process.exit(1);
   }
 };

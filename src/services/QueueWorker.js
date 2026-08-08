@@ -53,6 +53,17 @@ export class QueueWorker {
     this.#scheduleNextPoll(0);
   }
 
+  getHealthSnapshot() {
+    return {
+      started: this.started,
+      stopped: this.stopped,
+      polling: this.polling,
+      active_item: Boolean(this.currentWork),
+      lease_healthy: this.activeLease ? Boolean(this.activeLease.healthy) : null,
+      backoff_attempts: this.backoffAttempts,
+    };
+  }
+
   /** Stop new claims and drain only while the current lease remains safe to use. */
   async stop({ timeoutMs } = {}) {
     if (this.stopped) {

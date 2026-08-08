@@ -5,6 +5,28 @@ import { createLogger, waitFor } from './helpers.js';
 
 const futureLease = () => new Date(Date.now() + 60_000).toISOString();
 
+test('QueueWorker health snapshot exposes no worker, queue, or lease identifiers', async () => {
+  const worker = new QueueWorker({
+    apiService: {},
+    dispatcher: {},
+    logger: createLogger(),
+    workerId: 'must-not-appear',
+  });
+
+  assert.deepEqual(worker.getHealthSnapshot(), {
+    started: false,
+    stopped: false,
+    polling: false,
+    active_item: false,
+    lease_healthy: null,
+    backoff_attempts: 0,
+  });
+  await worker.stop();
+  const stopped = worker.getHealthSnapshot();
+  assert.equal(stopped.stopped, true);
+  assert.doesNotMatch(JSON.stringify(stopped), /must-not-appear|queueId|lease_token/i);
+});
+
 function leased(id, action) {
   return {
     id,

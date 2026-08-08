@@ -92,6 +92,7 @@ export class Logger {
     const secretKeys = [
       'DISCORD_BOT_TOKEN',
       'NEXUS_API_KEY',
+      'NEXUS_DISCORD_RELAY_PRIVATE_KEY',
     ];
 
     return secretKeys

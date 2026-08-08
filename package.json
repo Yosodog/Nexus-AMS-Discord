@@ -5,6 +5,7 @@
   "type": "module",
   "main": "src/bot.js",
   "scripts": {
+    "healthcheck": "node src/healthcheck.js",
     "start": "node src/bot.js",
     "register": "node src/registerCommands.js",
     "keygen:relay": "node src/generateRelayKey.js",
