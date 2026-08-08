@@ -20,8 +20,6 @@ const OTHER_CHANNEL_ID = '923456789012345679';
 const CONNECTION_ID = '123e4567-e89b-12d3-a456-426614174000';
 const TOPIC = buildApplicationChannelTopic(42, 9001);
 
-const clone = (value) => structuredClone(value);
-
 function payload(overrides = {}) {
   const base = {
     contract_version: 1,
@@ -36,6 +34,7 @@ function payload(overrides = {}) {
       state: 'pending',
       discord_user_id: USER_ID,
       nation_id: 9001,
+      revision: 12,
     },
     desired: {
       channel: {
@@ -90,6 +89,8 @@ function makeRole(id, overrides = {}) {
 
 function makeRuntime({
   channels = [],
+  channelList = null,
+  channelListFailure = false,
   roles = [],
   memberRoles = [],
   member = null,
@@ -137,6 +138,15 @@ function makeRuntime({
     channels: {
       cache: channelCache,
       fetch: async (channelId) => {
+        if (channelId === undefined) {
+          if (channelListFailure) {
+            const error = new Error('Guild channel listing failed');
+            error.code = 503;
+            throw error;
+          }
+          if (channelList instanceof Map) return channelList;
+          return new Map((channelList ?? Array.from(channelCache.values())).map((channel) => [channel.id, channel]));
+        }
         if (channelCache.has(channelId)) return channelCache.get(channelId);
         const error = new Error('Unknown Channel');
         error.code = 10003;
@@ -204,6 +214,8 @@ test('validates the closed v1 payload and rejects unknown, unsafe, and assignmen
     desired: { channel: { extra: true } },
   });
   assert.equal(validate(unknownNested).valid, false);
+  assert.equal(validate(payload({ application: { state: 'obsolete' } })).valid, false);
+  assert.equal(validate(payload({ application: { revision: 0 } })).valid, false);
 
   const mention = payload({
     desired: { notifications: [{
@@ -261,6 +273,7 @@ test('creates a channel, checkpoints it before intros, and disables all mentions
 
   assert.equal(result.success, true);
   assert.equal(checkpoints[0][2].application_reconcile.channel_id, CHANNEL_ID);
+  assert.equal(result.result.application_reconcile.application_revision, 12);
   const createIndex = events.findIndex(([type]) => type === 'channel_create');
   const firstCheckpointIndex = events.findIndex(([type]) => type === 'checkpoint');
   const sendIndex = events.findIndex(([type]) => type === 'send');
@@ -277,6 +290,17 @@ test('creates a channel, checkpoints it before intros, and disables all mentions
   assert.deepEqual(options.permissionOverwrites[0].deny, [PermissionFlagsBits.ViewChannel]);
   assert.ok(options.permissionOverwrites.some((overwrite) => overwrite.id === USER_ID));
   assert.ok(options.permissionOverwrites.some((overwrite) => overwrite.id === STAFF_ROLE_ID));
+  const botOverwrite = options.permissionOverwrites.find((overwrite) => overwrite.id === APP_ID);
+  assert.ok(botOverwrite);
+  assert.deepEqual(botOverwrite.allow, [
+    PermissionFlagsBits.ViewChannel,
+    PermissionFlagsBits.SendMessages,
+    PermissionFlagsBits.ReadMessageHistory,
+    PermissionFlagsBits.AttachFiles,
+    PermissionFlagsBits.ManageChannels,
+    PermissionFlagsBits.ManageMessages,
+    PermissionFlagsBits.EmbedLinks,
+  ]);
 });
 
 test('restarts from the durable checkpoint without recreating or resending', async () => {
@@ -304,6 +328,87 @@ test('reuses one exact-topic channel and rejects duplicate exact-topic channels'
   const duplicate = makeRuntime({ channels: [existing, makeChannel(OTHER_CHANNEL_ID)] });
   const duplicateResult = await execute(commandFor(input), duplicate.runtime);
   assert.equal(duplicateResult.reason, 'duplicate_channel_topic');
+});
+
+test('recovers one verified interview channel from a cold full-channel listing', async () => {
+  const existing = makeChannel(CHANNEL_ID);
+  const runtimeData = makeRuntime({ channelList: [existing] });
+  const input = payload({ desired: { channel: { intro_messages: [] } } });
+  delete input.desired.channel.topic;
+
+  const result = await execute(commandFor(input), runtimeData.runtime);
+
+  assert.equal(result.success, true);
+  assert.equal(runtimeData.events.some(([type]) => type === 'channel_create'), false);
+});
+
+test('fails closed on cold-cache duplicate topics and full-channel listing failure', async () => {
+  const duplicateInput = payload({ desired: { channel: { intro_messages: [] } } });
+  delete duplicateInput.desired.channel.topic;
+  const duplicate = makeRuntime({
+    channelList: [makeChannel(CHANNEL_ID), makeChannel(OTHER_CHANNEL_ID)],
+  });
+  const duplicateResult = await execute(commandFor(duplicateInput), duplicate.runtime);
+  assert.equal(duplicateResult.reason, 'duplicate_channel_topic');
+  assert.equal(duplicate.events.some(([type]) => type === 'channel_create'), false);
+
+  const listingFailure = makeRuntime({ channelListFailure: true });
+  const listingResult = await execute(commandFor(duplicateInput), listingFailure.runtime);
+  assert.equal(listingResult.reason, 'channel_collection_unavailable');
+  assert.equal(listingFailure.events.some(([type]) => type === 'channel_create'), false);
+});
+
+test('recovers and deletes exactly one absent channel by its derived topic', async () => {
+  let deleted = false;
+  const recovered = makeChannel(CHANNEL_ID, { delete: async () => { deleted = true; } });
+  const runtimeData = makeRuntime({ channelList: [recovered] });
+  const input = payload({
+    desired: { channel: { mode: 'absent', intro_messages: [] } },
+  });
+  delete input.desired.channel.topic;
+
+  const result = await execute(commandFor(input), runtimeData.runtime);
+
+  assert.equal(result.success, true);
+  assert.equal(deleted, true);
+  assert.equal(result.result.application_reconcile.channel_deleted, true);
+});
+
+test('rejects a channel whose guild metadata is missing', async () => {
+  const missingGuild = makeChannel(CHANNEL_ID, { guildId: undefined });
+  const runtimeData = makeRuntime({ channels: [missingGuild] });
+  const input = payload({
+    desired: { channel: { channel_id: CHANNEL_ID, intro_messages: [] } },
+  });
+
+  const result = await execute(commandFor(input), runtimeData.runtime);
+
+  assert.equal(result.reason, 'wrong_guild_channel');
+});
+
+test('rejects unknown and legacy-shaped durable checkpoints', async () => {
+  const input = payload({ desired: { channel: { mode: 'unchanged', intro_messages: [] } } });
+  const checkpoints = [
+    { unexpected: true },
+    { discord_channel_id: CHANNEL_ID },
+    { intro_message_keys: [] },
+    { notification_keys: [] },
+  ];
+
+  for (const applicationReconcile of checkpoints) {
+    const runtimeData = makeRuntime();
+    const result = await execute(
+      commandFor(input, { application_reconcile: applicationReconcile }),
+      runtimeData.runtime,
+    );
+    assert.equal(result.reason, 'invalid_checkpoint');
+  }
+
+  const stale = await execute(
+    commandFor(input, { application_reconcile: { application_revision: 11 } }),
+    makeRuntime().runtime,
+  );
+  assert.equal(stale.reason, 'checkpoint_revision_mismatch');
 });
 
 test('changes only Nexus-supplied roles, preserves unrelated roles, and rejects hierarchy failures', async () => {
