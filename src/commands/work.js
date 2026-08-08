@@ -39,6 +39,14 @@ export const data = new SlashCommandBuilder()
     .addStringOption((option) => option.setName('item').setDescription('Work item').setRequired(true).setAutocomplete(true)))
   .setDMPermission(false);
 
+export const help = Object.freeze({
+  audience: 'Nexus staff',
+  topic: Object.freeze(['staff']),
+  examples: Object.freeze(['/work queue', '/work queue priority:p1 blocked:Yes', '/work show item:<work item>']),
+  related: Object.freeze(['requests', 'applications', 'audit']),
+  capability: 'operations.work-items',
+});
+
 const actorLabel = (actor) => {
   if (!actor?.label) return null;
   return escapeMarkdown(truncate(actor.label, 100));
