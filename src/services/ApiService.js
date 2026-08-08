@@ -1,10 +1,26 @@
 import axios from 'axios';
+import {
+  createPublicHttpsAgent,
+  validateNexusEndpoint,
+} from './connection/EndpointGuard.js';
+import {
+  isOfficialSharedMode,
+} from './connection/ConnectionContext.js';
+import {
+  normalizePathQuery,
+} from './connection/relayContracts.js';
+import { V2_SERVICE_PROOF_ACTIONS } from './connection/Capabilities.js';
 
 export const RetryMode = Object.freeze({
   SAFE: 'safe',
   IDEMPOTENT: 'idempotent',
   NEVER: 'never',
 });
+
+const DEFAULT_TIMEOUT_MS = 10_000;
+const MAX_TIMEOUT_MS = 30_000;
+const DEFAULT_MAX_RESPONSE_BYTES = 1_048_576;
+const DEFAULT_MAX_REQUEST_BYTES = 262_144;
 
 const selectQueryParams = (params, supportedKeys) => {
   const values = params ?? {};
@@ -44,22 +60,46 @@ export class ApiService {
     apiKey,
     logger,
     relaySigner = null,
+    connectionContext = null,
     timeoutMs = 10000,
     maxRetries = 3,
     random = Math.random,
     sleep = null,
+    dnsLookup = null,
+    maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES,
+    maxRequestBytes = DEFAULT_MAX_REQUEST_BYTES,
   }) {
     this.baseUrl = baseUrl;
     this.apiKey = apiKey;
     this.logger = logger;
     this.relaySigner = relaySigner;
+    this.connectionContext = connectionContext;
+    const sharedConnection = isOfficialSharedMode(connectionContext?.mode);
+    if (sharedConnection) {
+      this.baseUrl = validateNexusEndpoint(baseUrl, { shared: true });
+    }
+    const boundedTimeoutMs = Math.min(
+      Math.max(Number(timeoutMs) || DEFAULT_TIMEOUT_MS, 100),
+      MAX_TIMEOUT_MS,
+    );
+    const boundedResponseBytes = Math.min(
+      Math.max(Number(maxResponseBytes) || DEFAULT_MAX_RESPONSE_BYTES, 1),
+      16 * 1024 * 1024,
+    );
+    const boundedRequestBytes = Math.min(
+      Math.max(Number(maxRequestBytes) || DEFAULT_MAX_REQUEST_BYTES, 1),
+      4 * 1024 * 1024,
+    );
     this.maxRetries = maxRetries;
     this.random = random;
     this.sleep = sleep ?? ((durationMs) => new Promise((resolve) => setTimeout(resolve, durationMs)));
 
-    this.http = axios.create({
+    const axiosOptions = {
       baseURL: this.baseUrl,
-      timeout: timeoutMs,
+      timeout: boundedTimeoutMs,
+      maxRedirects: 0,
+      maxContentLength: boundedResponseBytes,
+      maxBodyLength: boundedRequestBytes,
       headers: {
         'Content-Type': 'application/json',
         'User-Agent': 'Nexus-AMS-DiscordBot/0.1',
@@ -67,7 +107,15 @@ export class ApiService {
         // Some Nexus endpoints expect bearer tokens; keep both headers for flexibility.
         Authorization: `Bearer ${this.apiKey}`,
       },
-    });
+    };
+    if (sharedConnection) {
+      Object.assign(axiosOptions, {
+        proxy: false,
+        httpsAgent: createPublicHttpsAgent(this.baseUrl, { lookup: dnsLookup ?? undefined }),
+      });
+    }
+
+    this.http = axios.create(axiosOptions);
   }
 
   /**
@@ -82,7 +130,10 @@ export class ApiService {
 
     for (let attempt = 1; attempt <= this.maxRetries; attempt += 1) {
       try {
-        const response = await this.http.request(options);
+        const requestOptions = this.#isV2Relay() && options?.url
+          ? { ...options, url: this.#canonicalRequestUrl(options.url) }
+          : options;
+        const response = await this.http.request(requestOptions);
         return response.data;
       } catch (error) {
         const isLastAttempt = attempt === this.maxRetries;
@@ -133,7 +184,6 @@ export class ApiService {
   } = {}) {
     const normalizedMethod = `${method}`.toLowerCase();
     const isWrite = !['get', 'head', 'options'].includes(normalizedMethod);
-    const headers = this.#discordActorHeaders(actor, isWrite);
     const endpointUrl = new URL(`/api/v1/discord/${`${path}`.replace(/^\/+/, '')}`, this.baseUrl);
 
     for (const [key, value] of Object.entries(params ?? {})) {
@@ -141,6 +191,18 @@ export class ApiService {
         endpointUrl.searchParams.set(key, `${value}`);
       }
     }
+    if (this.#isV2Relay()) {
+      // URLSearchParams uses '+', while relay-v2 canonical targets require
+      // spaces to be represented as %20 and reserve '+' for a literal plus.
+      endpointUrl.search = endpointUrl.search.replaceAll('+', '%20');
+    }
+
+    const headers = this.#discordActorHeaders(actor, isWrite, {
+      method: normalizedMethod,
+      url: endpointUrl.toString(),
+      data,
+      action: actor?.discordAction ?? actor?.action ?? actor?.discordCommand ?? actor?.command,
+    });
 
     let envelope;
     try {
@@ -487,14 +549,21 @@ export class ApiService {
     const endpointUrl = new URL('/api/v1/discord/queue', this.baseUrl);
     endpointUrl.searchParams.set('limit', String(limit));
 
-    return this.request({
+    const options = {
       method: 'get',
       url: endpointUrl.toString(),
-    }, RetryMode.SAFE);
+    };
+    return this.request(options, RetryMode.SAFE);
   }
 
   /** Claim one queue item with an idempotent request identifier and optional lane. */
-  async claimDiscordQueue(workerId, requestId, lane = null, guildId = this.relaySigner?.guildId ?? null) {
+  async claimDiscordQueue(
+    workerId,
+    requestId,
+    lane = null,
+    guildId = this.relaySigner?.guildId ?? this.connectionContext?.guildId ?? null,
+    connectionContext = this.connectionContext,
+  ) {
     const endpointUrl = new URL('/api/v1/discord/queue/claim', this.baseUrl).toString();
     const data = { worker_id: workerId, request_id: requestId };
     if (typeof lane === 'string' && lane.trim() !== '') {
@@ -503,12 +572,21 @@ export class ApiService {
     if (typeof guildId === 'string' && guildId.trim() !== '') {
       data.guild_id = guildId.trim();
     }
+    if (this.#isV2Relay() && connectionContext) {
+      data.connection_id = connectionContext.connectionId;
+      data.generation = connectionContext.generation;
+      data.application_id = connectionContext.applicationId;
+    }
 
-    return this.request({
+    const options = {
       method: 'post',
       url: endpointUrl,
       data,
-    }, RetryMode.IDEMPOTENT);
+    };
+    if (this.#isV2Relay()) options.headers = this.#serviceRelayHeaders('queue.claim', options);
+    const response = await this.request(options, RetryMode.IDEMPOTENT);
+    if (this.#isV2Relay()) this.#assertQueueBinding(response, connectionContext);
+    return response;
   }
 
   /** Renew an active queue lease. */
@@ -518,11 +596,13 @@ export class ApiService {
       this.baseUrl,
     ).toString();
 
-    return this.request({
+    const options = {
       method: 'post',
       url: endpointUrl,
       data: { lease_token: leaseToken },
-    }, RetryMode.IDEMPOTENT);
+    };
+    if (this.#isV2Relay()) options.headers = this.#serviceRelayHeaders('queue.lease', options);
+    return this.request(options, RetryMode.IDEMPOTENT);
   }
 
   /** Persist an action-specific durable checkpoint. */
@@ -532,11 +612,13 @@ export class ApiService {
       this.baseUrl,
     ).toString();
 
-    return this.request({
+    const options = {
       method: 'patch',
       url: endpointUrl,
       data: { lease_token: leaseToken, result },
-    }, RetryMode.IDEMPOTENT);
+    };
+    if (this.#isV2Relay()) options.headers = this.#serviceRelayHeaders('queue.checkpoint', options);
+    return this.request(options, RetryMode.IDEMPOTENT);
   }
 
   /**
@@ -565,22 +647,38 @@ export class ApiService {
       data.error_message = outcomeDetails.error_message;
     }
 
-    return this.request({
+    const options = {
       method: 'post',
       url: endpointUrl.toString(),
       data,
-    }, leaseToken ? RetryMode.IDEMPOTENT : RetryMode.NEVER);
+    };
+    if (this.#isV2Relay()) options.headers = this.#serviceRelayHeaders('queue.acknowledge', options);
+    return this.request(options, leaseToken ? RetryMode.IDEMPOTENT : RetryMode.NEVER);
   }
 
   /** Fetch the Nexus renderer manifest before claiming alert-lane work. */
   async getAlertRendererManifest() {
     const endpointUrl = new URL('/api/v1/discord/alerts/manifest', this.baseUrl).toString();
-
-    return this.request({
+    const options = {
       method: 'get',
       url: endpointUrl,
-      headers: this.#serviceRelayHeaders('alerts.manifest'),
-    }, RetryMode.SAFE);
+    };
+    if (this.#isV2Relay()) options.headers = this.#serviceRelayHeaders('alerts.manifest', options);
+    else options.headers = this.#serviceRelayHeaders('alerts.manifest');
+    return this.request(options, RetryMode.SAFE);
+  }
+
+  /** Fetch provider diagnostics for /nexus status through the signed actor path. */
+  getNexusStatus(actor) {
+    return this.#requestDiscord('status', {
+      method: 'get',
+      actor: {
+        ...actor,
+        discordCommand: 'nexus',
+        discordAction: 'nexus.status',
+      },
+      retryMode: RetryMode.SAFE,
+    });
   }
 
   /** Fetch the current persisted war-counter record. */
@@ -644,16 +742,18 @@ export class ApiService {
    */
   async attachWarCounterChannel(payload) {
     const endpointUrl = new URL('/api/v1/discord/war-counters/attach-channel', this.baseUrl).toString();
-
-    return this.request({
+    const options = {
       method: 'post',
       url: endpointUrl,
       data: payload,
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
-        ...this.#serviceRelayHeaders('war-counters.attach-channel'),
+        ...(this.#isV2Relay()
+          ? this.#serviceRelayHeaders('war-counters.attach-channel', { method: 'post', url: endpointUrl, data: payload })
+          : this.#serviceRelayHeaders('war-counters.attach-channel')),
       },
-    }, RetryMode.IDEMPOTENT);
+    };
+    return this.request(options, RetryMode.IDEMPOTENT);
   }
 
   /**
@@ -667,15 +767,18 @@ export class ApiService {
       this.baseUrl,
     ).toString();
 
-    return this.request({
+    const options = {
       method: 'post',
       url: endpointUrl,
       data: payload,
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
-        ...this.#serviceRelayHeaders('milcom.objectives.attach-room'),
+        ...(this.#isV2Relay()
+          ? this.#serviceRelayHeaders('milcom.objectives.attach-room', { method: 'post', url: endpointUrl, data: payload })
+          : this.#serviceRelayHeaders('milcom.objectives.attach-room')),
       },
-    }, RetryMode.IDEMPOTENT);
+    };
+    return this.request(options, RetryMode.IDEMPOTENT);
   }
 
   /**
@@ -692,7 +795,9 @@ export class ApiService {
       data: payload,
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
-        ...this.#discordActorHeaders(actor, true),
+        ...this.#discordActorHeaders(actor, true, {
+          method: 'post', url: endpointUrl, data: payload, action: 'war-counters.archive',
+        }),
       },
     }, RetryMode.IDEMPOTENT);
   }
@@ -711,7 +816,9 @@ export class ApiService {
       data: payload,
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
-        ...this.#discordActorHeaders(actor, true),
+        ...this.#discordActorHeaders(actor, true, {
+          method: 'post', url: endpointUrl, data: payload, action: 'offshores.sweep-primary',
+        }),
       },
     }, RetryMode.IDEMPOTENT);
   }
@@ -723,15 +830,18 @@ export class ApiService {
    */
   async logApplicationMessage(payload) {
     const endpointUrl = new URL('/api/v1/discord/applications/messages', this.baseUrl).toString();
-
-    return this.request({
+    const options = {
       method: 'post',
       url: endpointUrl,
       data: payload,
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
+        ...(this.#isV2Relay()
+          ? this.#serviceRelayHeaders('applications.message', { method: 'post', url: endpointUrl, data: payload })
+          : {}),
       },
-    }, RetryMode.IDEMPOTENT);
+    };
+    return this.request(options, RetryMode.IDEMPOTENT);
   }
 
   /**
@@ -741,15 +851,18 @@ export class ApiService {
    */
   async sendIntelReport(payload) {
     const endpointUrl = new URL('/api/v1/discord/intel', this.baseUrl).toString();
-
-    return this.request({
+    const options = {
       method: 'post',
       url: endpointUrl,
       data: payload,
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
+        ...(this.#isV2Relay()
+          ? this.#serviceRelayHeaders('intel.report', { method: 'post', url: endpointUrl, data: payload })
+          : {}),
       },
-    }, RetryMode.IDEMPOTENT);
+    };
+    return this.request(options, RetryMode.IDEMPOTENT);
   }
 
   /**
@@ -766,7 +879,9 @@ export class ApiService {
       data: payload,
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
-        ...this.#discordActorHeaders(actor, true),
+        ...this.#discordActorHeaders(actor, true, {
+          method: 'post', url: endpointUrl, data: payload, action: 'applications.approve',
+        }),
       },
     }, RetryMode.IDEMPOTENT);
   }
@@ -785,7 +900,9 @@ export class ApiService {
       data: payload,
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
-        ...this.#discordActorHeaders(actor, true),
+        ...this.#discordActorHeaders(actor, true, {
+          method: 'post', url: endpointUrl, data: payload, action: 'applications.deny',
+        }),
       },
     }, RetryMode.IDEMPOTENT);
   }
@@ -898,7 +1015,43 @@ export class ApiService {
     await this.sleep(durationMs);
   }
 
-  #discordActorHeaders(actor, requireInteractionId) {
+  #isV2Relay() {
+    return this.relaySigner?.protocolVersion === 2 && Boolean(this.connectionContext?.connectionId);
+  }
+
+  #assertQueueBinding(response, connectionContext) {
+    const item = response?.data?.item
+      ?? (response?.data?.connection_id ? response.data : null)
+      ?? (response?.item?.connection_id ? response.item : null);
+    const emptyClaim = response === null
+      || response === undefined
+      || response?.data === null
+      || response?.item === null
+      || response?.data?.item === null;
+    if (emptyClaim) return;
+    if (item === null) {
+      throw new ApiContractError('Nexus returned a v2 queue claim without a connection-bound item.', {
+        code: 'INVALID_QUEUE_BINDING',
+        details: { field: 'item' },
+      });
+    }
+    const expected = {
+      connection_id: connectionContext.connectionId,
+      application_id: connectionContext.applicationId,
+      guild_id: connectionContext.guildId,
+      generation: connectionContext.generation,
+    };
+    for (const [field, value] of Object.entries(expected)) {
+      if (item[field] !== value) {
+        throw new ApiContractError('Nexus returned a queue item with an invalid connection binding.', {
+          code: 'INVALID_QUEUE_BINDING',
+          details: { field },
+        });
+      }
+    }
+  }
+
+  #discordActorHeaders(actor, requireInteractionId, request = {}) {
     const discordUserId = `${actor?.discordUserId ?? actor?.userId ?? ''}`.trim();
     const discordGuildId = `${actor?.discordGuildId ?? actor?.guildId ?? ''}`.trim();
     const discordInteractionId = `${actor?.discordInteractionId ?? actor?.interactionId ?? ''}`.trim();
@@ -909,25 +1062,59 @@ export class ApiService {
     if (requireInteractionId && !/^\d{17,20}$/.test(discordInteractionId)) {
       throw new TypeError('Discord write requests require a valid interaction snowflake.');
     }
+    if (this.connectionContext && (
+      discordGuildId !== this.connectionContext.guildId
+      || (actor?.discordApplicationId && actor.discordApplicationId !== this.connectionContext.applicationId)
+      || (actor?.discordConnectionId && actor.discordConnectionId !== this.connectionContext.connectionId)
+      || (actor?.discordConnectionGeneration && Number(actor.discordConnectionGeneration) !== this.connectionContext.generation)
+    )) {
+      throw new TypeError('Discord actor context does not match the resolved Nexus connection.');
+    }
 
     if (!this.relaySigner) {
       throw new TypeError('Discord actor requests require a configured relay signer.');
     }
 
+    const signedRequest = this.#isV2Relay() && request.url
+      ? { ...request, url: this.#canonicalRequestUrl(request.url) }
+      : request;
     return this.relaySigner.interactionHeaders({
       ...actor,
       discordUserId,
       discordGuildId,
       discordInteractionId,
+      discordAction: request.action ?? actor?.discordAction ?? actor?.action ?? actor?.discordCommand ?? actor?.command,
+    }, {
+      ...signedRequest,
+      connectionContext: this.connectionContext,
     });
   }
 
-  #serviceRelayHeaders(action) {
+  #serviceRelayHeaders(action, request = {}) {
     if (!this.relaySigner) {
       throw new TypeError('Discord service requests require a configured relay signer.');
     }
+    if (this.#isV2Relay() && !V2_SERVICE_PROOF_ACTIONS.includes(action)) {
+      throw new TypeError(`Unsupported v2 service proof action: ${action}`);
+    }
 
-    return this.relaySigner.serviceHeaders(action);
+    const signedRequest = this.#isV2Relay() && request.url
+      ? { ...request, url: this.#canonicalRequestUrl(request.url) }
+      : request;
+    return this.relaySigner.serviceHeaders(action, {
+      ...signedRequest,
+      connectionContext: this.connectionContext,
+    });
+  }
+
+  #canonicalRequestUrl(value) {
+    const raw = `${value}`;
+    const parsed = new URL(raw, this.baseUrl);
+    const targetInput = raw.startsWith('/') || /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(raw)
+      ? raw
+      : parsed.toString();
+    const target = normalizePathQuery(targetInput, { rejectEncodedUnreserved: false });
+    return `${parsed.origin}${target}`;
   }
 
   #unwrapDiscordEnvelope(envelope) {

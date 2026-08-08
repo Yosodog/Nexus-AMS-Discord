@@ -13,12 +13,30 @@ import {
 
 export const COLLECTION_PAGE_EVENT = 'ui:collection-page';
 
-export const actorFromInteraction = (interaction, command = null) => ({
-  discordUserId: interaction.user.id,
-  discordGuildId: interaction.guildId,
-  discordInteractionId: interaction.id,
-  discordCommand: command ?? interaction.nexusCommandName ?? interaction.commandName ?? 'interaction',
-});
+export const actorFromInteraction = (interaction, command = null) => {
+  const rootCommand = command ?? interaction.nexusCommandName ?? interaction.commandName ?? 'interaction';
+  let subcommand = null;
+  try {
+    subcommand = interaction.options?.getSubcommand?.(false) ?? null;
+  } catch {
+    subcommand = null;
+  }
+  const action = subcommand && subcommand !== rootCommand ? `${rootCommand}.${subcommand}` : rootCommand;
+  const connection = interaction.nexusConnectionContext;
+  return {
+    discordUserId: interaction.user.id,
+    discordGuildId: interaction.guildId,
+    discordInteractionId: interaction.id,
+    discordCommand: rootCommand,
+    discordAction: action,
+    ...(connection ? {
+      discordApplicationId: connection.applicationId,
+      discordConnectionId: connection.connectionId,
+      discordConnectionGeneration: connection.generation,
+      discordRelayKeyId: connection.keyId,
+    } : {}),
+  };
+};
 
 export const errorMessage = (error) => {
   const messages = {

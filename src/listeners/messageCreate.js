@@ -10,42 +10,57 @@ export const APPLICATION_CHANNEL_REGEX = LEGACY_APPLICATION_CHANNEL_REGEX;
 export const INTEL_REPORT_REGEX = /^(?:\s*)[A-Za-z]{0,3}\s*successfully gather(?:ed)? intelligence about .+?The operation cost you \$[0-9,]+\.[0-9]{2} and \d+ of your spies were captured and executed\.?(?:\s*)$/is;
 
 /**
- * Register a listener that forwards application messages and intel reports to Nexus.
- * @param {import('discord.js').Client} client Discord client
- * @param {import('../services/ApiService.js').ApiService} apiService Nexus API service
- * @param {import('../services/Logger.js').Logger} logger structured logger
+ * Route each message through the same explicit connection resolver used by
+ * interactions. The legacy guild argument remains the dedicated adapter.
  */
 export const registerMessageListener = (
   client,
   apiService,
   logger,
   guildId = config.discord.guildId,
+  { connectionResolver = null, applicationId = null, connectionServiceFactory = null } = {},
 ) => {
-  if (!apiService) {
+  if (!apiService && !connectionResolver) {
     logger.warn('ApiService missing; skipping message listener registration.');
     return;
   }
 
   client.on(Events.MessageCreate, async (message) => {
-    if (!guildId || message.guild?.id !== guildId || !message.channel) {
+    let connection = null;
+    let scopedApiService = apiService;
+    const messageGuildId = message.guild?.id;
+    if (connectionResolver) {
+      try {
+        connection = connectionResolver.resolve({
+          applicationId: applicationId ?? connectionResolver.applicationId,
+          guildId: messageGuildId,
+        });
+        scopedApiService = connection.apiService
+          ?? connectionServiceFactory?.(connection)
+          ?? apiService;
+      } catch (error) {
+        logger.warn('Ignored message without an active Nexus connection', {
+          guildId: messageGuildId ?? null,
+          errorCode: error?.code ?? 'CONNECTION_UNAVAILABLE',
+        });
+        return;
+      }
+    } else if (!guildId || messageGuildId !== guildId) {
       return;
     }
+
+    if (!message.channel) return;
     if (message.author?.bot || message.webhookId) return;
 
     const content = typeof message.content === 'string' ? message.content : '';
 
     if (content && INTEL_REPORT_REGEX.test(content)) {
-      await handleIntelReport(message, content, apiService, logger);
+      await handleIntelReport(message, content, scopedApiService, logger, connection);
     }
 
-    if (!parseApplicationChannelIdentity(message.channel)) {
-      return;
-    }
-
+    if (!parseApplicationChannelIdentity(message.channel)) return;
     // Application transcripts are deliberately text-only. Attachments remain in Discord.
-    if (content.trim().length === 0) {
-      return;
-    }
+    if (content.trim().length === 0) return;
 
     const payload = {
       discord_channel_id: message.channelId,
@@ -54,10 +69,16 @@ export const registerMessageListener = (
       discord_username: message.author?.tag ?? message.author?.username ?? 'unknown',
       content,
       sent_at: Math.floor(message.createdTimestamp / 1000),
+      ...(connection ? {
+        connection_id: connection.connectionId,
+        generation: connection.generation,
+        app_id: connection.applicationId,
+        guild_id: connection.guildId,
+      } : {}),
     };
 
     try {
-      const result = await apiService.logApplicationMessage(payload);
+      const result = await scopedApiService.logApplicationMessage(payload);
       if (result?.logged === false) {
         logger.debug('Nexus declined to log message', { channelId: message.channelId, messageId: message.id });
       }
@@ -65,24 +86,35 @@ export const registerMessageListener = (
       logger.warn('Failed to log application message to Nexus', {
         channelId: message.channelId,
         messageId: message.id,
+        connectionId: connection?.connectionId ?? null,
         errorMessage: error?.message ?? String(error),
       });
     }
   });
 };
 
-async function handleIntelReport(message, content, apiService, logger) {
+async function handleIntelReport(message, content, apiService, logger, connection) {
   if (!apiService) {
     logger.warn('ApiService missing; unable to forward intel report.');
     return;
   }
 
-  const payload = { report: content, source: 'discord' };
+  const payload = {
+    report: content,
+    source: 'discord',
+    ...(connection ? {
+      connection_id: connection.connectionId,
+      generation: connection.generation,
+      app_id: connection.applicationId,
+      guild_id: connection.guildId,
+    } : {}),
+  };
 
   try {
     await apiService.sendIntelReport(payload);
 
-    const intelUrl = new URL('/defense/intel', config.nexusApi.baseUrl).toString();
+    const baseUrl = apiService.baseUrl ?? config.nexusApi.baseUrl;
+    const intelUrl = new URL('/defense/intel', baseUrl).toString();
     await message.reply({
       ...statusMessage({
         title: 'Intel Report Saved',

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { Routes } from 'discord.js';
 import { loadCommands } from '../src/commands/index.js';
 import { registerCommands } from '../src/registerCommands.js';
 import { createLogger } from './helpers.js';
@@ -81,4 +82,17 @@ test('registerCommands publishes the complete serialized command set in one PUT'
 
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0][1], { body: [{ name: 'alpha' }, { name: 'beta' }] });
+});
+
+test('registerCommands supports global registration for the shared bot', async () => {
+  const calls = [];
+  await registerCommands({
+    rest: { put: async (...args) => calls.push(args) },
+    logger: createLogger(),
+    clientId: '123456789012345678',
+    deploymentMode: 'shared',
+    commandLoader: async () => ({ commandData: [{ name: 'nexus' }] }),
+  });
+
+  assert.equal(calls[0][0], Routes.applicationCommands('123456789012345678'));
 });

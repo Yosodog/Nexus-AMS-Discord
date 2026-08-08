@@ -382,6 +382,11 @@ const endpointCases = [
     method: 'get', pathname: '/api/v1/discord/alerts/manifest', relay: 'service',
   },
   {
+    name: 'getNexusStatus',
+    invoke: (service) => service.getNexusStatus(ACTOR),
+    method: 'get', pathname: '/api/v1/discord/status', relay: 'actor',
+  },
+  {
     name: 'getWarCounter',
     invoke: (service) => service.getWarCounter('counter / 77'),
     method: 'get', pathname: '/api/v1/discord/war-counters/counter%20%2F%2077',

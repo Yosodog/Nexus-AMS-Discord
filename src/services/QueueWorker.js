@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { createQueueExecutionContext } from './runtime/RuntimeContext.js';
+import { FairScheduler } from './FairScheduler.js';
 
 const DEFAULT_LEASE_MS = 5 * 60 * 1000;
 
@@ -20,6 +22,10 @@ export class QueueWorker {
     createRequestId = randomUUID,
     lane = null,
     enabled = true,
+    connectionResolver = null,
+    scheduler = null,
+    apiServiceFactory = null,
+    dispatcherFactory = null,
   }) {
     this.apiService = apiService;
     this.dispatcher = dispatcher;
@@ -34,6 +40,10 @@ export class QueueWorker {
     this.createRequestId = createRequestId;
     this.lane = typeof lane === 'string' && lane.trim() !== '' ? lane.trim() : null;
     this.enabled = enabled;
+    this.connectionResolver = connectionResolver;
+    this.scheduler = scheduler ?? (connectionResolver ? new FairScheduler() : null);
+    this.apiServiceFactory = apiServiceFactory;
+    this.dispatcherFactory = dispatcherFactory;
 
     this.pollTimer = null;
     this.polling = false;
@@ -45,6 +55,8 @@ export class QueueWorker {
     this.activeLease = null;
     this.leaseTimer = null;
     this.leaseRenewalPromise = null;
+    this.activeApiService = this.apiService;
+    this.activeConnection = null;
   }
 
   start() {
@@ -116,7 +128,8 @@ export class QueueWorker {
 
     try {
       const requestId = this.createRequestId();
-      const response = await this.apiService.claimDiscordQueue(this.workerId, requestId, this.lane);
+      const claim = await this.#claim(requestId);
+      const response = claim.response;
       const item = response?.data?.item ?? response?.data ?? response?.item ?? null;
       this.#resetBackoff();
 
@@ -127,7 +140,7 @@ export class QueueWorker {
           claimRequestId: requestId,
         });
       } else {
-        this.currentWork = this.#processItem(item, requestId);
+        this.currentWork = this.#processItem(item, requestId, claim);
         await this.currentWork;
         nextDelay = 0;
       }
@@ -147,7 +160,44 @@ export class QueueWorker {
     }
   }
 
-  async #processItem(item, claimRequestId) {
+  async #claim(requestId) {
+    if (!this.connectionResolver) {
+      return {
+        response: await this.apiService.claimDiscordQueue(
+          this.workerId,
+          requestId,
+          this.lane,
+          this.apiService?.relaySigner?.guildId ?? null,
+        ),
+        apiService: this.apiService,
+        connection: null,
+      };
+    }
+
+    const connections = this.connectionResolver.listActive();
+    for (const connection of connections) this.scheduler.register(connection.connectionId);
+    const activeIds = connections.map((connection) => connection.connectionId);
+    const selectedId = this.scheduler.next(activeIds);
+    if (!selectedId) return { response: { data: null }, apiService: this.apiService, connection: null };
+    const connection = connections.find((candidate) => candidate.connectionId === selectedId);
+    const apiService = this.apiServiceFactory?.(connection) ?? connection.apiService ?? this.apiService;
+    if (!apiService?.claimDiscordQueue) {
+      throw new Error('No API service is configured for the resolved connection.');
+    }
+    return {
+      response: await apiService.claimDiscordQueue(
+        this.workerId,
+        requestId,
+        this.lane,
+        connection.guildId,
+        connection,
+      ),
+      apiService,
+      connection,
+    };
+  }
+
+  async #processItem(item, claimRequestId, claim = {}) {
     if (!item?.id || !item?.lease_token) {
       this.logger.error('Claim response missing queue id or lease token', {
         workerId: this.workerId,
@@ -158,6 +208,24 @@ export class QueueWorker {
     }
 
     const startedAt = Date.now();
+    let connection = claim.connection;
+    if (this.connectionResolver) {
+      try {
+        connection = this.connectionResolver.resolveDelivery(item);
+      } catch (error) {
+        this.logger.error('Refusing queue item with an invalid connection binding', {
+          workerId: this.workerId,
+          claimRequestId,
+          queueId: item.id,
+          errorCode: error?.code ?? 'INVALID_CONNECTION_BINDING',
+        });
+        return;
+      }
+    }
+    const apiService = claim.apiService ?? this.apiService;
+    const dispatcher = this.dispatcherFactory?.(connection) ?? this.dispatcher;
+    this.activeApiService = apiService;
+    this.activeConnection = connection;
     this.activeLease = {
       id: item.id,
       token: item.lease_token,
@@ -169,11 +237,20 @@ export class QueueWorker {
 
     let dispatchResult;
     try {
-      dispatchResult = await this.dispatcher.dispatch(item, {
-        canContinue: () => Boolean(this.activeLease?.healthy) && this.#hasAcknowledgementTime(),
-        workerId: this.workerId,
-        claimRequestId,
-      });
+      const execution = connection
+        ? createQueueExecutionContext({
+            connection,
+            item,
+            workerId: this.workerId,
+            claimRequestId,
+            canContinue: () => Boolean(this.activeLease?.healthy) && this.#hasAcknowledgementTime(),
+          })
+        : {
+            canContinue: () => Boolean(this.activeLease?.healthy) && this.#hasAcknowledgementTime(),
+            workerId: this.workerId,
+            claimRequestId,
+          };
+      dispatchResult = await dispatcher.dispatch(item, execution);
     } catch (error) {
       this.logger.error('Queue dispatcher threw unexpectedly', {
         workerId: this.workerId,
@@ -190,7 +267,7 @@ export class QueueWorker {
     }
 
     const status = dispatchResult?.success ? 'complete' : 'failed';
-    const acknowledged = await this.#acknowledge(item, status, dispatchResult);
+    const acknowledged = await this.#acknowledge(item, status, dispatchResult, apiService);
     this.#stopLeaseRenewal();
 
     this.logger.info('Finished leased queue item', {
@@ -206,9 +283,11 @@ export class QueueWorker {
       acknowledged,
     });
     this.activeLease = null;
+    this.activeConnection = null;
+    this.activeApiService = this.apiService;
   }
 
-  async #acknowledge(item, status, dispatchResult) {
+  async #acknowledge(item, status, dispatchResult, apiService = this.activeApiService) {
     let attempt = 0;
 
     while (this.#hasAcknowledgementTime()) {
@@ -220,7 +299,7 @@ export class QueueWorker {
           outcomeDetails.error_code = dispatchResult?.reason ?? undefined;
           outcomeDetails.error_message = dispatchResult?.message ?? undefined;
         }
-        await this.apiService.updateDiscordQueueStatus(item.id, status, item.lease_token, outcomeDetails);
+        await apiService.updateDiscordQueueStatus(item.id, status, item.lease_token, outcomeDetails);
         return true;
       } catch (error) {
         if (error?.response?.status === 409) {
@@ -290,7 +369,7 @@ export class QueueWorker {
 
   async #renewLease(item, claimRequestId, activeLease) {
     try {
-      const response = await this.apiService.renewDiscordQueueLease(item.id, item.lease_token);
+      const response = await this.activeApiService.renewDiscordQueueLease(item.id, item.lease_token);
       if (this.activeLease !== activeLease || !activeLease.renewable) {
         return;
       }
