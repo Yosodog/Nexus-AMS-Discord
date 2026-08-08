@@ -17,6 +17,7 @@ test('every registered queue action exposes validate and execute boundaries', ()
     'ALERT_DELIVERY_V1',
     'ALLIANCE_DEPARTURE',
     'ALLIANCE_ROLE_REMOVAL',
+    'APPLICATION_DISCORD_RECONCILE',
     'BEIGE_ALERT',
     'BLOCKADE_RELIEF_NOTIFICATION',
     'CITY_TIER_SYNC',

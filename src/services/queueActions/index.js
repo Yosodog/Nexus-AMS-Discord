@@ -1,6 +1,7 @@
 import * as allianceDeparture from './allianceDeparture.js';
 import * as allianceRoleRemoval from './allianceRoleRemoval.js';
 import * as alertDelivery from './alertDelivery.js';
+import * as applicationDiscordReconcile from './applicationDiscordReconcile.js';
 import * as beigeAlert from './beigeAlert.js';
 import * as cityTierSync from './cityTierSync.js';
 import * as blockadeReliefNotification from './blockadeReliefNotification.js';
@@ -12,6 +13,7 @@ import * as warRoomCreate from './warRoomCreate.js';
 
 export const queueActions = Object.freeze({
   ALERT_DELIVERY_V1: alertDelivery,
+  APPLICATION_DISCORD_RECONCILE: applicationDiscordReconcile,
   WAR_ALERT: warAlert,
   ALLIANCE_DEPARTURE: allianceDeparture,
   INACTIVITY_ALERT: inactivityAlert,
