@@ -1,4 +1,6 @@
-import { SlashCommandBuilder } from 'discord.js';
+import {
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, SlashCommandBuilder,
+} from 'discord.js';
 import {
   actorFromInteraction, collectionMessage, deferEphemeral, normalizeCollection, replyError,
 } from '../utils/commandSupport.js';
@@ -27,42 +29,109 @@ export const data = new SlashCommandBuilder()
 
 const requestCollection = (result) => normalizeCollection(result?.requests ?? result);
 
+const actionCopy = {
+  request: {
+    title: 'Confirm Relief Request',
+    description: 'Open a request asking eligible alliance members to help break this blockade.',
+    label: 'Open request',
+    style: ButtonStyle.Success,
+  },
+  claim: {
+    title: 'Confirm Relief Claim',
+    description: 'Claim this request and tell the requester that your nation intends to help.',
+    label: 'Claim request',
+    style: ButtonStyle.Success,
+  },
+  cancel: {
+    title: 'Confirm Relief Cancellation',
+    description: 'Cancel this open request so alliance members no longer act on it.',
+    label: 'Cancel request',
+    style: ButtonStyle.Danger,
+  },
+};
+
+const confirmationMessage = (action, state, confirmId, cancelId) => {
+  const copy = actionCopy[action];
+  const fields = action === 'request'
+    ? [
+      { name: 'War', value: `#${formatNumber(state.body.war_id, { maximumFractionDigits: 0 })}`, inline: true },
+      { name: 'Expires after', value: `${state.body.deadline_hours} hours`, inline: true },
+      state.body.note ? { name: 'Coordination note', value: escapeMarkdown(state.body.note) } : null,
+    ]
+    : [{ name: 'Relief request', value: `#${formatNumber(state.id, { maximumFractionDigits: 0 })}` }];
+
+  return statusMessage({
+    title: copy.title,
+    tone: 'warning',
+    description: copy.description,
+    fields,
+    footer: 'Nexus will revalidate the live war, request state, identity, and permissions when you confirm.',
+    components: [new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(confirmId).setLabel(copy.label).setStyle(copy.style),
+      new ButtonBuilder().setCustomId(cancelId).setLabel('Go back').setStyle(ButtonStyle.Secondary),
+    )],
+  });
+};
+
+const mutationResultMessage = (action, result) => {
+  if (action === 'request') {
+    return statusMessage({
+      title: 'Relief Request Opened',
+      tone: 'success',
+      description: `Request **#${formatNumber(result?.id, { maximumFractionDigits: 0 })}** is open until ${formatDiscordTime(result?.deadline_at)}.`,
+      footer: 'Alliance members who can break the blockade may now claim this request.',
+    });
+  }
+
+  const status = escapeMarkdown(titleCase(result?.status ?? 'updated'));
+  return statusMessage({
+    title: action === 'claim' ? 'Relief Request Claimed' : 'Relief Request Cancelled',
+    tone: action === 'claim' ? 'success' : 'warning',
+    description: `Request **#${formatNumber(result?.id, { maximumFractionDigits: 0 })}** is now **${status}**.`,
+    footer: 'Recheck the live war state in Nexus before acting.',
+  });
+};
+
+const prepareConfirmation = async (interaction, context, action, state) => {
+  const confirmId = context.sessions.create({
+    commandName: 'unblockade',
+    userId: interaction.user.id,
+    event: `confirm-${action}`,
+    state: { action, ...state },
+    oneShot: true,
+  });
+  const cancelId = context.sessions.create({
+    commandName: 'unblockade',
+    userId: interaction.user.id,
+    event: 'cancel',
+    state: {},
+    oneShot: true,
+  });
+  await interaction.editReply(confirmationMessage(action, state, confirmId, cancelId));
+};
+
 export const execute = async (interaction, context) => {
   await deferEphemeral(interaction);
-  const actor = actorFromInteraction(interaction);
   const subcommand = interaction.options.getSubcommand();
 
   try {
     if (subcommand === 'request') {
-      const result = await context.apiService.createBlockadeReliefRequest(actor, {
+      await prepareConfirmation(interaction, context, 'request', { body: {
         war_id: interaction.options.getInteger('war', true),
         deadline_hours: interaction.options.getInteger('deadline') ?? 6,
         note: interaction.options.getString('note')?.trim() || null,
-      });
-      await interaction.editReply(statusMessage({
-        title: 'Relief Request Opened',
-        tone: 'success',
-        description: `Request **#${formatNumber(result?.id, { maximumFractionDigits: 0 })}** is open until ${formatDiscordTime(result?.deadline_at)}.`,
-        footer: 'Alliance members who can break the blockade may now claim this request.',
-      }));
+      } });
       return;
     }
 
     if (subcommand === 'claim' || subcommand === 'cancel') {
-      const id = interaction.options.getInteger('request', true);
-      const result = subcommand === 'claim'
-        ? await context.apiService.claimBlockadeReliefRequest(actor, id)
-        : await context.apiService.cancelBlockadeReliefRequest(actor, id);
-      const status = escapeMarkdown(titleCase(result?.status ?? 'updated'));
-      await interaction.editReply(statusMessage({
-        title: subcommand === 'claim' ? 'Relief Request Claimed' : 'Relief Request Cancelled',
-        tone: subcommand === 'claim' ? 'success' : 'warning',
-        description: `Request **#${formatNumber(result?.id, { maximumFractionDigits: 0 })}** is now **${status}**.`,
-        footer: 'Recheck the live war state in Nexus before acting.',
-      }));
+      await prepareConfirmation(interaction, context, subcommand, {
+        id: interaction.options.getInteger('request', true),
+      });
       return;
     }
 
+    const actor = actorFromInteraction(interaction);
     const result = subcommand === 'available'
       ? await context.apiService.getAvailableBlockadeReliefRequests(actor)
       : await context.apiService.getMyBlockadeReliefRequests(actor);
@@ -81,6 +150,38 @@ export const execute = async (interaction, context) => {
       baseUrl: context.apiService.baseUrl,
       pageSize: 3,
     }));
+  } catch (error) {
+    await replyError(interaction, error);
+  }
+};
+
+export const button = async (interaction, context) => {
+  if (context.session.event === 'cancel') {
+    await interaction.update(statusMessage({
+      title: 'Blockade Relief Action Cancelled',
+      tone: 'neutral',
+      description: 'No blockade relief request was changed.',
+    }));
+    return;
+  }
+
+  await interaction.deferUpdate();
+  try {
+    const { action, body, id } = context.session.state;
+    const actor = actorFromInteraction(interaction);
+    let result;
+    if (action === 'request') {
+      result = await context.apiService.createBlockadeReliefRequest(actor, body);
+    } else if (action === 'claim') {
+      result = await context.apiService.claimBlockadeReliefRequest(actor, id);
+    } else if (action === 'cancel') {
+      result = await context.apiService.cancelBlockadeReliefRequest(actor, id);
+    } else {
+      throw Object.assign(new Error('This blockade relief control is no longer supported.'), {
+        code: 'STALE_STATE',
+      });
+    }
+    await interaction.editReply(mutationResultMessage(action, result));
   } catch (error) {
     await replyError(interaction, error);
   }
