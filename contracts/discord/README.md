@@ -1,16 +1,17 @@
 # Discord relay public contracts
 
 This directory is the WP0 public contract surface for the Discord relay. The
-version in each filename is part of the compatibility promise. Every document
-also carries the closed discriminator pair `contract` and `contract_version`:
+version in each filename is part of the compatibility promise. Every signed
+document carries the closed discriminator pair `contract` and
+`contract_version`, plus explicit `issuer`, `audience`, and `key_scope`:
 
-| Artifact | `contract` | `contract_version` | Direction |
-| --- | --- | ---: | --- |
-| `relay-proof-v2.schema.json` | `relay-proof` | 2 | relay -> API |
-| `capability-manifest-v1.schema.json` | `capability-manifest` | 1 | relay -> API |
-| `route-endorsement-v1.schema.json` | `route-endorsement` | 1 | API -> relay |
-| `delivery-batch-v1.schema.json` | `delivery-batch` | 1 | API -> relay |
-| `delivery-receipt-v1.schema.json` | `delivery-receipt` | 1 | relay -> API |
+| Artifact | Direction | Key scope |
+| --- | --- | --- |
+| `relay-proof-v2.schema.json` | `discord-relay` -> `nexus` | `discord-relay->nexus` |
+| `capability-manifest-v1.schema.json` | bidirectional | issuer/direction selected in the document |
+| `route-endorsement-v1.schema.json` | `nexus` -> `discord-relay` | `nexus->discord-relay` |
+| `delivery-batch-v1.schema.json` | `nexus` -> `discord-relay` | `nexus->discord-relay` |
+| `delivery-receipt-v1.schema.json` | `discord-relay` -> `nexus` | `discord-relay->nexus` |
 
 The schemas use JSON Schema draft-07, inline their definitions, and do not
 depend on a shared protocol package or remote `$ref`. That keeps the fixtures
@@ -20,29 +21,38 @@ Envelope objects are closed with `additionalProperties: false`. A delivery's
 limited to 32 lower-snake-case property names and separately validated by the
 endorsed route. Credentials are not allowed there.
 
-## Shared binding
+## Binding, authority, and manifest directions
 
-Every contract binds the same five values:
+Every artifact binds these values:
 
-- `connection_id` is the canonical lower-case UUID for one relay connection.
+- `connection_id` is the canonical lower-case UUID for one accepted relay
+  connection.
 - `app_id` and `guild_id` are Discord snowflakes represented as strings. A
   relay is never authorized for a caller-supplied guild outside this value.
 - `generation` is a positive binding generation. Increment it when the app,
   guild, connection, route set, or accepted key set changes.
-- `key_id` identifies the Ed25519 public key used for this document's
-  signature. It must be present in the latest accepted manifest for the exact
-  `(connection_id, app_id, guild_id, generation)` tuple.
+- `key_scope` identifies the issuer-owned direction-specific key set:
+  `discord-relay->nexus` or `nexus->discord-relay`. `key_id` is resolved only
+  inside that scope; there is no shared key namespace.
 
-JSON Schema deliberately does not try to compare values across documents or
-compare two fields for equality. Implementations must reject a mismatched
-binding, stale generation, unknown key, or key that is not valid for the
-document's direction even when the JSON shape is otherwise valid.
+Trust anchors come from the two-sided connection handshake and the accepted
+connection record. A capability manifest is authenticated with an already
+trusted key and cannot bootstrap trust in its own key set. Implementations
+must reject a mismatched issuer/audience pair, stale generation, unknown key,
+or key outside the accepted `(connection_id, app_id, guild_id, key_scope)`
+record even when the JSON shape is valid.
 
-WP0 assumes one binding-key namespace is trusted by both peers for these
-artifacts. It does not yet model separate API-owned and relay-owned issuer key
-sets; if deployment requires that split, the coordinator must approve an
-explicit issuer/key-scope discriminator and a second rotation set before
-runtime integration.
+`capability-manifest-v1` has two deliberately different shapes:
+
+- A `discord-relay` -> `nexus` manifest contains `supported_queue_actions` and
+  `renderers`; it does not contain `http_routes`.
+- A `nexus` -> `discord-relay` manifest contains HTTP `http_routes`; each
+  route uses a `path_template` and capability; it does not contain queue
+  actions or renderers.
+
+Each manifest carries an issuer-owned `key_set` with an owner, scope,
+`current` key, and optional `next` key. The two directions rotate
+independently and are never inferred from one another.
 
 ## Canonicalization and signatures
 
@@ -57,30 +67,61 @@ property:
    UTF-8, with no whitespace. Object member ordering is therefore not the
    producer's insertion order.
 4. Prefix the canonical bytes with the ASCII domain separator, including its
-   final newline:
+   final newline. The prefixes are:
 
    ```text
    NEXUS-DISCORD-RELAY-PROOF-V2\n
+   NEXUS-DISCORD-CAPABILITY-MANIFEST-V1\n
+   NEXUS-DISCORD-ROUTE-ENDORSEMENT-V1\n
+   NEXUS-DISCORD-DELIVERY-BATCH-V1\n
+   NEXUS-DISCORD-DELIVERY-RECEIPT-V1\n
    ```
 
-   The corresponding prefixes for the v1 signed artifacts are
-   `NEXUS-DISCORD-CAPABILITY-MANIFEST-V1\n`,
-   `NEXUS-DISCORD-ROUTE-ENDORSEMENT-V1\n`,
-   `NEXUS-DISCORD-DELIVERY-BATCH-V1\n`, and
-   `NEXUS-DISCORD-DELIVERY-RECEIPT-V1\n`.
 5. Sign the prefix plus canonical bytes with the Ed25519 private key selected
-   by `key_id`; encode the 64-byte result as lower-case hex.
+   by the document's `key_scope` and `key_id`; encode the 64-byte result as
+   lower-case hex.
+
+### Exact request target normalization
+
+`relay-proof-v2.normalized_path_query` is the exact normalized origin-form
+request target. It is not a route template and is signed alongside `method`
+and `body_sha256`.
+
+- It begins with `/` and contains only path plus an optional query. It has no
+  scheme, host, fragment, control character, or whitespace.
+- Unreserved characters remain literal. A percent escape is exactly `%` plus
+  two uppercase hexadecimal digits; spaces use `%20`, never `+`. Literal `+`
+  remains `+`.
+- A query is `key[=value]` pairs separated by `&`. Keys are non-empty; `=`
+  is the one key/value delimiter and encoded data uses `%3D`. Pairs are sorted
+  lexicographically by decoded UTF-8 key bytes and then decoded value bytes.
+  Duplicate pairs are retained, including their multiplicity; they are never
+  collapsed or treated as a set.
+- A fragment is always rejected. Lowercase percent escapes, unsorted pairs,
+  ambiguous `+` handling, or a changed duplicate count produce a different
+  signed target and must not be normalized silently.
+
+Capability and endorsement route templates use `path_template`, may contain
+named `{parameters}`, and never contain a query. A template describes an
+allowlisted route shape; it is not substituted into or compared as the actual
+`normalized_path_query` until endpoint-specific semantic validation.
 
 The deterministic relay vector is
 `fixtures/valid/relay-proof-v2.interaction.json`. Its expected canonical
-bytes and signature are asserted in `test/discord-contracts.test.js`; the
-test uses a fixed test-only key and does not access the network. The private
-key used to derive that vector is not a deployment credential.
+bytes and signature are asserted in `test/discord-contracts.test.js`, along
+with query-order and action tamper checks. The test uses a fixed test-only key
+and does not access the network. That private key is not a deployment
+credential.
 
 Timestamps are RFC 3339 UTC strings ending in `Z`. Producers must use safe
-integers only and must not use a floating-point value where an integer is
-specified. Canonical bytes are the signed input; a transport's pretty-printed
-or reordered JSON is not.
+integers only and must not use floating-point values where an integer is
+specified. Canonical bytes are the signed input; pretty-printed or reordered
+transport JSON is not.
+
+An interaction proof signs both the Discord root `command` and its canonical
+lower-case dotted `action` (for example `applications` plus
+`applications.approve`). A service proof signs its service `action` and a
+unique `nonce`. Neither field may be inferred after verification.
 
 ## Stable states, errors, and limits
 
@@ -107,7 +148,7 @@ The v1 hard limits are:
 | Delivery batch | 1 MiB |
 | Delivery receipt | 256 KiB |
 | Deliveries per batch/receipt | 100 |
-| Delivery attempts | 3 |
+| Delivery attempts | 8 |
 | Proof lifetime | 300 seconds |
 | Accepted clock skew | 60 seconds |
 | Manifest lifetime | 24 hours |
@@ -116,32 +157,33 @@ The v1 hard limits are:
 | Dedupe window | 24 hours |
 | Receipt error message | 512 bytes/characters, no newlines |
 
-The `limits` object in the capability manifest advertises values at or below
-these ceilings. The byte limits are transport/parser limits and cannot be
-expressed by JSON Schema alone. `issued_at`/`expires_at` ordering, maximum
-lifetimes, lease containment, and receipt/batch item-set equality are semantic
-validation requirements.
+The `limits` object in either capability manifest advertises values at or
+below these ceilings, including `max_delivery_attempts: 8`. Byte limits are
+transport/parser limits and cannot be expressed by JSON Schema alone.
+`issued_at`/`expires_at` ordering, maximum lifetimes, lease containment,
+binding equality, route-template matching, and receipt/batch item-set equality
+are semantic validation requirements.
 
 ## Key rotation
 
-`capability-manifest-v1.keys.current` is required. `keys.next` is either a
-complete Ed25519 public key with a future `activates_at` or `null` during a
-steady state. The manifest's `key_id` and signature use `current.key_id`.
+Rotation is independent per `key_scope`. Each accepted connection record has
+separate issuer-owned current/next sets for `discord-relay->nexus` and
+`nexus->discord-relay`. The current key is required; next is either a complete
+Ed25519 public key with a future `activates_at` or `null` during steady state.
 
-During a rotation overlap, consumers accept signatures made with the current
-key and the announced next key only for the exact binding and generation. The
-next key must have a distinct `key_id`, a future activation time, and a new
-generation before promotion. After promotion, publish a new manifest with the
-promoted key as `current`; retire the old key only after its maximum accepted
-TTL and dedupe window have elapsed. Unknown, retired, or cross-generation keys
-must fail closed. Private keys never appear in a manifest, fixture, log, or
-receipt.
+During a rotation overlap, consumers accept current and announced next keys
+only inside the matching scope, binding, and generation. The next key must
+have a distinct `key_id` and public key. After promotion, publish a new
+accepted manifest with the promoted key as current; retire the old key only
+after its maximum accepted TTL and dedupe window have elapsed. Unknown,
+retired, cross-direction, or self-announced keys fail closed. Private keys
+never appear in a manifest, fixture, log, or receipt.
 
 ## Idempotency and deduplication
 
 - `idempotency_key` identifies one signed submission. Retrying the same
-  canonical bytes with the same binding and key must be safe and return the
-  original result; reusing it with different bytes is a conflict.
+  canonical bytes with the same binding, issuer, audience, and scoped key is
+  safe; reusing it with different bytes is a conflict.
 - `batch_id` identifies a delivery batch, while each delivery has a stable
   `delivery_id` and `dedupe_key`. A relay may receive a batch more than once.
 - A relay must deduplicate a delivery by `(connection_id, generation,
@@ -164,9 +206,9 @@ redacting nested or encoded secrets before signing. User-facing content may be
 carried only when required by the endorsed action and should not be copied to
 logs.
 
-Logs and error reports may include contract name/version, binding identifiers,
-route ID, batch/delivery/receipt IDs, state, error code, and attempt number.
-They must redact signature values, lease tokens, idempotency material when it
-could be sensitive, payload bodies, URLs with credentials, and all key
-material. `error_message` is diagnostic text only; it is not a place for a
-stack trace, token, request body, or secret.
+Logs and error reports may include contract name/version, issuer, audience,
+key scope, binding identifiers, route ID, batch/delivery/receipt IDs, state,
+error code, and attempt number. They must redact signature values, lease
+tokens, idempotency material when it could be sensitive, payload bodies, URLs
+with credentials, and all key material. `error_message` is diagnostic text
+only; it is not a place for a stack trace, token, request body, or secret.

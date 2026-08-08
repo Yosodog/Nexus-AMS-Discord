@@ -8,6 +8,9 @@
   "required": [
     "contract",
     "contract_version",
+    "issuer",
+    "audience",
+    "key_scope",
     "endorsement_id",
     "manifest_id",
     "connection_id",
@@ -18,9 +21,8 @@
     "issued_at",
     "expires_at",
     "idempotency_key",
-    "audience",
     "route_id",
-    "route",
+    "route_template",
     "capability",
     "effect",
     "signature"
@@ -28,6 +30,9 @@
   "properties": {
     "contract": { "const": "route-endorsement" },
     "contract_version": { "const": 1 },
+    "issuer": { "const": "nexus" },
+    "audience": { "const": "discord-relay" },
+    "key_scope": { "const": "nexus->discord-relay" },
     "endorsement_id": { "$ref": "#/definitions/uuid" },
     "manifest_id": { "$ref": "#/definitions/uuid" },
     "connection_id": { "$ref": "#/definitions/uuid" },
@@ -38,9 +43,8 @@
     "issued_at": { "$ref": "#/definitions/utcDateTime" },
     "expires_at": { "$ref": "#/definitions/utcDateTime" },
     "idempotency_key": { "$ref": "#/definitions/uuid" },
-    "audience": { "const": "discord-relay" },
     "route_id": { "$ref": "#/definitions/routeId" },
-    "route": { "$ref": "#/definitions/route" },
+    "route_template": { "$ref": "#/definitions/routeTemplate" },
     "capability": { "$ref": "#/definitions/capability" },
     "effect": { "const": "allow" },
     "signature": { "$ref": "#/definitions/signature" }
@@ -81,21 +85,21 @@
       "maxLength": 64,
       "pattern": "^[a-z][a-z0-9._:-]{0,63}$"
     },
-    "path": {
+    "templatePath": {
       "type": "string",
       "minLength": 2,
       "maxLength": 256,
       "pattern": "^/[A-Za-z0-9._~:/{}-]{1,255}$"
     },
-    "route": {
+    "routeTemplate": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["method", "path"],
+      "required": ["method", "path_template"],
       "properties": {
         "method": {
           "enum": ["DELETE", "GET", "PATCH", "POST", "PUT"]
         },
-        "path": { "$ref": "#/definitions/path" }
+        "path_template": { "$ref": "#/definitions/templatePath" }
       }
     },
     "signature": {

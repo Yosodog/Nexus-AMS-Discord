@@ -3,7 +3,7 @@
   "contract_version": 1,
   "issuer": "nexus",
   "audience": "discord-relay",
-  "key_scope": "nexus->discord-relay",
+  "key_scope": "discord-relay->nexus",
   "manifest_id": "ddddddd1-eeee-4fff-8000-111111111111",
   "connection_id": "11111111-2222-4333-8444-555555555555",
   "app_id": "123456789012345678",
@@ -31,11 +31,11 @@
     "max_delivery_attempts": 8
   },
   "key_set": {
-    "owner": "nexus",
-    "scope": "nexus->discord-relay",
+    "owner": "discord-relay",
+    "scope": "discord-relay->nexus",
     "current": {
-      "key_id": "nexus-current-2026-01",
-      "algorithm": "rsa-sha256",
+      "key_id": "relay-current-2026-01",
+      "algorithm": "ed25519",
       "public_key": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg",
       "activated_at": "2026-08-01T00:00:00Z"
     },

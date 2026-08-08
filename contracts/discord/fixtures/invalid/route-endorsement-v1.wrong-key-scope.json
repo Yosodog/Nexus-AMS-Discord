@@ -3,14 +3,14 @@
   "contract_version": 1,
   "issuer": "nexus",
   "audience": "discord-relay",
-  "key_scope": "nexus->discord-relay",
+  "key_scope": "discord-relay->nexus",
   "endorsement_id": "77777777-8888-4999-8aaa-bbbbbbbbbbbb",
   "manifest_id": "ddddddd1-eeee-4fff-8000-111111111111",
   "connection_id": "11111111-2222-4333-8444-555555555555",
   "app_id": "123456789012345678",
   "guild_id": "223456789012345678",
   "generation": 7,
-  "key_id": "nexus-current-2026-01",
+  "key_id": "relay-current-2026-01",
   "issued_at": "2026-08-08T12:00:00Z",
   "expires_at": "2026-08-08T12:05:00Z",
   "idempotency_key": "88888888-9999-4aaa-8bbb-cccccccccccc",
@@ -24,6 +24,5 @@
   "signature": {
     "algorithm": "ed25519",
     "value": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
-  },
-  "route_hash": "not-part-of-v1"
+  }
 }

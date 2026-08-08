@@ -1,21 +1,23 @@
 {
   "contract": "route-endorsement",
   "contract_version": 1,
+  "issuer": "nexus",
+  "audience": "discord-relay",
+  "key_scope": "nexus->discord-relay",
   "endorsement_id": "77777777-8888-4999-8aaa-bbbbbbbbbbbb",
-  "manifest_id": "66666666-7777-4777-8888-999999999999",
+  "manifest_id": "ddddddd1-eeee-4fff-8000-111111111111",
   "connection_id": "11111111-2222-4333-8444-555555555555",
   "app_id": "123456789012345678",
   "guild_id": "223456789012345678",
   "generation": 7,
-  "key_id": "relay-current-2026-01",
+  "key_id": "nexus-current-2026-01",
   "issued_at": "2026-08-08T12:00:00Z",
   "expires_at": "2026-08-08T12:05:00Z",
   "idempotency_key": "88888888-9999-4aaa-8bbb-cccccccccccc",
-  "audience": "discord-relay",
   "route_id": "delivery.receipt",
-  "route": {
+  "route_template": {
     "method": "POST",
-    "path": "/api/v1/discord/delivery/receipts"
+    "path_template": "/api/v1/discord/delivery/receipts"
   },
   "capability": "discord.delivery",
   "effect": "deny",

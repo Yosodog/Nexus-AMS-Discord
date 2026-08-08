@@ -1,6 +1,6 @@
 {
   "contract": "relay-proof",
-  "contract_version": 3,
+  "contract_version": 2,
   "issuer": "discord-relay",
   "audience": "nexus",
   "key_scope": "discord-relay->nexus",
@@ -20,7 +20,7 @@
     "action": "applications.approve"
   },
   "method": "POST",
-  "normalized_path_query": "/api/v1/discord/staff/applications/opaque/approve?a=1&a=1&b=2",
+  "normalized_path_query": "/api/v1/discord/staff/applications/opaque/approve?a=bad%2f",
   "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   "signature": {
     "algorithm": "ed25519",

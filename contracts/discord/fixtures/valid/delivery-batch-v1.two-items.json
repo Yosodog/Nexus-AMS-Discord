@@ -1,11 +1,14 @@
 {
   "contract": "delivery-batch",
   "contract_version": 1,
+  "issuer": "nexus",
+  "audience": "discord-relay",
+  "key_scope": "nexus->discord-relay",
   "connection_id": "11111111-2222-4333-8444-555555555555",
   "app_id": "123456789012345678",
   "guild_id": "223456789012345678",
   "generation": 7,
-  "key_id": "relay-current-2026-01",
+  "key_id": "nexus-current-2026-01",
   "batch_id": "88888888-9999-4888-8999-000000000000",
   "idempotency_key": "99999999-aaaa-4bbb-8ccc-dddddddddddd",
   "state": "leased",
@@ -37,7 +40,7 @@
       "action": "PRIVATE_NOTIFICATION",
       "created_at": "2026-08-08T11:59:30Z",
       "expires_at": "2026-08-08T12:04:00Z",
-      "attempt": 2,
+      "attempt": 8,
       "payload": {
         "recipient_discord_id": "423456789012345678",
         "event_type": "grant_status_changed",
@@ -57,6 +60,6 @@
   ],
   "signature": {
     "algorithm": "ed25519",
-    "value": "a797c1f96b2e291920c38dc9a6721338a1e564450ef4600d2b0c167b0731aecb8860d0eb2eeef024b3045fd61811c1b02b5d629a653c5eca11c5c5faa90f2607"
+    "value": "e5ed88551d76243a971f85b7ef40d34105e546266f5f05d4349d75b2817abb51553fdd4308244994416d087ec50f92b6d3d9aa7197982aa97d3da3027876a20b"
   }
 }

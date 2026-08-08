@@ -1,5 +1,5 @@
 {
-  "contract": "delivery-receipt",
+  "contract": "delivery-batch",
   "contract_version": 1,
   "issuer": "discord-relay",
   "audience": "nexus",
@@ -10,18 +10,24 @@
   "generation": 7,
   "key_id": "relay-current-2026-01",
   "batch_id": "88888888-9999-4888-8999-000000000000",
-  "receipt_id": "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff",
-  "idempotency_key": "cccccccc-dddd-4eee-8fff-000000000000",
-  "lease_token": "lease_2026_08_08_120000_abc123",
-  "state": "partial",
-  "received_at": "2026-08-08T12:01:30Z",
-  "items": [
+  "idempotency_key": "99999999-aaaa-4bbb-8ccc-dddddddddddd",
+  "state": "leased",
+  "issued_at": "2026-08-08T12:00:00Z",
+  "expires_at": "2026-08-08T12:05:00Z",
+  "lease": {
+    "token": "lease_2026_08_08_120000_abc123",
+    "expires_at": "2026-08-08T12:05:00Z"
+  },
+  "deliveries": [
     {
       "delivery_id": "99999999-aaaa-4999-8aaa-bbbbbbbbbbbb",
       "dedupe_key": "delivery:war-alert:001",
-      "state": "retryable",
-      "processed_at": "2026-08-08T12:01:20Z",
-      "error_code": "discord_unavailable"
+      "route_id": "discord.delivery",
+      "action": "WAR_ALERT",
+      "created_at": "2026-08-08T11:59:00Z",
+      "expires_at": "2026-08-08T12:04:00Z",
+      "attempt": 1,
+      "payload": {"channel_id": "323456789012345678"}
     }
   ],
   "signature": {

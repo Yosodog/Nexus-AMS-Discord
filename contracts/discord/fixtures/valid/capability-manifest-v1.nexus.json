@@ -18,6 +18,12 @@
       "method": "POST",
       "path_template": "/api/v1/discord/interactions",
       "capability": "discord.interactions"
+    },
+    {
+      "route_id": "discord.delivery.receipt",
+      "method": "POST",
+      "path_template": "/api/v1/discord/delivery/receipts",
+      "capability": "discord.delivery"
     }
   ],
   "limits": {
@@ -35,14 +41,19 @@
     "scope": "nexus->discord-relay",
     "current": {
       "key_id": "nexus-current-2026-01",
-      "algorithm": "rsa-sha256",
-      "public_key": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg",
+      "algorithm": "ed25519",
+      "public_key": "JUO5L_EJVRFHatyDadtt3JM2ZaEZeN2hQE7hBmypVZ0",
       "activated_at": "2026-08-01T00:00:00Z"
     },
-    "next": null
+    "next": {
+      "key_id": "nexus-next-2026-02",
+      "algorithm": "ed25519",
+      "public_key": "F0VTtFbd38aQjsqxwQH-arIeK6oGF3lbfUOmNIKZP9U",
+      "activates_at": "2026-08-15T00:00:00Z"
+    }
   },
   "signature": {
     "algorithm": "ed25519",
-    "value": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "value": "b5f42e162f4fa1d7731d015894cdc4dd5ebf22271a4328d01e5d10be6dfe5396b57d75b3a78426f69988daaca751078580f3ccc9f5576f629dd82b4cec467004"
   }
 }

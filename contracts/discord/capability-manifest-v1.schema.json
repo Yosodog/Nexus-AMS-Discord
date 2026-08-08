@@ -2,12 +2,15 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://contracts.nexus.example/discord/capability-manifest-v1.schema.json",
   "title": "Nexus Discord capability manifest v1",
-  "description": "The signed capabilities, routes, limits, and key set for one Discord relay binding.",
+  "description": "A signed directional capability manifest with an issuer-owned key set.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "contract",
     "contract_version",
+    "issuer",
+    "audience",
+    "key_scope",
     "manifest_id",
     "connection_id",
     "app_id",
@@ -16,15 +19,22 @@
     "key_id",
     "issued_at",
     "expires_at",
-    "capabilities",
-    "routes",
+    "key_set",
     "limits",
-    "keys",
     "signature"
   ],
   "properties": {
     "contract": { "const": "capability-manifest" },
     "contract_version": { "const": 1 },
+    "issuer": {
+      "enum": ["discord-relay", "nexus"]
+    },
+    "audience": {
+      "enum": ["discord-relay", "nexus"]
+    },
+    "key_scope": {
+      "enum": ["discord-relay->nexus", "nexus->discord-relay"]
+    },
     "manifest_id": { "$ref": "#/definitions/uuid" },
     "connection_id": { "$ref": "#/definitions/uuid" },
     "app_id": { "$ref": "#/definitions/snowflake" },
@@ -33,23 +43,89 @@
     "key_id": { "$ref": "#/definitions/keyId" },
     "issued_at": { "$ref": "#/definitions/utcDateTime" },
     "expires_at": { "$ref": "#/definitions/utcDateTime" },
-    "capabilities": {
-      "type": "array",
-      "minItems": 1,
-      "maxItems": 64,
-      "uniqueItems": true,
-      "items": { "$ref": "#/definitions/capability" }
-    },
-    "routes": {
+    "key_set": { "$ref": "#/definitions/keySet" },
+    "http_routes": {
       "type": "array",
       "minItems": 1,
       "maxItems": 128,
-      "items": { "$ref": "#/definitions/route" }
+      "items": { "$ref": "#/definitions/routeTemplate" }
+    },
+    "supported_queue_actions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": { "$ref": "#/definitions/action" }
+    },
+    "renderers": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": { "$ref": "#/definitions/renderer" }
     },
     "limits": { "$ref": "#/definitions/limits" },
-    "keys": { "$ref": "#/definitions/keys" },
     "signature": { "$ref": "#/definitions/signature" }
   },
+  "allOf": [
+    {
+      "oneOf": [
+        {
+          "required": ["issuer", "audience", "key_scope", "supported_queue_actions", "renderers"],
+          "properties": {
+            "issuer": { "const": "discord-relay" },
+            "audience": { "const": "nexus" },
+            "key_scope": { "const": "discord-relay->nexus" },
+            "key_set": {
+              "allOf": [
+                { "$ref": "#/definitions/keySet" },
+                {
+                  "type": "object",
+                  "properties": {
+                    "owner": { "const": "discord-relay" },
+                    "scope": { "const": "discord-relay->nexus" }
+                  }
+                }
+              ]
+            },
+            "supported_queue_actions": { "$ref": "#/properties/supported_queue_actions" },
+            "renderers": { "$ref": "#/properties/renderers" }
+          },
+          "not": {
+            "anyOf": [
+              { "type": "object", "required": ["http_routes"], "properties": { "http_routes": {} } }
+            ]
+          }
+        },
+        {
+          "required": ["issuer", "audience", "key_scope", "http_routes"],
+          "properties": {
+            "issuer": { "const": "nexus" },
+            "audience": { "const": "discord-relay" },
+            "key_scope": { "const": "nexus->discord-relay" },
+            "key_set": {
+              "allOf": [
+                { "$ref": "#/definitions/keySet" },
+                {
+                  "type": "object",
+                  "properties": {
+                    "owner": { "const": "nexus" },
+                    "scope": { "const": "nexus->discord-relay" }
+                  }
+                }
+              ]
+            },
+            "http_routes": { "$ref": "#/properties/http_routes" }
+          },
+          "not": {
+            "anyOf": [
+              { "type": "object", "required": ["supported_queue_actions"], "properties": { "supported_queue_actions": {} } },
+              { "type": "object", "required": ["renderers"], "properties": { "renderers": {} } }
+            ]
+          }
+        }
+      ]
+    }
+  ],
   "definitions": {
     "uuid": {
       "type": "string",
@@ -74,35 +150,64 @@
       "type": "string",
       "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$"
     },
-    "capability": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 64,
-      "pattern": "^[a-z][a-z0-9._:-]{0,63}$"
-    },
     "routeId": {
       "type": "string",
       "minLength": 1,
       "maxLength": 128,
       "pattern": "^[a-z][a-z0-9._:-]{0,127}$"
     },
-    "path": {
+    "capability": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z][a-z0-9._:-]{0,63}$"
+    },
+    "action": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+    },
+    "templatePath": {
       "type": "string",
       "minLength": 2,
       "maxLength": 256,
       "pattern": "^/[A-Za-z0-9._~:/{}-]{1,255}$"
     },
-    "route": {
+    "routeTemplate": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["route_id", "method", "path", "capability"],
+      "required": ["route_id", "method", "path_template", "capability"],
       "properties": {
         "route_id": { "$ref": "#/definitions/routeId" },
         "method": {
           "enum": ["DELETE", "GET", "PATCH", "POST", "PUT"]
         },
-        "path": { "$ref": "#/definitions/path" },
+        "path_template": { "$ref": "#/definitions/templatePath" },
         "capability": { "$ref": "#/definitions/capability" }
+      }
+    },
+    "renderer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["renderer_id", "version", "max_payload_bytes"],
+      "properties": {
+        "renderer_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-z][a-z0-9._:-]{0,127}$"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "max_payload_bytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 16384
+        }
       }
     },
     "limits": {
@@ -115,7 +220,8 @@
         "max_receipt_bytes",
         "max_clock_skew_seconds",
         "max_lease_seconds",
-        "dedupe_window_seconds"
+        "dedupe_window_seconds",
+        "max_delivery_attempts"
       ],
       "properties": {
         "max_batch_items": {
@@ -152,6 +258,11 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 86400
+        },
+        "max_delivery_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8
         }
       }
     },
@@ -187,11 +298,17 @@
         "activates_at": { "$ref": "#/definitions/utcDateTime" }
       }
     },
-    "keys": {
+    "keySet": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["current", "next"],
+      "required": ["owner", "scope", "current", "next"],
       "properties": {
+        "owner": {
+          "enum": ["discord-relay", "nexus"]
+        },
+        "scope": {
+          "enum": ["discord-relay->nexus", "nexus->discord-relay"]
+        },
         "current": { "$ref": "#/definitions/publicKey" },
         "next": {
           "oneOf": [

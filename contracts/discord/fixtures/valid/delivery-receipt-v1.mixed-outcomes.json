@@ -1,6 +1,9 @@
 {
   "contract": "delivery-receipt",
   "contract_version": 1,
+  "issuer": "discord-relay",
+  "audience": "nexus",
+  "key_scope": "discord-relay->nexus",
   "connection_id": "11111111-2222-4333-8444-555555555555",
   "app_id": "123456789012345678",
   "guild_id": "223456789012345678",
@@ -32,6 +35,6 @@
   ],
   "signature": {
     "algorithm": "ed25519",
-    "value": "4bf1c556c23da796fe943441863a9c305c6d777d7c79f55bab981fe7e1c5eb7c31677c6132fc572037dd3ee714d6221bdda1b8ed32a1eb74415b7eb3f761340e"
+    "value": "7c7bc02ebca4c2c74c407481be04e982845984c6d13f286176c241cca4418620332692e716ba55a49064cd73633bd127caf0f48e665e97c56c0751fe28785901"
   }
 }

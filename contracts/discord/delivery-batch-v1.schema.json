@@ -8,6 +8,9 @@
   "required": [
     "contract",
     "contract_version",
+    "issuer",
+    "audience",
+    "key_scope",
     "connection_id",
     "app_id",
     "guild_id",
@@ -25,6 +28,9 @@
   "properties": {
     "contract": { "const": "delivery-batch" },
     "contract_version": { "const": 1 },
+    "issuer": { "const": "nexus" },
+    "audience": { "const": "discord-relay" },
+    "key_scope": { "const": "nexus->discord-relay" },
     "connection_id": { "$ref": "#/definitions/uuid" },
     "app_id": { "$ref": "#/definitions/snowflake" },
     "guild_id": { "$ref": "#/definitions/snowflake" },
@@ -139,7 +145,7 @@
         "attempt": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 3
+          "maximum": 8
         },
         "payload": { "$ref": "#/definitions/payload" }
       }

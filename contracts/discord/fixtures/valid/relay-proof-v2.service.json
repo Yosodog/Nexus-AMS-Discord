@@ -1,6 +1,9 @@
 {
   "contract": "relay-proof",
   "contract_version": 2,
+  "issuer": "discord-relay",
+  "audience": "nexus",
+  "key_scope": "discord-relay->nexus",
   "connection_id": "11111111-2222-4333-8444-555555555555",
   "app_id": "123456789012345678",
   "guild_id": "223456789012345678",
@@ -14,13 +17,11 @@
     "action": "war-counters.attach-channel",
     "nonce": "44444444-5555-4666-8777-888888888888"
   },
-  "route": {
-    "method": "POST",
-    "path": "/api/v1/discord/war-counters/attach-channel"
-  },
+  "method": "POST",
+  "normalized_path_query": "/api/v1/discord/war-counters/attach-channel",
   "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   "signature": {
     "algorithm": "ed25519",
-    "value": "77194773c7311e781cda5e3a8b30bff89039752d3617b8beeeac069e571aee2e31361fc32649d18f3af7dbbc8876f0f5f72d9c2ffe2f460b64dbe6f6f580460d"
+    "value": "284cc673cea532fb90806ce19f83a8b11142a29bd18c418f91fad60b036b7fc02b6449c1b396eda51c61730d0e2cc78848eddf2a0e131379961d61809a4e0b03"
   }
 }
