@@ -1,0 +1,162 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://contracts.nexus.example/discord/delivery-batch-v1.schema.json",
+  "title": "Nexus Discord delivery batch v1",
+  "description": "A signed leased batch of at-least-once Discord deliveries.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "contract_version",
+    "connection_id",
+    "app_id",
+    "guild_id",
+    "generation",
+    "key_id",
+    "batch_id",
+    "idempotency_key",
+    "state",
+    "issued_at",
+    "expires_at",
+    "lease",
+    "deliveries",
+    "signature"
+  ],
+  "properties": {
+    "contract": { "const": "delivery-batch" },
+    "contract_version": { "const": 1 },
+    "connection_id": { "$ref": "#/definitions/uuid" },
+    "app_id": { "$ref": "#/definitions/snowflake" },
+    "guild_id": { "$ref": "#/definitions/snowflake" },
+    "generation": { "$ref": "#/definitions/generation" },
+    "key_id": { "$ref": "#/definitions/keyId" },
+    "batch_id": { "$ref": "#/definitions/uuid" },
+    "idempotency_key": { "$ref": "#/definitions/uuid" },
+    "state": { "const": "leased" },
+    "issued_at": { "$ref": "#/definitions/utcDateTime" },
+    "expires_at": { "$ref": "#/definitions/utcDateTime" },
+    "lease": { "$ref": "#/definitions/lease" },
+    "deliveries": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": { "$ref": "#/definitions/delivery" }
+    },
+    "signature": { "$ref": "#/definitions/signature" }
+  },
+  "definitions": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "snowflake": {
+      "type": "string",
+      "pattern": "^[0-9]{17,20}$"
+    },
+    "generation": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "keyId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9._:-]{0,127}$"
+    },
+    "utcDateTime": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$"
+    },
+    "routeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9._:-]{0,127}$"
+    },
+    "action": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+    },
+    "dedupeKey": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:~-]{0,127}$"
+    },
+    "leaseToken": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:~-]{0,255}$"
+    },
+    "lease": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["token", "expires_at"],
+      "properties": {
+        "token": { "$ref": "#/definitions/leaseToken" },
+        "expires_at": { "$ref": "#/definitions/utcDateTime" }
+      }
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": true,
+      "maxProperties": 32,
+      "propertyNames": {
+        "allOf": [
+          { "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+          {
+            "not": {
+              "pattern": "(^|_)(access|api|authorization|bot|client_secret|private|refresh|session|password|secret|token)(_|$)"
+            }
+          }
+        ]
+      }
+    },
+    "delivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "delivery_id",
+        "dedupe_key",
+        "route_id",
+        "action",
+        "created_at",
+        "expires_at",
+        "attempt",
+        "payload"
+      ],
+      "properties": {
+        "delivery_id": { "$ref": "#/definitions/uuid" },
+        "dedupe_key": { "$ref": "#/definitions/dedupeKey" },
+        "route_id": { "$ref": "#/definitions/routeId" },
+        "action": { "$ref": "#/definitions/action" },
+        "created_at": { "$ref": "#/definitions/utcDateTime" },
+        "expires_at": { "$ref": "#/definitions/utcDateTime" },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3
+        },
+        "payload": { "$ref": "#/definitions/payload" }
+      }
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "value"],
+      "properties": {
+        "algorithm": { "const": "ed25519" },
+        "value": {
+          "type": "string",
+          "minLength": 128,
+          "maxLength": 128,
+          "pattern": "^[a-f0-9]{128}$"
+        }
+      }
+    }
+  }
+}

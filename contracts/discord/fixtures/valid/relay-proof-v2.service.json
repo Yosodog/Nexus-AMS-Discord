@@ -1,0 +1,26 @@
+{
+  "contract": "relay-proof",
+  "contract_version": 2,
+  "connection_id": "11111111-2222-4333-8444-555555555555",
+  "app_id": "123456789012345678",
+  "guild_id": "223456789012345678",
+  "generation": 7,
+  "key_id": "relay-current-2026-01",
+  "issued_at": "2026-08-08T12:01:00Z",
+  "expires_at": "2026-08-08T12:01:30Z",
+  "idempotency_key": "55555555-6666-4777-8888-999999999999",
+  "proof": {
+    "type": "service",
+    "action": "war-counters.attach-channel",
+    "nonce": "44444444-5555-4666-8777-888888888888"
+  },
+  "route": {
+    "method": "POST",
+    "path": "/api/v1/discord/war-counters/attach-channel"
+  },
+  "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "signature": {
+    "algorithm": "ed25519",
+    "value": "77194773c7311e781cda5e3a8b30bff89039752d3617b8beeeac069e571aee2e31361fc32649d18f3af7dbbc8876f0f5f72d9c2ffe2f460b64dbe6f6f580460d"
+  }
+}

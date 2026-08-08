@@ -1,0 +1,189 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://contracts.nexus.example/discord/delivery-receipt-v1.schema.json",
+  "title": "Nexus Discord delivery receipt v1",
+  "description": "A signed idempotent receipt for the items in one leased delivery batch.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "contract_version",
+    "connection_id",
+    "app_id",
+    "guild_id",
+    "generation",
+    "key_id",
+    "batch_id",
+    "receipt_id",
+    "idempotency_key",
+    "lease_token",
+    "state",
+    "received_at",
+    "items",
+    "signature"
+  ],
+  "properties": {
+    "contract": { "const": "delivery-receipt" },
+    "contract_version": { "const": 1 },
+    "connection_id": { "$ref": "#/definitions/uuid" },
+    "app_id": { "$ref": "#/definitions/snowflake" },
+    "guild_id": { "$ref": "#/definitions/snowflake" },
+    "generation": { "$ref": "#/definitions/generation" },
+    "key_id": { "$ref": "#/definitions/keyId" },
+    "batch_id": { "$ref": "#/definitions/uuid" },
+    "receipt_id": { "$ref": "#/definitions/uuid" },
+    "idempotency_key": { "$ref": "#/definitions/uuid" },
+    "lease_token": { "$ref": "#/definitions/leaseToken" },
+    "state": {
+      "enum": ["accepted", "duplicate", "partial", "rejected"]
+    },
+    "received_at": { "$ref": "#/definitions/utcDateTime" },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": { "$ref": "#/definitions/item" }
+    },
+    "signature": { "$ref": "#/definitions/signature" }
+  },
+  "definitions": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "snowflake": {
+      "type": "string",
+      "pattern": "^[0-9]{17,20}$"
+    },
+    "generation": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "keyId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9._:-]{0,127}$"
+    },
+    "utcDateTime": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$"
+    },
+    "leaseToken": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:~-]{0,255}$"
+    },
+    "dedupeKey": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:~-]{0,127}$"
+    },
+    "errorCode": {
+      "enum": [
+        "discord_api_error",
+        "discord_forbidden",
+        "discord_rate_limited",
+        "discord_timeout",
+        "discord_unavailable",
+        "expired",
+        "internal_error",
+        "invalid_delivery",
+        "invalid_lease",
+        "payload_too_large",
+        "unsupported_route"
+      ]
+    },
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["delivery_id", "dedupe_key", "state", "processed_at"],
+      "properties": {
+        "delivery_id": { "$ref": "#/definitions/uuid" },
+        "dedupe_key": { "$ref": "#/definitions/dedupeKey" },
+        "state": {
+          "enum": ["delivered", "duplicate", "expired", "rejected", "retryable"]
+        },
+        "processed_at": { "$ref": "#/definitions/utcDateTime" },
+        "discord_message_id": { "$ref": "#/definitions/snowflake" },
+        "error_code": { "$ref": "#/definitions/errorCode" },
+        "error_message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[^\\r\\n]+$"
+        },
+        "retry_after_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 300
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["state"],
+            "properties": {
+              "state": { "enum": ["expired", "rejected", "retryable"] }
+            }
+          },
+          "then": {
+            "required": ["error_code"],
+            "properties": { "error_code": {} }
+          }
+        },
+        {
+          "if": {
+            "required": ["state"],
+            "properties": { "state": { "const": "retryable" } }
+          },
+          "then": {
+            "required": ["retry_after_seconds"],
+            "properties": { "retry_after_seconds": {} }
+          }
+        },
+        {
+          "if": {
+            "required": ["state"],
+            "properties": {
+              "state": { "enum": ["delivered", "duplicate"] }
+            }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                { "required": ["error_code"], "properties": { "error_code": {} } },
+                { "required": ["error_message"], "properties": { "error_message": {} } },
+                { "required": ["retry_after_seconds"], "properties": { "retry_after_seconds": {} } }
+              ]
+            }
+          }
+        },
+        {
+          "if": { "required": ["error_message"] },
+          "then": {
+            "required": ["error_code"],
+            "properties": { "error_code": {} }
+          }
+        }
+      ]
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "value"],
+      "properties": {
+        "algorithm": { "const": "ed25519" },
+        "value": {
+          "type": "string",
+          "minLength": 128,
+          "maxLength": 128,
+          "pattern": "^[a-f0-9]{128}$"
+        }
+      }
+    }
+  }
+}
