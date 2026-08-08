@@ -171,7 +171,10 @@ function makeRuntime({
     guildId: GUILD_ID,
     ...(connectionContext ? { connectionContext } : {}),
     logger: { info() {}, warn() {}, error() {} },
-    resolveGuild: async () => guild,
+    resolveGuild: async () => {
+      events.push(['guild_resolve']);
+      return guild;
+    },
     resolveUser: resolveUser ?? (async () => user),
     withDiscordRetry: async (operation) => operation(),
     send: async (channel, command, stepKey, message) => {
@@ -267,18 +270,26 @@ test('fails closed for foreign guilds and exposed application connection context
   assert.equal((await execute(commandFor(input), staleGeneration.runtime)).reason, 'stale_connection_generation');
 });
 
-test('creates a channel, checkpoints it before intros, and disables all mentions', async () => {
+test('preflights durable state before resolving Discord, then checkpoints creation before intros', async () => {
   const { runtime, events, checkpoints } = makeRuntime();
   const result = await execute(commandFor(payload()), runtime);
 
   assert.equal(result.success, true);
-  assert.equal(checkpoints[0][2].application_reconcile.channel_id, CHANNEL_ID);
+  assert.equal(checkpoints[0][2].application_reconcile.application_revision, 12);
+  assert.equal(checkpoints[0][2].application_reconcile.channel_id, null);
+  assert.equal(checkpoints[1][2].application_reconcile.channel_id, CHANNEL_ID);
   assert.equal(result.result.application_reconcile.application_revision, 12);
+  const preflightCheckpointIndex = events.findIndex(([type]) => type === 'checkpoint');
+  const guildResolveIndex = events.findIndex(([type]) => type === 'guild_resolve');
   const createIndex = events.findIndex(([type]) => type === 'channel_create');
-  const firstCheckpointIndex = events.findIndex(([type]) => type === 'checkpoint');
+  const creationCheckpointIndex = events.findIndex(
+    ([type], index) => type === 'checkpoint' && index > createIndex,
+  );
   const sendIndex = events.findIndex(([type]) => type === 'send');
-  assert.ok(createIndex < firstCheckpointIndex);
-  assert.ok(firstCheckpointIndex < sendIndex);
+  assert.ok(preflightCheckpointIndex < guildResolveIndex);
+  assert.ok(guildResolveIndex < createIndex);
+  assert.ok(createIndex < creationCheckpointIndex);
+  assert.ok(creationCheckpointIndex < sendIndex);
   assert.deepEqual(events[sendIndex][2].allowedMentions, {
     parse: [],
     users: [],
@@ -303,6 +314,29 @@ test('creates a channel, checkpoints it before intros, and disables all mentions
   ]);
 });
 
+test('preflight rejection returns before Discord resolution or mutation', async () => {
+  const rejected = makeRuntime({
+    checkpoint: async () => { throw new Error('application revision superseded'); },
+  });
+
+  const result = await execute(commandFor(payload()), rejected.runtime);
+
+  assert.equal(result.success, false);
+  assert.equal(result.reason, 'checkpoint_failed');
+  assert.equal(result.reconciliation_required, false);
+  assert.equal(result.result.reconciliation_required, false);
+  assert.equal(result.result.application_reconcile.application_revision, 12);
+  assert.equal(rejected.events[0][0], 'checkpoint');
+  assert.equal(rejected.events.some(([type]) => [
+    'guild_resolve',
+    'channel_create',
+    'role_add',
+    'role_remove',
+    'send',
+    'dm',
+  ].includes(type)), false);
+});
+
 test('restarts from the durable checkpoint without recreating or resending', async () => {
   const first = makeRuntime();
   const firstResult = await execute(commandFor(payload()), first.runtime);
@@ -313,6 +347,8 @@ test('restarts from the durable checkpoint without recreating or resending', asy
   const result = await execute(commandFor(payload(), { application_reconcile: durable }), second.runtime);
 
   assert.equal(result.success, true);
+  assert.deepEqual(second.checkpoints[0][2].application_reconcile, durable);
+  assert.equal(second.events[0][0], 'checkpoint');
   assert.equal(second.events.some(([type]) => type === 'channel_create'), false);
   assert.equal(second.events.some(([type]) => type === 'send'), false);
 });
@@ -469,8 +505,13 @@ test('deletes only the authoritative channel and treats an unknown channel as id
 });
 
 test('requires reconciliation when a mutation succeeds but its checkpoint fails', async () => {
+  let checkpointCalls = 0;
   const created = makeRuntime({
-    checkpoint: async () => { throw new Error('checkpoint unavailable'); },
+    checkpoint: async () => {
+      checkpointCalls += 1;
+      if (checkpointCalls === 2) throw new Error('checkpoint unavailable');
+      return { ok: true };
+    },
   });
   const result = await execute(commandFor(payload()), created.runtime);
 

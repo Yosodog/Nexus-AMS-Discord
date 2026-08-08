@@ -240,7 +240,9 @@ const failure = (reason, {
     reason,
     retryable,
   };
-  if (reconciliationRequired) response.reconciliation_required = true;
+  if (reconciliationRequired || checkpoint) {
+    response.reconciliation_required = reconciliationRequired;
+  }
   if (checkpoint) {
     response.result = {
       application_reconcile: checkpoint,
@@ -1033,6 +1035,9 @@ export const execute = async (command, runtime) => {
   if (!accumulated.channel_id && payload.desired.channel.channel_id) {
     accumulated.channel_id = payload.desired.channel.channel_id.trim();
   }
+
+  const preflightFailure = await checkpoint(command, runtime, accumulated);
+  if (preflightFailure) return preflightFailure;
 
   let guild;
   try {
