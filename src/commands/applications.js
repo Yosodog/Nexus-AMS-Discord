@@ -263,6 +263,37 @@ const applicationReviewEmbed = (application, baseUrl, summary) => {
   });
 };
 
+export const applicationReviewForDiscordContext = async (
+  interaction,
+  context,
+  { applicantDiscordId, channelId } = {},
+) => {
+  const actor = actorFromInteraction(interaction, 'applications');
+  const lookup = await context.apiService.getStaffApplications(actor, {
+    applicant_discord_id: applicantDiscordId,
+    discord_channel_id: applicantDiscordId ? undefined : channelId,
+    limit: 1,
+  });
+  const item = normalizeCollection(lookup).items[0];
+  if (!item) throw Object.assign(new Error('No matching application was found.'), { code: 'NOT_FOUND' });
+  const application = `${item.token ?? item.id}`;
+  const result = await context.apiService.getStaffApplicationReview(actor, { application });
+  const review = result?.application ?? result;
+  const target = applicationTarget(review, applicationTarget(item));
+  return {
+    embeds: [applicationReviewEmbed(review, context.apiService.baseUrl, result?.summary)],
+    components: [new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(context.sessions.create({ commandName: 'applications', userId: interaction.user.id,
+        event: 'approve-start', state: decisionSelection({ application, target }), oneShot: true }))
+        .setLabel('Approve').setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId(context.sessions.create({ commandName: 'applications', userId: interaction.user.id,
+        event: 'deny-start', state: decisionSelection({ application, target }), oneShot: true }))
+        .setLabel('Deny').setStyle(ButtonStyle.Danger),
+    )],
+    allowedMentions: { parse: [] },
+  };
+};
+
 export const execute = async (interaction, context) => {
   const subcommand = interaction.options.getSubcommand();
   if (subcommand === 'deny') {
@@ -316,28 +347,10 @@ export const execute = async (interaction, context) => {
     }
     if (subcommand === 'review') {
       const applicant = interaction.options.getUser('applicant');
-      const lookup = await context.apiService.getStaffApplications(actor, {
-        applicant_discord_id: applicant?.id,
-        discord_channel_id: applicant ? undefined : interaction.channelId,
-        limit: 1,
-      });
-      const item = normalizeCollection(lookup).items[0];
-      if (!item) throw Object.assign(new Error('No matching application was found.'), { code: 'NOT_FOUND' });
-      const application = `${item.token ?? item.id}`;
-      const result = await context.apiService.getStaffApplicationReview(actor, { application });
-      const review = result?.application ?? result;
-      const target = applicationTarget(review, applicationTarget(item));
-      await interaction.editReply({
-        embeds: [applicationReviewEmbed(review, context.apiService.baseUrl, result?.summary)],
-        components: [new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId(context.sessions.create({ commandName: 'applications', userId: interaction.user.id,
-            event: 'approve-start', state: decisionSelection({ application, target }), oneShot: true }))
-            .setLabel('Approve').setStyle(ButtonStyle.Success),
-          new ButtonBuilder().setCustomId(context.sessions.create({ commandName: 'applications', userId: interaction.user.id,
-            event: 'deny-start', state: decisionSelection({ application, target }), oneShot: true }))
-            .setLabel('Deny').setStyle(ButtonStyle.Danger),
-        )],
-      });
+      await interaction.editReply(await applicationReviewForDiscordContext(interaction, context, {
+        applicantDiscordId: applicant?.id,
+        channelId: interaction.channelId,
+      }));
       return;
     }
     await interaction.editReply(approvalConfirmation(
