@@ -6,7 +6,9 @@ import {
   CONNECTION_MODES,
   createConnectionContext,
 } from './services/connection/ConnectionContext.js';
+import { ConnectionPublicationManager } from './services/connection/ConnectionPublicationManager.js';
 import { ConnectionResolver } from './services/connection/ConnectionResolver.js';
+import { FileConnectionPublicationSource } from './services/connection/FileConnectionPublicationSource.js';
 import { FairScheduler } from './services/FairScheduler.js';
 import { loadCommands } from './commands/index.js';
 import { registerInteractionListener } from './listeners/interactionCreate.js';
@@ -65,6 +67,13 @@ const rawSharedConnections = () => (
     : []
 );
 
+const runtimeConnectionKey = (connection) => [
+  connection.applicationId,
+  connection.guildId,
+  connection.connectionId,
+  connection.generation,
+].join(':');
+
 const buildSharedConnection = (raw) => createConnectionContext({
   ...raw,
   mode: CONNECTION_MODES.OFFICIAL_SHARED,
@@ -89,12 +98,30 @@ const buildSharedConnection = (raw) => createConnectionContext({
 
 const createConnectionServiceFactory = ({ logger: serviceLogger, config: runtimeConfig }) => {
   const cache = new Map();
-  return (connection) => {
+  const createService = (connection) => {
     if (!connection) return null;
-    if (cache.has(connection.connectionId)) return cache.get(connection.connectionId);
     const options = connection.serviceOptions ?? {};
     const baseUrl = connection.endpointOrigin ?? options.baseUrl ?? runtimeConfig.nexusApi.baseUrl;
     if (!baseUrl) return null;
+    const shared = connection.mode === CONNECTION_MODES.OFFICIAL_SHARED;
+    const apiKey = shared ? options.apiKey : (options.apiKey ?? runtimeConfig.nexusApi.apiKey ?? '');
+    if (shared && (typeof apiKey !== 'string' || apiKey.trim() === '')) {
+      serviceLogger.warn('Connection credentials are not usable; keeping route fail-closed', {
+        connectionId: connection.connectionId,
+        generation: connection.generation,
+        errorCode: 'MISSING_CONNECTION_API_KEY',
+      });
+      return null;
+    }
+    const configuredKeyId = `${options.relayCurrentKeyId ?? connection.keyId}`.trim().toLowerCase();
+    if (shared && configuredKeyId !== connection.keyId) {
+      serviceLogger.warn('Connection credentials are not usable; keeping route fail-closed', {
+        connectionId: connection.connectionId,
+        generation: connection.generation,
+        errorCode: 'RELAY_KEY_ID_MISMATCH',
+      });
+      return null;
+    }
 
     let relaySigner = connection.relaySigner ?? null;
     if (!relaySigner && connection.protocolVersion === 2) {
@@ -124,14 +151,24 @@ const createConnectionServiceFactory = ({ logger: serviceLogger, config: runtime
 
     const service = new ApiService({
       baseUrl,
-      apiKey: options.apiKey ?? runtimeConfig.nexusApi.apiKey ?? '',
+      apiKey,
       logger: serviceLogger,
       relaySigner,
       connectionContext: connection,
     });
-    cache.set(connection.connectionId, service);
     return service;
   };
+  const factory = (connection) => {
+    if (!connection) return null;
+    const key = runtimeConnectionKey(connection);
+    if (cache.has(key)) return cache.get(key);
+    const service = createService(connection);
+    if (service) cache.set(key, service);
+    return service;
+  };
+  factory.validate = (connection) => Boolean(createService(connection));
+  factory.clear = () => cache.clear();
+  return factory;
 };
 
 export const bootstrap = async () => {
@@ -172,6 +209,25 @@ export const bootstrap = async () => {
     logger,
   });
   const serviceFactory = createConnectionServiceFactory({ logger, config });
+  const dispatcherCache = new Map();
+  let publicationManager = null;
+  if (config.discord.deploymentMode === CONNECTION_MODES.OFFICIAL_SHARED
+    && config.shared.connectionsFile) {
+    publicationManager = new ConnectionPublicationManager({
+      source: new FileConnectionPublicationSource({ filePath: config.shared.connectionsFile }),
+      resolver: connectionResolver,
+      applicationId: config.discord.clientId,
+      buildConnection: buildSharedConnection,
+      validateConnection: serviceFactory.validate,
+      logger: new Logger('ConnectionPublication'),
+      refreshIntervalMs: config.shared.refreshIntervalMs,
+      onAccepted: () => {
+        serviceFactory.clear();
+        dispatcherCache.clear();
+      },
+    });
+    await publicationManager.start();
+  }
   const baseApiService = dedicatedConnection ? serviceFactory(dedicatedConnection) : null;
 
   let alertManifestResponse = null;
@@ -205,10 +261,9 @@ export const bootstrap = async () => {
   const laneAware = config.queue.laneAware
     && alertManifestStatus.valid
     && manifestCapabilities.queue_lanes === true;
-  const dispatcherCache = new Map();
   const dispatcherFactory = (connection = dedicatedConnection) => {
     if (!connection) return null;
-    const key = connection.connectionId;
+    const key = runtimeConnectionKey(connection);
     if (dispatcherCache.has(key)) return dispatcherCache.get(key);
     const connectionApi = serviceFactory(connection);
     const connectionAlertEnabled = connection.mode === CONNECTION_MODES.OFFICIAL_SHARED
@@ -284,6 +339,9 @@ export const bootstrap = async () => {
         ? client.guilds.cache.has(dedicatedConnection.guildId)
         : undefined,
       active_connections: connectionResolver.listActive().length,
+      ...(publicationManager
+        ? { connection_publication: publicationManager.getHealthSnapshot() }
+        : {}),
     }),
     logger: new Logger('ProcessHealth'),
   });
@@ -299,6 +357,7 @@ export const bootstrap = async () => {
 
     shutdownSignal = signal;
     logger.info('Graceful shutdown started', { signal });
+    await publicationManager?.stop();
     let healthWritten = true;
     try {
       await processHealth.markStopping(signal);
@@ -359,6 +418,7 @@ export const bootstrap = async () => {
     logger.info('Logged in to Discord.');
   } catch (error) {
     logger.error('Discord login failed', error);
+    await publicationManager?.stop();
     await processHealth.failStartup().catch(() => undefined);
     process.exit(1);
   }

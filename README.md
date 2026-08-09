@@ -20,12 +20,12 @@ Discord integration for Nexus AMS. The bot provides account verification, applic
 - `src/healthcheck.js` — validates the local process heartbeat without contacting Discord or Nexus.
 - `src/services/queueActions/` — validated action modules; each exports `validate(payload)` and `execute(command, context)`.
 - `src/utils/` — configuration, boundary validation, and channel identity helpers.
-- `src/registerCommands.js` — publishes the complete command set to the configured guild.
+- `src/registerCommands.js` — publishes the command set globally for official-shared mode or to the configured guild for dedicated mode.
 
 ## Requirements and Configuration
 
 - Node.js 22 or newer.
-- A Discord application, bot user, and guild.
+- A Discord application and bot user. Dedicated mode also configures one guild.
 - A compatible Nexus deployment with the leased Discord queue APIs and migrations.
 
 Create the local environment file:
@@ -39,9 +39,10 @@ Configure:
 
 - `NODE_ENV`: use `production` on the production host.
 - `LOG_LEVEL`: optional `DEBUG`, `INFO`, `WARN`, or `ERROR` threshold.
+- `BOT_DEPLOYMENT_MODE`: `dedicated` by default, or `official-shared` for one bot serving explicit connection publications.
 - `DISCORD_BOT_TOKEN`: bot token.
 - `DISCORD_CLIENT_ID`: Discord application snowflake.
-- `DISCORD_GUILD_ID`: the only guild the bot is permitted to process.
+- `DISCORD_GUILD_ID`: the only accepted guild in dedicated mode.
 - `NEXUS_API_URL`: Nexus base URL. Development may use HTTP; production startup requires HTTPS.
 - `NEXUS_API_KEY`: shared bot credential issued by Nexus.
 - `NEXUS_DISCORD_RELAY_PRIVATE_KEY`: base64 PKCS#8 Ed25519 private key used to sign the actual Gateway interaction identity and command sent to Nexus.
@@ -50,6 +51,45 @@ Configure:
 - `PROCESS_HEALTH_STALE_AFTER_MS`: maximum accepted heartbeat age; defaults to 45 seconds.
 - `BUILD_COMMIT`: immutable source/image revision exposed in local build metadata.
 - `NEXUS_RELEASE_ID`: server-assigned release identifier exposed in local build metadata.
+
+Official-shared mode additionally supports:
+
+- `DISCORD_CONNECTIONS_FILE`: preferred path to a complete JSON connection snapshot. A valid changed snapshot is activated without restarting the bot.
+- `DISCORD_CONNECTION_REFRESH_MS`: snapshot refresh interval; defaults to 30 seconds.
+- `DISCORD_CONNECTIONS_JSON`: static startup fallback using the same array shape. It remains supported for compatibility but is not refreshed.
+
+### Official-shared connection snapshots
+
+The publication file is a complete array, not a patch stream. Each entry binds one Discord application/guild to one Nexus endpoint, connection generation, relay key, capability set, expiry, and secret-backed service options:
+
+```json
+[
+  {
+    "applicationId": "123456789012345678",
+    "guildId": "223456789012345678",
+    "connectionId": "11111111-2222-4333-8444-555555555555",
+    "generation": 8,
+    "protocolVersion": 2,
+    "keyId": "relay-k2",
+    "endpointOrigin": "https://nexus.example",
+    "expiresAt": "2026-08-08T19:00:00.000Z",
+    "capabilities": {
+      "commands": {
+        "nexus": 1
+      }
+    },
+    "serviceOptions": {
+      "apiKey": "secret-store-value",
+      "relayPrivateKey": "secret-store-value",
+      "relayCurrentKeyId": "relay-k2"
+    }
+  }
+]
+```
+
+Write a temporary file with restrictive permissions and atomically rename it over the configured path. Never expose the file through a web root or log its contents. Invalid JSON, duplicate keys, another Discord application, duplicate active guild routes, generation rollback, and same-generation identity replacement are rejected as a unit. The prior accepted snapshot remains usable only until each connection's `expiresAt`, so an unreadable control-plane source cannot extend routing indefinitely.
+
+Removing a route fences its accepted generation. An explicit `[]` revokes all routes immediately; reactivation requires a higher generation. Updating credentials or the relay key for the same application/guild/connection/generation is accepted and clears cached clients without restarting. The bot's publication high-water mark is process-local; Nexus's accepted connection generation remains the authoritative cross-restart fence. Dedicated mode and static `DISCORD_CONNECTIONS_JSON` do not depend on this file or on Nexus Cloud.
 
 Generate the asymmetric relay key pair once:
 
@@ -61,7 +101,7 @@ Store `NEXUS_DISCORD_RELAY_PRIVATE_KEY` only in the bot environment. Put the gen
 
 Discord.js receives interactions through the Gateway, which does not include Discord's HTTP interaction signature headers. The relay proof is therefore generated from the Gateway interaction object inside the bot and signed with this dedicated private key. Nexus verifies the signature, guild, actor, interaction ID, freshness, and action before resolving permissions.
 
-Startup rejects malformed URLs and Discord snowflakes. Message events, interactions, queue targets, announcements, and archive actions are constrained to `DISCORD_GUILD_ID`.
+Startup rejects malformed URLs and Discord snowflakes. Dedicated traffic is constrained to `DISCORD_GUILD_ID`; official-shared traffic is constrained to the one current application/guild/connection/generation resolved from the accepted snapshot.
 
 ## Running and Commands
 
@@ -89,7 +129,7 @@ Command loading is atomic. An import failure, malformed command export, serializ
 
 ## Application Transcripts
 
-Application channels are identified by Nexus application/nation metadata, with exact legacy channel-name support during migration. Only messages from the configured guild and verified application channels are forwarded.
+Application channels are identified by Nexus application/nation metadata, with exact legacy channel-name support during migration. Only messages from the interaction's resolved guild and verified application channels are forwarded.
 
 Transcripts are intentionally text-only:
 
@@ -124,8 +164,8 @@ Private workflow notifications use the structured `PRIVATE_NOTIFICATION` queue a
 Recommended rollout order:
 
 1. Back up Nexus and deploy its code and migrations.
-2. Set matching `DISCORD_BOT_KEY`/`NEXUS_API_KEY` values and the same `DISCORD_GUILD_ID` in both services.
-3. Generate the relay key pair, put the private key in the bot, and put only the public key in Nexus.
+2. In dedicated mode, set matching `DISCORD_BOT_KEY`/`NEXUS_API_KEY` values and the same `DISCORD_GUILD_ID` in both services. In official-shared mode, prepare the complete connection snapshot after Nexus accepts the binding.
+3. Generate each relay key pair, keep its private key with the bot connection secret, and put only its public key in the corresponding Nexus installation.
 4. Keep the Nexus private-notification master switch disabled.
 5. Deploy the bot, run `npm run register`, and restart the queue worker.
 6. Smoke-test account reads, a deposit code, a within-limit withdrawal, an above-limit review case, and DM failure handling.
@@ -134,14 +174,16 @@ Recommended rollout order:
 ## Readiness and Build Metadata
 
 The bot writes an atomic JSON heartbeat with mode `0600`. Readiness is reported
-only after Discord emits `ClientReady`, the configured guild is present in the
-client cache, and the leased queue worker has started. Missing, malformed,
-future-dated, stale, stopping, stopped, failed-guild, stopped-worker, and
-unhealthy-lease states all make `npm run healthcheck` exit nonzero.
+only after Discord emits `ClientReady` and the leased queue worker has started;
+dedicated mode also requires its configured guild in the client cache. Missing,
+malformed, future-dated, stale, stopping, stopped, failed-guild, stopped-worker,
+and unhealthy-lease states all make `npm run healthcheck` exit nonzero.
 
 The heartbeat contains the package version, sanitized build/release identifiers,
-booleans and counters for the worker, and whether the configured guild is
-available. It deliberately omits guild IDs, worker IDs, queue IDs, lease tokens,
+booleans and counters for the worker, active connection counts, and dedicated
+guild availability. File-backed shared mode also reports bounded publication
+refresh health without route or credential identifiers. It deliberately omits
+guild IDs, worker IDs, queue IDs, lease tokens,
 Nexus URLs, Discord/Nexus credentials, relay keys, command payloads, and API
 responses. Place `PROCESS_HEALTH_FILE` on the writable runtime mount used by the
 bot and run the probe as the same non-root user.

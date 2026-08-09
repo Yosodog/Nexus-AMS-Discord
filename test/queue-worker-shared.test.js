@@ -80,3 +80,59 @@ test('QueueWorker shares claim opportunities fairly and passes delivery context 
   assert.equal(dispatches[1].applicationId, APP_ID);
   assert.equal(statuses.length, 2);
 });
+
+test('QueueWorker fences a leased action when its connection is revoked during execution', async () => {
+  const [connection] = contexts;
+  const resolver = new ConnectionResolver({ mode: 'shared', applicationId: APP_ID, connections: [connection] });
+  const statuses = [];
+  let canContinueBefore;
+  let canContinueAfter;
+  let claimed = false;
+  const service = {
+    claimDiscordQueue: async () => {
+      if (claimed) return { data: null };
+      claimed = true;
+      return { data: { item: {
+        id: 'delivery-revoked',
+        action: 'WAR_ALERT',
+        lease_token: 'lease-revoked',
+        leased_until: new Date(Date.now() + 60_000).toISOString(),
+        attempts: 1,
+        connection_id: connection.connectionId,
+        application_id: connection.applicationId,
+        guild_id: connection.guildId,
+        generation: connection.generation,
+        dedupe_key: 'dedupe-revoked',
+      } } };
+    },
+    renewDiscordQueueLease: async () => ({ data: { leased_until: new Date(Date.now() + 60_000).toISOString() } }),
+    updateDiscordQueueStatus: async (...args) => statuses.push(args),
+  };
+  const worker = new QueueWorker({
+    apiService: null,
+    dispatcher: null,
+    logger: createLogger(),
+    workerId: 'worker-revocation',
+    pollIntervalMs: 1,
+    connectionResolver: resolver,
+    scheduler: new FairScheduler(),
+    apiServiceFactory: () => service,
+    dispatcherFactory: () => ({
+      dispatch: async (_item, execution) => {
+        canContinueBefore = execution.canContinue();
+        resolver.replace([]);
+        canContinueAfter = execution.canContinue();
+        return { success: true };
+      },
+    }),
+  });
+
+  worker.start();
+  await waitFor(() => statuses.length === 1, { timeoutMs: 1000 });
+  await worker.stop();
+
+  assert.equal(canContinueBefore, true);
+  assert.equal(canContinueAfter, false);
+  assert.equal(statuses[0][1], 'failed');
+  assert.equal(statuses[0][3].error_code, 'connection_revoked');
+});

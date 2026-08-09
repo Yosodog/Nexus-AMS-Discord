@@ -177,6 +177,10 @@ export class QueueWorker {
     const connections = this.connectionResolver.listActive();
     for (const connection of connections) this.scheduler.register(connection.connectionId);
     const activeIds = connections.map((connection) => connection.connectionId);
+    const activeSet = new Set(activeIds);
+    for (const entry of this.scheduler.snapshot?.() ?? []) {
+      if (!activeSet.has(entry.connection_id)) this.scheduler.unregister(entry.connection_id);
+    }
     const selectedId = this.scheduler.next(activeIds);
     if (!selectedId) return { response: { data: null }, apiService: this.apiService, connection: null };
     const connection = connections.find((candidate) => candidate.connectionId === selectedId);
@@ -243,7 +247,9 @@ export class QueueWorker {
             item,
             workerId: this.workerId,
             claimRequestId,
-            canContinue: () => Boolean(this.activeLease?.healthy) && this.#hasAcknowledgementTime(),
+            canContinue: () => Boolean(this.activeLease?.healthy)
+              && this.#hasAcknowledgementTime()
+              && this.#connectionIsCurrent(connection),
           })
         : {
             canContinue: () => Boolean(this.activeLease?.healthy) && this.#hasAcknowledgementTime(),
@@ -262,7 +268,9 @@ export class QueueWorker {
       dispatchResult = { success: false, reason: 'dispatcher_error' };
     }
 
-    if (!this.activeLease?.healthy) {
+    if (connection && !this.#connectionIsCurrent(connection)) {
+      dispatchResult = { success: false, reason: 'connection_revoked' };
+    } else if (!this.activeLease?.healthy) {
       dispatchResult = { success: false, reason: 'lease_lost' };
     }
 
@@ -368,6 +376,18 @@ export class QueueWorker {
   }
 
   async #renewLease(item, claimRequestId, activeLease) {
+    if (this.activeConnection && !this.#connectionIsCurrent(this.activeConnection)) {
+      activeLease.healthy = false;
+      this.logger.error('Queue connection was revoked; no further workflow steps will start', {
+        workerId: this.workerId,
+        claimRequestId,
+        queueId: item.id,
+        errorCode: 'CONNECTION_REVOKED',
+      });
+      this.#stopLeaseRenewal();
+      return;
+    }
+
     try {
       const response = await this.activeApiService.renewDiscordQueueLease(item.id, item.lease_token);
       if (this.activeLease !== activeLease || !activeLease.renewable) {
@@ -418,6 +438,20 @@ export class QueueWorker {
 
   #hasAcknowledgementTime() {
     return Date.now() < (this.activeLease?.expiresAt ?? 0) - this.leaseSafetyMs;
+  }
+
+  #connectionIsCurrent(connection) {
+    if (!this.connectionResolver || !connection) return true;
+    try {
+      const current = this.connectionResolver.resolve({
+        applicationId: connection.applicationId,
+        guildId: connection.guildId,
+      });
+      return current.connectionId === connection.connectionId
+        && current.generation === connection.generation;
+    } catch {
+      return false;
+    }
   }
 
   #shutdownDrainTimeoutMs() {
