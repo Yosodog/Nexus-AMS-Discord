@@ -6,6 +6,7 @@ import * as beigeAlert from './beigeAlert.js';
 import * as cityTierSync from './cityTierSync.js';
 import * as blockadeReliefNotification from './blockadeReliefNotification.js';
 import * as inactivityAlert from './inactivityAlert.js';
+import * as memberProfileSync from './memberProfileSync.js';
 import * as privateNotification from './privateNotification.js';
 import * as warAlert from './warAlert.js';
 import * as warRoomArchive from './warRoomArchive.js';
@@ -17,6 +18,7 @@ export const queueActions = Object.freeze({
   WAR_ALERT: warAlert,
   ALLIANCE_DEPARTURE: allianceDeparture,
   INACTIVITY_ALERT: inactivityAlert,
+  MEMBER_PROFILE_SYNC: memberProfileSync,
   ALLIANCE_ROLE_REMOVAL: allianceRoleRemoval,
   BEIGE_ALERT: beigeAlert,
   CITY_TIER_SYNC: cityTierSync,

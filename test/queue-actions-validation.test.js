@@ -22,6 +22,7 @@ test('every registered queue action exposes validate and execute boundaries', ()
     'BLOCKADE_RELIEF_NOTIFICATION',
     'CITY_TIER_SYNC',
     'INACTIVITY_ALERT',
+    'MEMBER_PROFILE_SYNC',
     'PRIVATE_NOTIFICATION',
     'WAR_ALERT',
     'WAR_ROOM_ARCHIVE',
