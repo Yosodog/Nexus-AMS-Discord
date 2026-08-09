@@ -91,24 +91,29 @@ export class ConnectionResolver {
         guildId: requestedGuild,
       });
     }
-    if (applicationMatches.length > 1) {
+    const now = this.clock();
+    const currentMatches = applicationMatches.filter((connection) => isConnectionCurrent(connection, now));
+    if (currentMatches.length > 1) {
       throw new ConnectionResolutionError('AMBIGUOUS_CONNECTION', 'Multiple Nexus connections match this Discord guild.', {
         guildId: requestedGuild,
       });
     }
+    if (currentMatches.length === 0) {
+      const stale = applicationMatches.find((connection) => connection.state === CONNECTION_STATES.ACTIVE);
+      if (stale) {
+        throw new ConnectionResolutionError('STALE_CONNECTION', 'The Nexus connection publication has expired.', {
+          connectionId: stale.connectionId,
+          generation: stale.generation,
+        });
+      }
 
-    const [connection] = applicationMatches;
-    if (connection.state !== CONNECTION_STATES.ACTIVE) {
+      const [unavailable] = applicationMatches;
       throw new ConnectionResolutionError('CONNECTION_UNAVAILABLE', 'The Nexus connection is not active.', {
-        connectionId: connection.connectionId,
+        connectionId: unavailable.connectionId,
       });
     }
-    if (!isConnectionCurrent(connection, this.clock())) {
-      throw new ConnectionResolutionError('STALE_CONNECTION', 'The Nexus connection publication has expired.', {
-        connectionId: connection.connectionId,
-        generation: connection.generation,
-      });
-    }
+
+    const [connection] = currentMatches;
     if (commandName && !commandCapability(connection, commandName)) {
       throw new ConnectionResolutionError('CAPABILITY_UNAVAILABLE', 'This Nexus installation does not advertise that command.', {
         connectionId: connection.connectionId,
@@ -155,29 +160,41 @@ export class ConnectionResolver {
     return connection;
   }
 
-  diagnostics() {
+  diagnostics({ guildId = null } = {}) {
     const now = this.clock();
+    const requestedGuild = normalizedSnowflake(guildId);
+    const scoped = requestedGuild
+      ? this.connections.filter((connection) => (
+        connection.guildId === requestedGuild
+        && (!this.applicationId || connection.applicationId === this.applicationId)
+      ))
+      : [];
+    const active = scoped.filter((connection) => isConnectionCurrent(connection, now));
+    const stale = scoped.filter((connection) => (
+      connection.state === CONNECTION_STATES.ACTIVE && !isConnectionCurrent(connection, now)
+    ));
+    const suspended = scoped.filter((connection) => connection.state === CONNECTION_STATES.SUSPENDED);
+    const revoked = scoped.filter((connection) => connection.state === CONNECTION_STATES.REVOKED);
+    const state = active.length === 1
+      ? CONNECTION_STATES.ACTIVE
+      : active.length > 1
+        ? 'ambiguous'
+        : stale.length > 0
+          ? 'stale'
+          : suspended.length > 0
+            ? CONNECTION_STATES.SUSPENDED
+            : revoked.length > 0
+              ? CONNECTION_STATES.REVOKED
+              : 'unconfigured';
+
     return {
       mode: this.mode,
-      application_id: this.applicationId,
-      active_connections: this.connections.filter((connection) => isConnectionCurrent(connection, now)).length,
-      stale_connections: this.connections.filter((connection) => (
-        connection.state === CONNECTION_STATES.ACTIVE && !isConnectionCurrent(connection, now)
-      )).length,
-      suspended_connections: this.connections.filter((connection) => connection.state === CONNECTION_STATES.SUSPENDED).length,
-      revoked_connections: this.connections.filter((connection) => connection.state === CONNECTION_STATES.REVOKED).length,
-      connections: this.connections.map((connection) => ({
-        connection_id: connection.connectionId,
-        application_id: connection.applicationId,
-        guild_id: connection.guildId,
-        generation: connection.generation,
-        protocol_version: connection.protocolVersion,
-        key_id: connection.keyId,
-        state: connection.state,
-        stale: !isConnectionCurrent(connection, now),
-        capability_count: Object.keys(connection.capabilities?.commands ?? {}).length
-          || (Array.isArray(connection.capabilities?.commands) ? connection.capabilities.commands.length : 0),
-      })),
+      connected: active.length === 1,
+      state,
+      active_connections: active.length,
+      stale_connections: stale.length,
+      suspended_connections: suspended.length,
+      revoked_connections: revoked.length,
     };
   }
 

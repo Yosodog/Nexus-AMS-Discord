@@ -103,6 +103,33 @@ test('shared resolver fails closed for zero, multiple, stale, foreign, and stale
   }), /another connection/);
 });
 
+test('resolver selects one current publication over a fenced predecessor and rejects two current publications', () => {
+  const now = Date.parse('2026-08-08T12:00:00Z');
+  const predecessor = context({
+    connectionId: CONNECTION_B,
+    generation: 6,
+    state: 'revoked',
+  });
+  const current = context({ generation: 7 });
+  const resolver = new ConnectionResolver({
+    mode: CONNECTION_MODES.SHARED,
+    applicationId: APP_ID,
+    connections: [predecessor, current],
+    clock: () => now,
+  });
+
+  assert.equal(
+    resolver.resolve({ guildId: GUILD_A, applicationId: APP_ID }).connectionId,
+    CONNECTION_A,
+  );
+
+  resolver.add(context({ connectionId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', generation: 8 }));
+  assert.throws(
+    () => resolver.resolve({ guildId: GUILD_A, applicationId: APP_ID }),
+    (error) => error instanceof ConnectionResolutionError && error.code === 'AMBIGUOUS_CONNECTION',
+  );
+});
+
 test('delivery and component contexts retain connection and generation bindings', () => {
   const connection = context();
   const delivery = createDeliveryContext(connection, {

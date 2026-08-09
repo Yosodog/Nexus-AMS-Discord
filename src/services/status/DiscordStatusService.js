@@ -51,17 +51,12 @@ export class DiscordStatusService {
   getStatus({ guildId = null } = {}) {
     const guild = guildId ? this.client?.guilds?.cache?.get?.(guildId) : null;
     const gatewayStatus = safeNumber(this.client?.ws?.status);
-    const workers = typeof this.queueWorkers === 'function' ? this.queueWorkers() : this.queueWorkers;
-    const queue = (workers ?? []).map((worker) => worker.getHealthSnapshot?.() ?? {})
-      .filter((snapshot) => snapshot && typeof snapshot === 'object');
 
     return redact({
       generated_at: new Date(this.now()).toISOString(),
       gateway: {
         ready: Boolean(this.client?.isReady?.() ?? this.client?.readyAt),
         status: gatewayStatus,
-        shard_id: safeNumber(this.client?.shard?.ids?.[0]),
-        guild_count: this.client?.guilds?.cache?.size ?? 0,
       },
       intents: {
         configured: this.config?.discord?.intents?.names ?? [],
@@ -74,15 +69,15 @@ export class DiscordStatusService {
         supported_queue_actions: registeredQueueActions(),
       },
       discord: {
-        guild_id: guildId,
         observed: Boolean(guild),
         permissions: observedPermissions(guild),
       },
-      routing: this.connectionResolver?.diagnostics?.() ?? {
+      routing: this.connectionResolver?.diagnostics?.({ guildId }) ?? {
         mode: this.config?.discord?.deploymentMode ?? 'unknown',
+        connected: false,
+        state: 'unconfigured',
         active_connections: 0,
       },
-      queue,
     });
   }
 }
