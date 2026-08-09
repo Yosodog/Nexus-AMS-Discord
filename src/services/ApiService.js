@@ -717,6 +717,34 @@ export class ApiService {
     });
   }
 
+  /** Preview the exact Nexus-owned nickname and managed-role changes for /me. */
+  previewMemberProfileSync(actor, payload) {
+    return this.#requestDiscord('me/profile-sync/preview', {
+      method: 'post',
+      data: payload,
+      actor: {
+        ...actor,
+        discordCommand: 'me',
+        discordAction: 'me',
+      },
+      retryMode: RetryMode.NEVER,
+    });
+  }
+
+  /** Confirm an opaque Nexus member profile synchronization intent. */
+  confirmMemberProfileSync(actor, payload) {
+    return this.#requestDiscord('me/profile-sync/confirm', {
+      method: 'post',
+      data: payload,
+      actor: {
+        ...actor,
+        discordCommand: 'me',
+        discordAction: 'me',
+      },
+      retryMode: RetryMode.IDEMPOTENT,
+    });
+  }
+
   /** Preview linking this Discord actor to the Nexus account that issued a code. */
   previewAccountLink(actor, payload) {
     return this.#requestDiscord('link/preview', {

@@ -4,6 +4,7 @@ import {
   ButtonStyle,
   SlashCommandBuilder,
 } from 'discord.js';
+import { isDiscordSnowflake } from '../utils/boundaryValidators.js';
 import { actorFromInteraction, deferEphemeral, replyError } from '../utils/commandSupport.js';
 import {
   buildEmbed,
@@ -13,6 +14,7 @@ import {
   markdownLink,
   resolveDeepLink,
   safeUrl,
+  statusMessage,
   truncate,
 } from '../utils/discordUi.js';
 
@@ -43,6 +45,7 @@ const LINK_LABELS = Object.freeze({
 });
 
 const HIDDEN_WORK_TYPES = /(?:balance|finance|loan|military|spy|transaction|war)/i;
+const ACTIONABLE_PROFILE_SYNC_STATES = new Set(['available', 'attention', 'synced']);
 const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const isNonNegativeInteger = (value) => Number.isInteger(value) && value >= 0;
@@ -271,6 +274,22 @@ const linkButtons = (baseUrl, links) => {
   return buttons.length ? [new ActionRowBuilder().addComponents(buttons)] : [];
 };
 
+const profileSyncButton = (profileSync, interaction, sessions) => {
+  if (!sessions || !ACTIONABLE_PROFILE_SYNC_STATES.has(profileSync.state)) return [];
+  const customId = sessions.create({
+    commandName: 'me',
+    userId: interaction.user.id,
+    event: 'profile-sync-preview',
+    oneShot: true,
+  });
+  return [new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(customId)
+      .setLabel(profileSync.state === 'attention' ? 'Retry profile sync' : 'Sync profile')
+      .setStyle(ButtonStyle.Primary),
+  )];
+};
+
 const userActionButtons = (baseUrl, action) => {
   if (!action) return [];
   const url = sameOriginLink(baseUrl, action.deep_link_path);
@@ -308,7 +327,7 @@ const nonReadyMessage = (payload, state, baseUrl) => {
   };
 };
 
-const readyMessage = (payload, baseUrl) => ({
+const readyMessage = (payload, baseUrl, interaction, sessions) => ({
   embeds: [buildEmbed({
     title: 'Nexus Account',
     description: safeText(payload.message, 1_000),
@@ -324,7 +343,10 @@ const readyMessage = (payload, baseUrl) => ({
       { name: 'Nexus links', value: renderLinks(baseUrl, payload.links) },
     ],
   })],
-  components: linkButtons(baseUrl, payload.links),
+  components: [
+    ...profileSyncButton(payload.profile_sync, interaction, sessions),
+    ...linkButtons(baseUrl, payload.links),
+  ],
   allowedMentions: { parse: [] },
 });
 
@@ -346,9 +368,166 @@ export const execute = async (interaction, context) => {
     const response = await context.apiService.getMySummary(actorFromInteraction(interaction, 'me'));
     const { payload, state } = validatePayload(response, context.apiService.baseUrl);
     await interaction.editReply(state === 'ready'
-      ? readyMessage(payload, context.apiService.baseUrl)
+      ? readyMessage(payload, context.apiService.baseUrl, interaction, context.sessions)
       : nonReadyMessage(payload, state, context.apiService.baseUrl));
   } catch (error) {
     await replyError(interaction, error);
+  }
+};
+
+const observedMemberProfile = async (interaction) => {
+  if (!interaction.guild || !isDiscordSnowflake(interaction.guildId)
+    || !isDiscordSnowflake(interaction.user?.id)) {
+    throw new TypeError('Profile synchronization must be used inside the connected Discord server.');
+  }
+  const member = await interaction.guild.members.fetch(interaction.user.id);
+  const memberId = `${member?.id ?? ''}`.trim();
+  const memberGuildId = `${member?.guildId ?? member?.guild?.id ?? ''}`.trim();
+  if (memberId !== interaction.user.id || memberGuildId !== interaction.guildId) {
+    throw new TypeError('Discord returned the wrong member while checking your profile.');
+  }
+
+  const cache = member?.roles?.cache;
+  const roles = typeof cache?.values === 'function'
+    ? Array.from(cache.values()).map((role) => role?.id)
+    : Array.isArray(member?.roles)
+      ? member.roles
+      : Array.isArray(member?._roles)
+        ? member._roles
+        : [];
+  const roleIds = [...new Set(roles
+    .map((roleId) => `${roleId ?? ''}`.trim())
+    .filter((roleId) => roleId !== interaction.guildId && isDiscordSnowflake(roleId)))]
+    .sort();
+  if (roleIds.length > 100) {
+    throw new TypeError('This member has too many Discord roles for safe self-service synchronization.');
+  }
+
+  return {
+    nickname: typeof member.nickname === 'string' ? member.nickname : null,
+    role_ids: roleIds,
+  };
+};
+
+const previewProfileSync = async (interaction, context) => {
+  const observed = await observedMemberProfile(interaction);
+  const preview = await context.apiService.previewMemberProfileSync(
+    actorFromInteraction(interaction, 'me'),
+    { observed },
+  );
+  const intentId = `${preview?.intent?.id ?? ''}`;
+  if (!/^[a-zA-Z0-9]{64}$/.test(intentId)) {
+    throw new TypeError('Nexus returned an invalid profile synchronization confirmation token.');
+  }
+  const confirmId = context.sessions.create({
+    commandName: 'me',
+    userId: interaction.user.id,
+    event: 'profile-sync-confirm',
+    state: { intentId },
+    oneShot: true,
+  });
+  const cancelId = context.sessions.create({
+    commandName: 'me',
+    userId: interaction.user.id,
+    event: 'profile-sync-cancel',
+    oneShot: true,
+  });
+  const summary = preview?.summary ?? {};
+  const nickname = summary?.nickname ?? {};
+  const roles = summary?.roles ?? {};
+  const warnings = Array.isArray(preview?.warnings)
+    ? preview.warnings.filter((warning) => typeof warning === 'string' && warning.trim() !== '')
+    : [];
+
+  await interaction.editReply({
+    embeds: [buildEmbed({
+      title: 'Review Discord Profile Sync',
+      tone: 'warning',
+      description: truncate(
+        summary.description ?? 'Nexus calculated the Discord profile changes. Confirm to apply them.',
+        1_200,
+      ),
+      fields: [
+        {
+          name: 'Nickname',
+          value: nickname.will_change === true
+            ? `${safeText(nickname.current ?? 'No server nickname')} → ${safeText(nickname.desired)}`
+            : `No change · ${safeText(nickname.desired ?? nickname.current)}`,
+          inline: false,
+        },
+        { name: 'Managed roles to add', value: `${Number(roles.add_count) || 0}`, inline: true },
+        { name: 'Managed roles to remove', value: `${Number(roles.remove_count) || 0}`, inline: true },
+        { name: 'Managed role scope', value: `${Number(roles.managed_count) || 0}`, inline: true },
+        preview?.intent?.expires_at
+          ? { name: 'Confirmation expires', value: formatDiscordTime(preview.intent.expires_at), inline: true }
+          : null,
+        warnings.length > 0
+          ? { name: 'Nexus guidance', value: safeText(warnings.join('\n'), 1_000), inline: false }
+          : null,
+      ],
+      footer: 'Nexus will revalidate your membership, policy, installation, and permissions when you confirm.',
+    })],
+    components: [new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(confirmId).setLabel('Confirm profile sync').setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId(cancelId).setLabel('Cancel').setStyle(ButtonStyle.Secondary),
+    )],
+    allowedMentions: { parse: [] },
+  });
+};
+
+export const button = async (interaction, context) => {
+  await interaction.deferUpdate();
+  try {
+    if (!context.apiService || !context.sessions) {
+      throw new TypeError('The Nexus profile synchronization service is unavailable.');
+    }
+    if (context.session?.event === 'profile-sync-preview') {
+      await previewProfileSync(interaction, context);
+      return;
+    }
+    if (context.session?.event === 'profile-sync-cancel') {
+      await interaction.editReply(statusMessage({
+        title: 'Profile Sync Canceled',
+        tone: 'neutral',
+        description: 'No nickname or role changes were requested.',
+      }));
+      return;
+    }
+    if (context.session?.event !== 'profile-sync-confirm') {
+      throw new TypeError('This profile synchronization control is invalid or expired.');
+    }
+    const intentId = `${context.session?.state?.intentId ?? ''}`;
+    if (!/^[a-zA-Z0-9]{64}$/.test(intentId)) {
+      throw new TypeError('This profile synchronization confirmation is invalid or expired.');
+    }
+    const result = await context.apiService.confirmMemberProfileSync(
+      actorFromInteraction(interaction, 'me'),
+      { intent_id: intentId },
+    );
+    if (result?.queued !== true || !result?.queue?.id || result?.profile_sync?.state !== 'pending') {
+      throw new TypeError('Nexus returned an invalid profile synchronization result.');
+    }
+    await interaction.editReply(statusMessage({
+      title: 'Profile Sync Queued',
+      tone: 'success',
+      description: 'Nexus queued the exact nickname and managed-role changes. Run /me again to check the result.',
+      fields: [
+        result.queue.created_at
+          ? { name: 'Queued', value: formatDiscordTime(result.queue.created_at), inline: true }
+          : null,
+        { name: 'Status', value: safeText(result.profile_sync.label ?? 'Pending'), inline: true },
+      ],
+      footer: 'Unmanaged Discord roles are never removed by profile synchronization.',
+    }));
+  } catch (error) {
+    context.logger?.warn?.('Nexus rejected /me profile synchronization', {
+      command: 'me',
+      guildId: interaction.guildId,
+      userId: interaction.user.id,
+      event: context.session?.event ?? null,
+      errorCode: error?.code ?? null,
+      status: error?.status ?? null,
+    });
+    await replyError(interaction, error, 'Profile Synchronization Failed');
   }
 };

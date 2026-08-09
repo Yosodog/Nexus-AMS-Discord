@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { data, execute, help } from '../src/commands/me.js';
+import { button, data, execute, help } from '../src/commands/me.js';
 import { escapeMarkdown } from '../src/utils/discordUi.js';
 import { embedJson } from './helpers.js';
 
@@ -8,17 +8,35 @@ const USER_ID = '123456789012345678';
 const GUILD_ID = '223456789012345678';
 const BASE_URL = 'https://nexus.example';
 
-const makeInteraction = () => {
+const makeInteraction = ({ nickname = 'Old Nickname', roleIds = [] } = {}) => {
+  const member = {
+    id: USER_ID,
+    guildId: GUILD_ID,
+    nickname,
+    roles: {
+      cache: new Map([
+        [GUILD_ID, { id: GUILD_ID }],
+        ...roleIds.map((id) => [id, { id }]),
+      ]),
+    },
+  };
   const subject = {
     id: '323456789012345678',
     guildId: GUILD_ID,
     user: { id: USER_ID },
     deferred: false,
+    guild: {
+      id: GUILD_ID,
+      members: { fetch: async (id) => (id === USER_ID ? member : null) },
+    },
     deferments: [],
     replies: [],
     deferReply: async (options) => {
       subject.deferred = true;
       subject.deferments.push(options);
+    },
+    deferUpdate: async () => {
+      subject.deferred = true;
     },
     editReply: async (payload) => {
       subject.replies.push(payload);
@@ -107,6 +125,17 @@ const run = async (response, { baseUrl = BASE_URL, apiError = null } = {}) => {
   };
   await execute(interaction, { apiService });
   return { interaction, calls };
+};
+
+const sessionRecorder = () => {
+  const created = [];
+  return {
+    created,
+    create: (value) => {
+      created.push(value);
+      return `nxs:${created.length.toString().padStart(16, '0')}`;
+    },
+  };
 };
 
 const errorTitle = (interaction) => embedJson(interaction.replies[0]).title;
@@ -290,4 +319,99 @@ test('escapes unsafe text, disables mentions, ignores additive detail fields, an
   });
   assert.equal(errorTitle(failed), 'Request Failed');
   assert.match(embedJson(failed.replies[0]).description, /Nexus is down/);
+});
+
+test('/me offers profile sync only for Nexus-actionable states', async () => {
+  const sessions = sessionRecorder();
+  const interaction = makeInteraction();
+  const apiService = { baseUrl: BASE_URL, getMySummary: async () => ({
+    ...ready,
+    profile_sync: { ...ready.profile_sync, state: 'available' },
+  }) };
+  await execute(interaction, { apiService, sessions });
+
+  assert.equal(interaction.replies[0].components.length, 2);
+  assert.equal(interaction.replies[0].components[0].toJSON().components[0].label, 'Sync profile');
+  assert.equal(sessions.created[0].event, 'profile-sync-preview');
+  assert.equal(sessions.created[0].oneShot, true);
+
+  const unavailable = makeInteraction();
+  await execute(unavailable, { apiService: {
+    baseUrl: BASE_URL,
+    getMySummary: async () => ({ ...ready, profile_sync: { ...ready.profile_sync, state: 'unavailable' } }),
+  }, sessions: sessionRecorder() });
+  assert.equal(unavailable.replies[0].components.length, 1);
+  assert.equal(unavailable.replies[0].components[0].toJSON().components[0].style, 5);
+});
+
+test('profile sync previews observed Discord state and confirms only the opaque Nexus intent', async () => {
+  const sessions = sessionRecorder();
+  const interaction = makeInteraction({
+    nickname: 'Old Nickname',
+    roleIds: ['423456789012345678', '523456789012345678'],
+  });
+  const calls = [];
+  const apiService = {
+    baseUrl: BASE_URL,
+    previewMemberProfileSync: async (actor, payload) => {
+      calls.push(['preview', actor, payload]);
+      return {
+        intent: { id: 'a'.repeat(64), expires_at: '2026-08-08T12:10:00Z' },
+        summary: {
+          description: 'Nexus calculated two role changes.',
+          nickname: { current: 'Old Nickname', desired: 'New Nickname', will_change: true },
+          roles: { add_count: 1, remove_count: 1, managed_count: 3 },
+        },
+        warnings: [],
+      };
+    },
+    confirmMemberProfileSync: async (actor, payload) => {
+      calls.push(['confirm', actor, payload]);
+      return {
+        queued: true,
+        queue: { id: 'queue-1', created_at: '2026-08-08T12:05:00Z' },
+        profile_sync: { state: 'pending', label: 'Discord profile synchronization is queued.' },
+      };
+    },
+  };
+  await button(interaction, {
+    apiService,
+    sessions,
+    session: { event: 'profile-sync-preview' },
+  });
+
+  assert.deepEqual(calls[0][2], {
+    observed: {
+      nickname: 'Old Nickname',
+      role_ids: ['423456789012345678', '523456789012345678'],
+    },
+  });
+  assert.equal(calls[0][1].discordAction, 'me');
+  assert.equal(sessions.created[0].event, 'profile-sync-confirm');
+  assert.deepEqual(sessions.created[0].state, { intentId: 'a'.repeat(64) });
+  assert.equal(interaction.replies.at(-1).components[0].toJSON().components.length, 2);
+
+  const confirmInteraction = makeInteraction();
+  await button(confirmInteraction, {
+    apiService,
+    sessions,
+    session: { event: 'profile-sync-confirm', state: { intentId: 'a'.repeat(64) } },
+  });
+  assert.deepEqual(calls.at(-1)[2], { intent_id: 'a'.repeat(64) });
+  assert.equal(embedJson(confirmInteraction.replies.at(-1)).title, 'Profile Sync Queued');
+  assert.doesNotMatch(JSON.stringify(calls.at(-1)[2]), /nickname|role/i);
+});
+
+test('profile sync controls reject stale state before calling Nexus', async () => {
+  const interaction = makeInteraction();
+  let called = false;
+  await button(interaction, {
+    apiService: {
+      confirmMemberProfileSync: async () => { called = true; },
+    },
+    sessions: sessionRecorder(),
+    session: { event: 'profile-sync-confirm', state: { intentId: 'invalid' } },
+  });
+  assert.equal(called, false);
+  assert.equal(embedJson(interaction.replies.at(-1)).title, 'Profile Synchronization Failed');
 });

@@ -31,7 +31,7 @@ const isProfileRevision = (value) => typeof value === 'string' && /^[a-f0-9]{64}
 const normalizeSnowflake = (value) => (isDiscordSnowflake(value) ? value.trim() : null);
 
 const validateSnowflakeList = (value, reason) => {
-  if (!Array.isArray(value) || value.length > 25) return invalid(reason);
+  if (!Array.isArray(value) || value.length > 100) return invalid(reason);
   const normalized = value.map(normalizeSnowflake);
   if (normalized.some((item) => item === null)) return invalid(reason);
   if (new Set(normalized).size !== normalized.length) return invalid(reason);
@@ -185,7 +185,7 @@ const validateRuntimeContext = (command, runtime, payload) => {
 };
 
 const checkpointArray = (value) => {
-  if (!Array.isArray(value) || value.length > 25) return null;
+  if (!Array.isArray(value) || value.length > 100) return null;
   const normalized = value.map(normalizeSnowflake);
   if (normalized.some((item) => item === null) || new Set(normalized).size !== normalized.length) return null;
   return normalized;

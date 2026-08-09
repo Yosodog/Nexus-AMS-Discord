@@ -416,6 +416,20 @@ const endpointCases = [
     body: { intent_id: 'application-intent' }, relay: 'actor',
   },
   {
+    name: 'previewMemberProfileSync',
+    invoke: (service) => service.previewMemberProfileSync(ACTOR, {
+      observed: { nickname: 'Old Nickname', role_ids: ['423456789012345678'] },
+    }),
+    method: 'post', pathname: '/api/v1/discord/me/profile-sync/preview',
+    body: { observed: { nickname: 'Old Nickname', role_ids: ['423456789012345678'] } }, relay: 'actor',
+  },
+  {
+    name: 'confirmMemberProfileSync',
+    invoke: (service) => service.confirmMemberProfileSync(ACTOR, { intent_id: 'profile-sync-intent' }),
+    method: 'post', pathname: '/api/v1/discord/me/profile-sync/confirm',
+    body: { intent_id: 'profile-sync-intent' }, relay: 'actor',
+  },
+  {
     name: 'previewAccountLink',
     invoke: (service) => service.previewAccountLink(ACTOR, {
       token: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
