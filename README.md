@@ -11,22 +11,40 @@ Discord integration for Nexus AMS. The bot provides account verification, applic
 - Structured logging, bounded API retries, durable war-room checkpoints, and Discord nonce deduplication.
 - Graceful process shutdown and fail-closed command loading/registration.
 
-## Project Structure
+## Setup guides
 
-- `src/bot.js` — boots Discord, services, listeners, and graceful shutdown handling.
-- `src/commands/` — slash command modules.
-- `src/listeners/` — Discord interaction and message listeners.
-- `src/services/` — Nexus API transport, leased queue worker, stable dispatcher, and logging.
-- `src/healthcheck.js` — validates the local process heartbeat without contacting Discord or Nexus.
-- `src/services/queueActions/` — validated action modules; each exports `validate(payload)` and `execute(command, context)`.
-- `src/utils/` — configuration, boundary validation, and channel identity helpers.
-- `src/registerCommands.js` — publishes the command set globally for official-shared mode or to the configured guild for dedicated mode.
+Start with the guide for your deployment:
 
-## Requirements and Configuration
+| Setup | Guide |
+| --- | --- |
+| Invite the Nexus hosted bot | [Invite the hosted bot](docs/invite-hosted-bot.md) |
+| Run one bot for one Nexus installation | [Self-host the bot](docs/self-hosting.md) |
+| Configure bot and Nexus environment variables | [Configuration reference](docs/configuration.md) |
+| Operate the multi-alliance shared bot | [Shared hosting](docs/shared-hosting.md) |
+| Diagnose a setup or delivery problem | [Troubleshooting](docs/troubleshooting.md) |
+
+The [documentation index](docs/README.md) explains which deployment modes are ready today.
+
+Public onboarding for the Nexus hosted bot is not available in this release. Inviting the hosted application does not create a Nexus connection by itself. Hosted connections are currently limited to operator-managed pilots. Dedicated self-hosting is supported and does not require Nexus Cloud.
+
+## Project structure
+
+- `src/bot.js`: boots Discord, services, listeners, and graceful shutdown handling.
+- `src/commands/`: slash command modules.
+- `src/listeners/`: Discord interaction and message listeners.
+- `src/services/`: Nexus API transport, leased queue worker, stable dispatcher, and logging.
+- `src/healthcheck.js`: validates the local process heartbeat without contacting Discord or Nexus.
+- `src/services/queueActions/`: validated action modules; each exports `validate(payload)` and `execute(command, context)`.
+- `src/utils/`: configuration, boundary validation, and channel identity helpers.
+- `src/registerCommands.js`: publishes the command set globally for official-shared mode or to the configured guild for dedicated mode.
+
+## Requirements and configuration
 
 - Node.js 22 or newer.
 - A Discord application and bot user. Dedicated mode also configures one guild.
 - A compatible Nexus deployment with the leased Discord queue APIs and migrations.
+
+For a first installation, follow [Self-host the bot](docs/self-hosting.md). The complete list of settings is in the [configuration reference](docs/configuration.md).
 
 Create the local environment file:
 
@@ -52,11 +70,13 @@ Configure:
 - `BUILD_COMMIT`: immutable source/image revision exposed in local build metadata.
 - `NEXUS_RELEASE_ID`: server-assigned release identifier exposed in local build metadata.
 
-Official-shared mode additionally supports:
+Official-shared mode also supports:
 
 - `DISCORD_CONNECTIONS_FILE`: preferred path to a complete JSON connection snapshot. A valid changed snapshot is activated without restarting the bot.
 - `DISCORD_CONNECTION_REFRESH_MS`: snapshot refresh interval; defaults to 30 seconds.
 - `DISCORD_CONNECTIONS_JSON`: static startup fallback using the same array shape. It remains supported for compatibility but is not refreshed.
+
+Official-shared mode is an operator interface, not a public onboarding flow. Read [Operate the shared bot](docs/shared-hosting.md) before enabling it.
 
 ### Official-shared connection snapshots
 
@@ -103,7 +123,7 @@ Discord.js receives interactions through the Gateway, which does not include Dis
 
 Startup rejects malformed URLs and Discord snowflakes. Dedicated traffic is constrained to `DISCORD_GUILD_ID`; official-shared traffic is constrained to the one current application/guild/connection/generation resolved from the accepted snapshot.
 
-## Running and Commands
+## Running and commands
 
 The expanded user-facing commands are `/accounts`, `/deposit`, `/withdraw`, `/transactions`, `/requests`, `/grant`, `/loan`, `/waraid`, `/rebuild`, `/raid`, `/war`, `/spy`, and `/applications`. They are registered as normal top-level Discord commands; domain commands use subcommands where appropriate. Nexus resolves the linked actor and remains authoritative for ownership, permissions, balances, eligibility, limits, and all state changes.
 
@@ -127,7 +147,7 @@ npm run healthcheck
 
 Command loading is atomic. An import failure, malformed command export, serialization error, or duplicate command name aborts startup/registration; the registration script never replaces Discord commands with a partial set.
 
-## Application Transcripts
+## Application transcripts
 
 Application channels are identified by Nexus application/nation metadata, with exact legacy channel-name support during migration. Only messages from the interaction's resolved guild and verified application channels are forwarded.
 
@@ -137,7 +157,7 @@ Transcripts are intentionally text-only:
 - Attachments are not uploaded or persisted by the bot.
 - The bot sends message and author identifiers; Nexus derives staff status and deduplicates Discord message IDs.
 
-## Queue Delivery and Recovery
+## Queue delivery and recovery
 
 The bot claims one queue item at a time through the leased Nexus queue API. Nexus issues a five-minute lease, and the bot renews active leases every 60 seconds. The worker does not claim another item until the current Discord work and completion/failure acknowledgement are resolved or the lease is no longer safe to use.
 
@@ -171,13 +191,17 @@ Recommended rollout order:
 6. Smoke-test account reads, a deposit code, a within-limit withdrawal, an above-limit review case, and DM failure handling.
 7. Enable private Discord notifications in Nexus when delivery results are healthy.
 
-## Readiness and Build Metadata
+## Readiness and build metadata
 
-The bot writes an atomic JSON heartbeat with mode `0600`. Readiness is reported
-only after Discord emits `ClientReady` and the leased queue worker has started;
-dedicated mode also requires its configured guild in the client cache. Missing,
-malformed, future-dated, stale, stopping, stopped, failed-guild, stopped-worker,
-and unhealthy-lease states all make `npm run healthcheck` exit nonzero.
+The bot writes an atomic JSON heartbeat with mode `0600`. Process readiness is
+reported only after Discord emits `ClientReady` and the leased queue worker has
+started. Dedicated mode also requires its configured guild in the client cache.
+
+The current `npm run healthcheck` contract is intended for dedicated mode. It
+expects a configured dedicated guild and therefore must not be the only
+readiness probe for an official-shared pilot. Shared operators should monitor
+the heartbeat, publication refresh state, Discord gateway connection, and
+active connection count as described in the [shared hosting guide](docs/shared-hosting.md).
 
 The heartbeat contains the package version, sanitized build/release identifiers,
 booleans and counters for the worker, active connection counts, and dedicated
@@ -188,7 +212,7 @@ Nexus URLs, Discord/Nexus credentials, relay keys, command payloads, and API
 responses. Place `PROCESS_HEALTH_FILE` on the writable runtime mount used by the
 bot and run the probe as the same non-root user.
 
-## Shutdown Behavior
+## Shutdown behavior
 
 `SIGTERM` or `SIGINT` stops new queue claims and stops scheduling lease
 renewals, then lets an active item (or a claim already in flight) finish and
@@ -211,7 +235,7 @@ npm audit --omit=dev --audit-level=high
 
 Coverage gates are 80% lines, 65% branches, and 80% functions. GitHub Actions runs Node 22 with `npm ci`, lint, tests, coverage, and the high-severity production dependency audit on pushes to `main` and pull requests.
 
-## Adding Commands
+## Adding commands
 
 Create a `.js` file in `src/commands/` exporting:
 
