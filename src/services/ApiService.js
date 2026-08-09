@@ -233,6 +233,14 @@ export class ApiService {
     return includeMeta ? { data: responseData, meta: envelope.meta } : responseData;
   }
 
+  getContext(actor) {
+    return this.#requestDiscord('context', { actor, retryMode: RetryMode.SAFE });
+  }
+
+  getMySummary(actor) {
+    return this.#requestDiscord('me/summary', { actor, retryMode: RetryMode.SAFE });
+  }
+
   getMyAccounts(actor, params = {}) {
     return this.#requestDiscord('me/accounts', {
       actor,

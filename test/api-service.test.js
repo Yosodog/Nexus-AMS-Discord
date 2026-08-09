@@ -33,6 +33,20 @@ function createApiService(options = {}) {
 
 const endpointCases = [
   {
+    name: 'getContext',
+    invoke: (service) => service.getContext(ACTOR),
+    method: 'get',
+    pathname: '/api/v1/discord/context',
+    relay: 'actor',
+  },
+  {
+    name: 'getMySummary',
+    invoke: (service) => service.getMySummary(ACTOR),
+    method: 'get',
+    pathname: '/api/v1/discord/me/summary',
+    relay: 'actor',
+  },
+  {
     name: 'getMyAccounts',
     invoke: (service) => service.getMyAccounts(ACTOR, {
       account: 'account / primary', query: 'main & reserve', limit: 25, page: 4, unsupported: 'ignored',

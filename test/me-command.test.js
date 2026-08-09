@@ -1,0 +1,293 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { data, execute, help } from '../src/commands/me.js';
+import { escapeMarkdown } from '../src/utils/discordUi.js';
+import { embedJson } from './helpers.js';
+
+const USER_ID = '123456789012345678';
+const GUILD_ID = '223456789012345678';
+const BASE_URL = 'https://nexus.example';
+
+const makeInteraction = () => {
+  const subject = {
+    id: '323456789012345678',
+    guildId: GUILD_ID,
+    user: { id: USER_ID },
+    deferred: false,
+    deferments: [],
+    replies: [],
+    deferReply: async (options) => {
+      subject.deferred = true;
+      subject.deferments.push(options);
+    },
+    editReply: async (payload) => {
+      subject.replies.push(payload);
+      return payload;
+    },
+  };
+  return subject;
+};
+
+const ready = {
+  contract_version: 1,
+  state: 'ready',
+  message: 'Your Nexus account is ready.',
+  identity: {
+    display_name: 'Ada Example',
+    discord_username: 'ada.example',
+    link_state: 'linked',
+    linked_at: '2026-08-08T12:00:00Z',
+    deep_link_path: '/profile',
+  },
+  nation: {
+    id: 42,
+    name: 'Example Nation',
+    leader_name: 'Ada Example',
+    deep_link_path: '/nations/42',
+  },
+  alliance: {
+    id: 7,
+    name: 'Example Alliance',
+    deep_link_path: 'https://nexus.example/alliances/7',
+  },
+  capabilities: {
+    items: [
+      { key: 'view-audit', label: 'View audit findings' },
+      { key: 'operations.work-items', label: 'View open work' },
+    ],
+    revision: 4,
+  },
+  open_work: {
+    total: 3,
+    by_type: { applications: 1, audits: 2 },
+    complete: true,
+    generated_at: '2026-08-08T12:01:00Z',
+  },
+  profile_sync: {
+    state: 'healthy',
+    label: 'Profile is synchronized',
+    checked_at: '2026-08-08T12:02:00Z',
+    issues: [],
+  },
+  freshness: {
+    state: 'fresh',
+    generated_at: '2026-08-08T12:03:00Z',
+    source_updated_at: '2026-08-08T12:01:00Z',
+  },
+  links: {
+    profile: '/profile',
+    nation: '/nations/42',
+    alliance: '/alliances/7',
+    audit: '/audit',
+    work: 'https://nexus.example/work',
+  },
+};
+
+const nonReady = (state, overrides = {}) => ({
+  contract_version: 1,
+  state,
+  message: `Nexus says this account is ${state}.`,
+  user_action: {
+    label: 'Continue in Nexus',
+    deep_link_path: '/settings/identity',
+  },
+  ...overrides,
+});
+
+const run = async (response, { baseUrl = BASE_URL, apiError = null } = {}) => {
+  const interaction = makeInteraction();
+  const calls = [];
+  const apiService = {
+    baseUrl,
+    getMySummary: async (actor) => {
+      calls.push(actor);
+      if (apiError) throw apiError;
+      return response;
+    },
+  };
+  await execute(interaction, { apiService });
+  return { interaction, calls };
+};
+
+const errorTitle = (interaction) => embedJson(interaction.replies[0]).title;
+
+test('/me is guild-only, has no options, and exposes member help metadata', () => {
+  const serialized = data.toJSON();
+  assert.equal(serialized.name, 'me');
+  assert.equal(serialized.dm_permission, false);
+  assert.deepEqual(serialized.options ?? [], []);
+  assert.deepEqual(help, {
+    audience: 'Members',
+    topic: ['member'],
+    examples: ['/me'],
+    related: ['verify', 'accounts', 'audit', 'help'],
+  });
+});
+
+test('/me defers ephemerally and calls the summary endpoint with the me actor', async () => {
+  const { interaction, calls } = await run(nonReady('unlinked'));
+  assert.deepEqual(interaction.deferments, [{ ephemeral: true }]);
+  assert.deepEqual(calls, [{
+    discordUserId: USER_ID,
+    discordGuildId: GUILD_ID,
+    discordInteractionId: interaction.id,
+    discordCommand: 'me',
+    discordAction: 'me',
+  }]);
+  assert.equal(interaction.replies[0].components.length, 1);
+  assert.equal(
+    interaction.replies[0].components[0].toJSON().components[0].url,
+    'https://nexus.example/settings/identity',
+  );
+  assert.deepEqual(interaction.replies[0].allowedMentions, { parse: [] });
+});
+
+test('renders every supported non-ready state using only the Nexus message and user_action', async () => {
+  const states = [
+    'unlinked',
+    'ambiguous',
+    'disabled',
+    'nexus_unverified',
+    'no_nation',
+    'mfa_required',
+    'installation_unavailable',
+  ];
+  for (const state of states) {
+    const { interaction } = await run(nonReady(state));
+    const embed = embedJson(interaction.replies[0]);
+    assert.match(embed.title, /Nexus Account/);
+    assert.ok(embed.description.includes(escapeMarkdown(`Nexus says this account is ${state}.`)));
+    assert.match(embed.fields.find(({ name }) => name === 'Next step').value, /Continue in Nexus/);
+    assert.match(embed.fields.find(({ name }) => name === 'Next step').value, /https:\/\/nexus\.example\/settings\/identity/);
+  }
+
+  const { interaction } = await run({ ...nonReady('unlinked'), user_action: null, next_action: {
+    label: 'Undocumented alias must not render',
+    deep_link_path: '/alias',
+  } });
+  const embed = embedJson(interaction.replies[0]);
+  assert.equal(embed.fields.some(({ name }) => name === 'Next step'), false);
+  assert.doesNotMatch(JSON.stringify(embed), /Undocumented alias/);
+});
+
+test('renders the complete ready projection without detailed finance or military data', async () => {
+  const { interaction } = await run(ready);
+  const embed = embedJson(interaction.replies[0]);
+  assert.equal(embed.title, 'Nexus Account');
+  assert.ok(embed.description.includes('Your Nexus account is ready'));
+  assert.match(embed.fields.find(({ name }) => name === 'Identity').value, /Ada Example/);
+  assert.ok(embed.fields.find(({ name }) => name === 'Identity').value.includes(escapeMarkdown('ada.example')));
+  assert.match(embed.fields.find(({ name }) => name === 'Nation').value, /Example Nation/);
+  assert.match(embed.fields.find(({ name }) => name === 'Alliance').value, /Example Alliance/);
+  assert.match(embed.fields.find(({ name }) => name === 'Capabilities').value, /view\\-audit/);
+  assert.match(embed.fields.find(({ name }) => name === 'Open work').value, /Total: 3/);
+  assert.match(embed.fields.find(({ name }) => name === 'Profile sync').value, /healthy/);
+  assert.match(embed.fields.find(({ name }) => name === 'Freshness').value, /fresh/);
+  assert.match(embed.fields.find(({ name }) => name === 'Nexus links').value, /https:\/\/nexus\.example\/audit/);
+  assert.doesNotMatch(JSON.stringify(embed), /balance|finance|loan|military|spy|transaction|war/i);
+  const buttons = interaction.replies[0].components[0].toJSON().components;
+  assert.deepEqual(buttons.map(({ label }) => label), [
+    'Open Nexus profile',
+    'Open nation profile',
+    'Open alliance profile',
+    'Open audit center',
+    'Open open work',
+  ]);
+  assert.ok(buttons.every(({ style }) => style === 5));
+});
+
+test('accepts only the three envelopes and rejects missing or wrongly typed closed-v1 fields', async () => {
+  for (const response of [{ me: ready }, { data: ready }, ready]) {
+    const { interaction } = await run(response);
+    assert.equal(errorTitle(interaction), 'Nexus Account');
+  }
+
+  const missingSections = ['identity', 'nation', 'alliance', 'capabilities', 'open_work', 'profile_sync', 'freshness', 'links'];
+  for (const section of missingSections) {
+    const incomplete = { ...ready };
+    delete incomplete[section];
+    const { interaction } = await run(incomplete);
+    assert.equal(errorTitle(interaction), 'Request Failed', section);
+  }
+
+  for (const response of [
+    { ...ready, contract_version: '1' },
+    { ...ready, state: 'READY' },
+    { ...ready, message: { text: 'not a safe string' } },
+    { ...ready, capabilities: { ...ready.capabilities, items: {} } },
+    { ...ready, capabilities: { ...ready.capabilities, revision: 0 } },
+    { ...ready, nation: { ...ready.nation, id: 0 } },
+    { ...ready, open_work: { ...ready.open_work, complete: 'true' } },
+    { ...ready, profile_sync: { ...ready.profile_sync, issues: 'none' } },
+    { ...ready, links: [] },
+    { ...ready, links: {} },
+    { ...ready, status: 'ready', state: undefined },
+  ]) {
+    const { interaction } = await run(response);
+    assert.equal(errorTitle(interaction), 'Request Failed');
+  }
+});
+
+test('does not interpret undocumented aliases inside the selected payload', async () => {
+  const { interaction } = await run({
+    contract_version: 1,
+    state: 'unlinked',
+    message: 'Use the account-link flow in Nexus.',
+    next_action: { label: 'Alias action', deep_link_path: '/alias' },
+    remediation: { label: 'Alias remediation', deep_link_path: '/remediation' },
+  });
+  const embed = embedJson(interaction.replies[0]);
+  assert.ok(embed.description.includes('account\\-link'));
+  assert.equal(embed.fields.some(({ name }) => name === 'Next step'), false);
+  assert.doesNotMatch(JSON.stringify(embed), /Alias action|Alias remediation/);
+
+  const { interaction: aliasOnly } = await run({
+    contract_version: 1,
+    status: 'ready',
+    next_action: { label: 'Alias only', deep_link_path: '/alias' },
+  });
+  assert.equal(errorTitle(aliasOnly), 'Request Failed');
+});
+
+test('rejects external same-scheme, cross-origin, and unsafe links', async () => {
+  const cases = [
+    { ...ready, identity: { ...ready.identity, deep_link_path: 'https://attacker.example/profile' } },
+    { ...ready, nation: { ...ready.nation, deep_link_path: 'https://attacker.example/nation' } },
+    { ...ready, links: { ...ready.links, audit: 'https://attacker.example/audit' } },
+    { ...ready, links: { ...ready.links, audit: 'javascript:alert(1)' } },
+    { ...ready, links: { ...ready.links, audit: 'data:text/html,unsafe' } },
+  ];
+  for (const response of cases) {
+    const { interaction } = await run(response);
+    assert.equal(errorTitle(interaction), 'Request Failed');
+  }
+});
+
+test('escapes unsafe text, disables mentions, ignores additive detail fields, and handles API errors', async () => {
+  const unsafe = {
+    ...ready,
+    message: '**<@123456789012345678> @everyone**',
+    identity: { ...ready.identity, display_name: '[unsafe]* <@&123456789012345678>' },
+    balances: { money: 999999 },
+    transactions: [{ id: 1 }],
+    military: { wars: 99 },
+    war: { target: 'secret' },
+    open_work: {
+      ...ready.open_work,
+      by_type: { ...ready.open_work.by_type, finance: 4, military: 2 },
+    },
+  };
+  const { interaction } = await run(unsafe);
+  const embed = embedJson(interaction.replies[0]);
+  const rendered = JSON.stringify(embed);
+  assert.match(embed.description, /\\\*\\\*/);
+  assert.doesNotMatch(rendered, /@everyone|<@&123456789012345678>/);
+  assert.doesNotMatch(rendered, /balance|transaction|military|war|finance/i);
+  assert.deepEqual(interaction.replies[0].allowedMentions, { parse: [] });
+
+  const { interaction: failed } = await run(null, {
+    apiError: Object.assign(new Error('Nexus is down'), { code: 'NETWORK_ERROR' }),
+  });
+  assert.equal(errorTitle(failed), 'Request Failed');
+  assert.match(embedJson(failed.replies[0]).description, /Nexus is down/);
+});
