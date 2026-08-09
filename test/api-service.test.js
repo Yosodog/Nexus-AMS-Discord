@@ -387,7 +387,7 @@ const endpointCases = [
     name: 'setAlertActivityRead',
     invoke: (service) => service.setAlertActivityRead(ACTOR, 'delivery / 2'),
     method: 'patch', pathname: '/api/v1/discord/me/alerts/activity/delivery%20%2F%202/read',
-    body: {}, relay: 'actor',
+    body: { read: true }, relay: 'actor',
   },
   {
     name: 'previewAlert',
@@ -793,6 +793,20 @@ test('ApiService route matrix covers every public endpoint method exactly', asyn
       }
     });
   }
+});
+
+test('ApiService sends an explicit false activity read state', async () => {
+  const service = createApiService();
+  const requests = [];
+  service.http.request = async (options) => {
+    requests.push(options);
+    return { data: { data: { ok: true }, meta: { contract_version: 1 } } };
+  };
+
+  await service.setAlertActivityRead(ACTOR, 'delivery-4', false);
+
+  assert.equal(requests.length, 1);
+  assert.deepEqual(requests[0].data, { read: false });
 });
 
 test('ApiService actor transport accepts a valid contract-1 envelope', async () => {

@@ -591,9 +591,9 @@ export class ApiService {
     });
   }
 
-  setAlertActivityRead(actor, deliveryId) {
+  setAlertActivityRead(actor, deliveryId, read = true) {
     return this.#requestDiscord(`me/alerts/activity/${encodeURIComponent(deliveryId)}/read`, {
-      method: 'patch', actor, data: {}, retryMode: RetryMode.IDEMPOTENT,
+      method: 'patch', actor, data: { read: Boolean(read) }, retryMode: RetryMode.IDEMPOTENT,
     });
   }
 
