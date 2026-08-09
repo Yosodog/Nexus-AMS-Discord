@@ -416,6 +416,25 @@ const endpointCases = [
     body: { intent_id: 'application-intent' }, relay: 'actor',
   },
   {
+    name: 'previewAccountLink',
+    invoke: (service) => service.previewAccountLink(ACTOR, {
+      token: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+      discord_username: 'Applicant',
+    }),
+    method: 'post', pathname: '/api/v1/discord/link/preview',
+    body: {
+      token: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+      discord_username: 'Applicant',
+    },
+    relay: 'actor',
+  },
+  {
+    name: 'confirmAccountLink',
+    invoke: (service) => service.confirmAccountLink(ACTOR, { intent_id: 'link-intent' }),
+    method: 'post', pathname: '/api/v1/discord/link/confirm',
+    body: { intent_id: 'link-intent' }, relay: 'actor',
+  },
+  {
     name: 'getWarCounter',
     invoke: (service) => service.getWarCounter('counter / 77'),
     method: 'get', pathname: '/api/v1/discord/war-counters/counter%20%2F%2077',

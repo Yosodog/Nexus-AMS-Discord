@@ -717,6 +717,34 @@ export class ApiService {
     });
   }
 
+  /** Preview linking this Discord actor to the Nexus account that issued a code. */
+  previewAccountLink(actor, payload) {
+    return this.#requestDiscord('link/preview', {
+      method: 'post',
+      data: payload,
+      actor: {
+        ...actor,
+        discordCommand: 'verify',
+        discordAction: 'verify',
+      },
+      retryMode: RetryMode.NEVER,
+    });
+  }
+
+  /** Confirm a one-time, installation-bound Nexus account-link intent. */
+  confirmAccountLink(actor, payload) {
+    return this.#requestDiscord('link/confirm', {
+      method: 'post',
+      data: payload,
+      actor: {
+        ...actor,
+        discordCommand: 'verify',
+        discordAction: 'verify',
+      },
+      retryMode: RetryMode.IDEMPOTENT,
+    });
+  }
+
   /** Fetch the current persisted war-counter record. */
   async getWarCounter(id) {
     const endpointUrl = new URL(

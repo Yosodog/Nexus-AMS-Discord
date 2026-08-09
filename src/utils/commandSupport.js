@@ -51,6 +51,9 @@ export const errorMessage = (error) => {
     FEATURE_DISABLED: 'This feature is currently disabled.',
     APPLICATION_PREVIEW_STALE: 'Your application eligibility changed after the preview.',
     APPLICATION_RECONCILIATION_UNAVAILABLE: 'This server cannot safely create Nexus applications yet.',
+    VERIFICATION_TOKEN_INVALID: 'This verification code is invalid or has already been used.',
+    VERIFICATION_INTENT_STALE: 'This verification code changed or was already used after the preview.',
+    NEXUS_ACCOUNT_DISABLED: 'This Nexus account is disabled and cannot be linked.',
   };
   const detail = typeof error?.message === 'string' && error.message.length <= 300 ? error.message : null;
   if (code === 'VALIDATION_ERROR' && detail) return detail;
@@ -76,6 +79,9 @@ const errorGuidance = (error) => {
     VALIDATION_ERROR: 'Review the values above, then try again.',
     APPLICATION_PREVIEW_STALE: 'Run /apply again to review the latest application details.',
     APPLICATION_RECONCILIATION_UNAVAILABLE: 'Ask a server administrator to update the Nexus Discord integration.',
+    VERIFICATION_TOKEN_INVALID: 'Copy a current verification code from your Nexus account settings.',
+    VERIFICATION_INTENT_STALE: 'Get a fresh verification code from Nexus and run /verify again.',
+    NEXUS_ACCOUNT_DISABLED: 'Contact a Nexus administrator.',
   }[`${error?.code ?? ''}`.toUpperCase()]
     ?? 'Try the command again. If this keeps happening, contact a Nexus administrator.');
 };
