@@ -401,6 +401,21 @@ const endpointCases = [
     method: 'get', pathname: '/api/v1/discord/status', relay: 'actor',
   },
   {
+    name: 'previewApplication',
+    invoke: (service) => service.previewApplication(ACTOR, {
+      nation_id: 9001,
+      discord_username: 'Applicant',
+    }),
+    method: 'post', pathname: '/api/v1/discord/applications/preview',
+    body: { nation_id: 9001, discord_username: 'Applicant' }, relay: 'actor',
+  },
+  {
+    name: 'confirmApplication',
+    invoke: (service) => service.confirmApplication(ACTOR, { intent_id: 'application-intent' }),
+    method: 'post', pathname: '/api/v1/discord/applications/confirm',
+    body: { intent_id: 'application-intent' }, relay: 'actor',
+  },
+  {
     name: 'getWarCounter',
     invoke: (service) => service.getWarCounter('counter / 77'),
     method: 'get', pathname: '/api/v1/discord/war-counters/counter%20%2F%2077',

@@ -689,6 +689,34 @@ export class ApiService {
     });
   }
 
+  /** Preview a Nexus-owned application intent for an unlinked or linked Discord actor. */
+  previewApplication(actor, payload) {
+    return this.#requestDiscord('applications/preview', {
+      method: 'post',
+      data: payload,
+      actor: {
+        ...actor,
+        discordCommand: 'apply',
+        discordAction: 'apply',
+      },
+      retryMode: RetryMode.NEVER,
+    });
+  }
+
+  /** Confirm an opaque Nexus application intent. */
+  confirmApplication(actor, payload) {
+    return this.#requestDiscord('applications/confirm', {
+      method: 'post',
+      data: payload,
+      actor: {
+        ...actor,
+        discordCommand: 'apply',
+        discordAction: 'apply',
+      },
+      retryMode: RetryMode.IDEMPOTENT,
+    });
+  }
+
   /** Fetch the current persisted war-counter record. */
   async getWarCounter(id) {
     const endpointUrl = new URL(

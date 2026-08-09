@@ -39,6 +39,7 @@ export const actorFromInteraction = (interaction, command = null) => {
 };
 
 export const errorMessage = (error) => {
+  const code = `${error?.code ?? ''}`.toUpperCase();
   const messages = {
     DISCORD_ACCOUNT_NOT_LINKED: 'Link your Discord account in Nexus before using this command.',
     FORBIDDEN: 'You do not have permission to do that.',
@@ -48,24 +49,36 @@ export const errorMessage = (error) => {
     DUPLICATE_REQUEST: 'You already have an open request of this type.',
     VALIDATION_ERROR: 'Nexus could not validate that request.',
     FEATURE_DISABLED: 'This feature is currently disabled.',
+    APPLICATION_PREVIEW_STALE: 'Your application eligibility changed after the preview.',
+    APPLICATION_RECONCILIATION_UNAVAILABLE: 'This server cannot safely create Nexus applications yet.',
   };
   const detail = typeof error?.message === 'string' && error.message.length <= 300 ? error.message : null;
-  if (error?.code === 'VALIDATION_ERROR' && detail) return detail;
-  return messages[error?.code]
+  if (code === 'VALIDATION_ERROR' && detail) return detail;
+  return messages[code]
     ?? detail
     ?? 'Nexus is unavailable right now. Please try again later.';
 };
 
-const errorGuidance = (error) => ({
-  DISCORD_ACCOUNT_NOT_LINKED: 'Link your Discord account in Nexus, then run this command again.',
-  DUPLICATE_REQUEST: 'Open your existing request in Nexus before starting another one.',
-  FEATURE_DISABLED: 'Contact a Nexus administrator if you need access to this feature.',
-  FORBIDDEN: 'If you believe you should have access, contact a Nexus administrator.',
-  INTENT_EXPIRED: 'Run the command again to create a fresh draft.',
-  NOT_FOUND: 'Refresh the list or run the command again to get current data.',
-  STALE_INTENT: 'Run the command again to create a fresh draft.',
-  VALIDATION_ERROR: 'Review the values above, then try again.',
-}[error?.code] ?? 'Try the command again. If this keeps happening, contact a Nexus administrator.');
+const errorGuidance = (error) => {
+  const nexusGuidance = error?.details?.user_action;
+  if (typeof nexusGuidance === 'string' && nexusGuidance.trim() !== '') {
+    return nexusGuidance.slice(0, 300);
+  }
+
+  return ({
+    DISCORD_ACCOUNT_NOT_LINKED: 'Link your Discord account in Nexus, then run this command again.',
+    DUPLICATE_REQUEST: 'Open your existing request in Nexus before starting another one.',
+    FEATURE_DISABLED: 'Contact a Nexus administrator if you need access to this feature.',
+    FORBIDDEN: 'If you believe you should have access, contact a Nexus administrator.',
+    INTENT_EXPIRED: 'Run the command again to create a fresh draft.',
+    NOT_FOUND: 'Refresh the list or run the command again to get current data.',
+    STALE_INTENT: 'Run the command again to create a fresh draft.',
+    VALIDATION_ERROR: 'Review the values above, then try again.',
+    APPLICATION_PREVIEW_STALE: 'Run /apply again to review the latest application details.',
+    APPLICATION_RECONCILIATION_UNAVAILABLE: 'Ask a server administrator to update the Nexus Discord integration.',
+  }[`${error?.code ?? ''}`.toUpperCase()]
+    ?? 'Try the command again. If this keeps happening, contact a Nexus administrator.');
+};
 
 export const replyError = async (interaction, error, title = 'Request Failed') => {
   const payload = {

@@ -1,190 +1,247 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ChannelType } from 'discord.js';
-import { execute as executeApply } from '../src/commands/apply.js';
-import { buildApplicationChannelTopic } from '../src/utils/applicationChannels.js';
+import { button as confirmApply, execute as executeApply } from '../src/commands/apply.js';
+import { ApiContractError } from '../src/services/ApiService.js';
+import { InteractionSessionStore } from '../src/services/InteractionSessionStore.js';
 import { createLogger, embedJson } from './helpers.js';
 
 const GUILD_ID = '123456789012345678';
 const USER_ID = '223456789012345678';
-const BOT_ID = '323456789012345678';
-const CHANNEL_ID = '423456789012345678';
-const APPLICANT_ROLE_ID = '523456789012345678';
-const IA_ROLE_ID = '623456789012345678';
-const CATEGORY_ID = '723456789012345678';
+const INTENT_ID = 'a'.repeat(64);
 
-function createApplicationResponse() {
-  return {
-    application: { id: 42, nation_id: 9001, status: 'pending', discord_channel_id: null },
-    nation: { id: 9001, nation_name: 'Test Nation', leader_name: 'Test Leader' },
-    config: {
-      applicant_role_id: APPLICANT_ROLE_ID,
-      ia_role_id: IA_ROLE_ID,
-      interview_category_id: CATEGORY_ID,
-    },
-  };
-}
+const previewResponse = (overrides = {}) => ({
+  intent: {
+    id: INTENT_ID,
+    action: 'application.create',
+    expires_at: '2026-08-08T12:15:00Z',
+  },
+  summary: {
+    description: 'Confirm to submit this nation for review and start private Discord setup.',
+    nation: { id: 9001, name: 'Test Nation', leader_name: 'Test Leader' },
+    continues_existing_application: false,
+  },
+  warnings: [],
+  resource_version: 'resource-version',
+  deep_link_path: null,
+  ...overrides,
+});
 
-function createChannel(id = CHANNEL_ID) {
-  const sends = [];
-  return {
-    id,
-    guildId: GUILD_ID,
-    type: ChannelType.GuildText,
-    name: 'app-42-9001-test-leader',
-    topic: buildApplicationChannelTopic(42, 9001),
-    sends,
-    send: async (payload) => sends.push(payload),
-    toString: () => `<#${id}>`,
-  };
-}
+const confirmResponse = (overrides = {}) => ({
+  application: {
+    id: 42,
+    nation_id: 9001,
+    status: 'pending',
+    continues_existing_application: false,
+    created_at: '2026-08-08T12:00:00Z',
+    updated_at: '2026-08-08T12:00:00Z',
+  },
+  channel_health: {
+    state: 'preparing',
+    label: 'Private interview channel setup is in progress.',
+  },
+  reconciliation: {
+    state: 'queued',
+    label: 'Discord follow-up is queued.',
+  },
+  progress: {
+    facts: [],
+    blockers: [],
+    next_action: { label: 'Continue', deep_link_path: '/apply/42' },
+  },
+  deep_link_path: '/apply/42',
+  ...overrides,
+});
 
-function createApplyHarness({ channels = [], createChannelResult = createChannel() } = {}) {
-  const roleAdds = [];
-  const createdPayloads = [];
-  const guild = {
-    id: GUILD_ID,
-    roles: { everyone: { id: GUILD_ID } },
-    members: {
-      fetch: async () => ({
-        roles: {
-          cache: new Map(),
-          add: async (roleId) => roleAdds.push(roleId),
-        },
-      }),
-    },
-    channels: {
-      fetch: async (id) => {
-        if (id) {
-          return channels.find((channel) => channel.id === id) ?? null;
-        }
-        return new Map(channels.map((channel) => [channel.id, channel]));
-      },
-      create: async (payload) => {
-        createdPayloads.push(payload);
-        return createChannelResult;
-      },
-    },
-  };
+function createHarness() {
+  const forbiddenGuildState = new Proxy({}, {
+    get: (_target, property) => assert.fail(`/apply must not read or mutate Discord guild ${String(property)}`),
+  });
   const interaction = {
-    id: '823456789012345678',
+    id: '323456789012345678',
+    commandName: 'apply',
+    nexusCommandName: 'apply',
     guildId: GUILD_ID,
-    guild,
-    user: { id: USER_ID, tag: 'Applicant#0001', toString: () => `<@${USER_ID}>` },
-    client: { user: { id: BOT_ID } },
+    guild: {
+      id: GUILD_ID,
+      members: forbiddenGuildState,
+      channels: forbiddenGuildState,
+      roles: forbiddenGuildState,
+    },
+    user: {
+      id: USER_ID,
+      globalName: 'Applicant',
+      tag: 'Applicant#0001',
+      username: 'applicant',
+    },
     options: { getInteger: () => 9001 },
     replies: [],
     edits: [],
-    deferReply: async () => {},
-    reply: async (payload) => interaction.replies.push(payload),
+    deferred: false,
+    replied: false,
+    deferReply: async (payload) => {
+      interaction.deferred = true;
+      interaction.deferPayload = payload;
+    },
+    reply: async (payload) => {
+      interaction.replied = true;
+      interaction.replies.push(payload);
+    },
     editReply: async (payload) => interaction.edits.push(payload),
   };
+  const sessions = new InteractionSessionStore({
+    createToken: () => '11111111-2222-4333-8444-555555555555',
+  });
 
-  return { interaction, roleAdds, createdPayloads, createChannelResult };
+  return { interaction, sessions };
 }
 
-test('/apply creates a metadata-marked channel, attaches it, and sends idempotent intros', async () => {
-  const harness = createApplyHarness();
-  const attached = [];
-  const apiService = {
-    createApplication: async () => createApplicationResponse(),
-    attachApplicationChannel: async (payload) => attached.push(payload),
+function createButtonInteraction() {
+  const interaction = {
+    id: '423456789012345678',
+    commandName: null,
+    nexusCommandName: 'apply',
+    guildId: GUILD_ID,
+    user: { id: USER_ID },
+    edits: [],
+    deferred: false,
+    deferUpdate: async () => { interaction.deferred = true; },
+    editReply: async (payload) => interaction.edits.push(payload),
+    reply: async (payload) => interaction.edits.push(payload),
   };
+  return interaction;
+}
 
-  await executeApply(harness.interaction, { logger: createLogger(), apiService, guildId: GUILD_ID });
+const confirmationCustomId = (message) => message.components[0].components[0].data.custom_id;
 
-  assert.deepEqual(harness.roleAdds, [APPLICANT_ROLE_ID]);
-  assert.equal(harness.createdPayloads.length, 1);
-  assert.equal(harness.createdPayloads[0].topic, 'nexus-application:42;nation:9001');
-  assert.deepEqual(attached, [{ application_id: 42, discord_channel_id: CHANNEL_ID }]);
-  assert.equal(harness.createChannelResult.sends.length, 2);
-  assert.equal(harness.createChannelResult.sends[0].enforceNonce, true);
-  assert.equal(harness.createChannelResult.sends[1].enforceNonce, true);
-  assert.deepEqual(harness.createChannelResult.sends[1].allowedMentions, {
-    parse: [],
-    users: [USER_ID],
-    roles: [IA_ROLE_ID],
-    repliedUser: false,
+test('/apply previews then confirms through Nexus without touching Discord guild state', async () => {
+  const { interaction, sessions } = createHarness();
+  const calls = [];
+  const apiService = {
+    baseUrl: 'https://nexus.example',
+    previewApplication: async (actor, payload) => {
+      calls.push({ method: 'preview', actor, payload });
+      return previewResponse();
+    },
+    confirmApplication: async (actor, payload) => {
+      calls.push({ method: 'confirm', actor, payload });
+      return confirmResponse();
+    },
+    createApplication: async () => assert.fail('legacy direct creation must not be used'),
+    attachApplicationChannel: async () => assert.fail('the command must not attach channels'),
+  };
+  const context = { logger: createLogger(), apiService, sessions, guildId: GUILD_ID };
+
+  await executeApply(interaction, context);
+
+  assert.deepEqual(interaction.deferPayload, { ephemeral: true });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].method, 'preview');
+  assert.deepEqual(calls[0].payload, {
+    nation_id: 9001,
+    discord_username: 'Applicant',
   });
-  assert.equal(embedJson(harness.interaction.edits[0]).title, 'Application Submitted');
+  assert.equal(calls[0].actor.discordUserId, USER_ID);
+  assert.equal(calls[0].actor.discordGuildId, GUILD_ID);
+  assert.equal(calls[0].actor.discordInteractionId, interaction.id);
+  assert.equal(embedJson(interaction.edits[0]).title, 'Review Application');
+  assert.equal(interaction.edits[0].components.length, 1);
+
+  const customId = confirmationCustomId(interaction.edits[0]);
+  const session = sessions.resolve(customId, USER_ID);
+  assert.equal(session.commandName, 'apply');
+  assert.equal(session.event, 'confirm');
+  assert.deepEqual(session.state, { intentId: INTENT_ID });
+
+  const buttonInteraction = createButtonInteraction();
+  await confirmApply(buttonInteraction, { ...context, session });
+
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].method, 'confirm');
+  assert.deepEqual(calls[1].payload, { intent_id: INTENT_ID });
+  assert.equal(calls[1].actor.discordUserId, USER_ID);
+  assert.equal(calls[1].actor.discordInteractionId, buttonInteraction.id);
+  assert.equal(embedJson(buttonInteraction.edits[0]).title, 'Application Submitted');
+  assert.match(embedJson(buttonInteraction.edits[0]).description, /preparing/i);
+  assert.deepEqual(buttonInteraction.edits[0].components, []);
 });
 
-test('/apply reuses exactly one verified existing channel instead of creating a duplicate', async () => {
-  const existing = createChannel();
-  const harness = createApplyHarness({ channels: [existing] });
-  const attached = [];
+test('/apply clearly previews continuation of an existing application', async () => {
+  const { interaction, sessions } = createHarness();
   const apiService = {
-    createApplication: async () => createApplicationResponse(),
-    attachApplicationChannel: async (payload) => attached.push(payload),
+    baseUrl: 'https://nexus.example',
+    previewApplication: async () => previewResponse({
+      summary: {
+        description: 'Nexus found your pending application.',
+        nation: { id: 9001, name: 'Test Nation', leader_name: 'Test Leader' },
+        continues_existing_application: true,
+      },
+      warnings: ['Nexus found your existing pending application and will continue it.'],
+      deep_link_path: '/apply/42',
+    }),
   };
 
-  await executeApply(harness.interaction, { logger: createLogger(), apiService, guildId: GUILD_ID });
+  await executeApply(interaction, {
+    logger: createLogger(), apiService, sessions, guildId: GUILD_ID,
+  });
 
-  assert.equal(harness.createdPayloads.length, 0);
-  assert.deepEqual(attached, [{ application_id: 42, discord_channel_id: CHANNEL_ID }]);
-  assert.equal(existing.sends.length, 2);
+  assert.equal(embedJson(interaction.edits[0]).title, 'Review Application Continuation');
+  assert.match(embedJson(interaction.edits[0]).fields.find((field) => field.name === 'Action').value, /Continue/);
+  assert.equal(interaction.edits[0].components[0].components[0].data.label, 'Continue application');
 });
 
-test('/apply resumes from an already attached verified channel without attaching again', async () => {
-  const existing = createChannel();
-  const harness = createApplyHarness({ channels: [existing] });
-  const response = createApplicationResponse();
-  response.application.discord_channel_id = CHANNEL_ID;
+test('/apply reports Nexus stale-preview guidance and performs no Discord mutation', async () => {
+  const { interaction, sessions } = createHarness();
   const apiService = {
-    createApplication: async () => response,
-    attachApplicationChannel: async () => assert.fail('already attached channel must not be attached again'),
+    baseUrl: 'https://nexus.example',
+    previewApplication: async () => previewResponse(),
+    confirmApplication: async () => {
+      throw new ApiContractError('Your application eligibility changed after the preview.', {
+        code: 'application_preview_stale',
+        status: 409,
+        details: { user_action: 'Run /apply again to review the latest application details.' },
+      });
+    },
   };
+  const context = { logger: createLogger(), apiService, sessions, guildId: GUILD_ID };
+  await executeApply(interaction, context);
+  const session = sessions.resolve(confirmationCustomId(interaction.edits[0]), USER_ID);
+  const buttonInteraction = createButtonInteraction();
 
-  await executeApply(harness.interaction, { logger: createLogger(), apiService, guildId: GUILD_ID });
+  await confirmApply(buttonInteraction, { ...context, session });
 
-  assert.equal(harness.createdPayloads.length, 0);
-  assert.equal(existing.sends.length, 2);
-  assert.equal(embedJson(harness.interaction.edits[0]).title, 'Application Submitted');
+  const embed = embedJson(buttonInteraction.edits[0]);
+  assert.equal(embed.title, 'Application Submission Failed');
+  assert.match(embed.description, /eligibility changed/i);
+  assert.match(embed.footer.text, /Run \/apply again/i);
 });
 
-test('/apply stops for manual resolution when multiple channels match exactly', async () => {
-  const existingA = createChannel(CHANNEL_ID);
-  const existingB = createChannel('923456789012345678');
-  const harness = createApplyHarness({ channels: [existingA, existingB] });
+test('/apply fails closed when Nexus omits the opaque confirmation token', async () => {
+  const { interaction, sessions } = createHarness();
   const apiService = {
-    createApplication: async () => createApplicationResponse(),
-    attachApplicationChannel: async () => assert.fail('ambiguous channel must not be attached'),
+    baseUrl: 'https://nexus.example',
+    previewApplication: async () => previewResponse({ intent: { id: 'not-valid' } }),
+    confirmApplication: async () => assert.fail('invalid previews cannot be confirmed'),
   };
 
-  await executeApply(harness.interaction, { logger: createLogger(), apiService, guildId: GUILD_ID });
+  await executeApply(interaction, {
+    logger: createLogger(), apiService, sessions, guildId: GUILD_ID,
+  });
 
-  assert.equal(harness.createdPayloads.length, 0);
-  assert.equal(existingA.sends.length, 0);
-  assert.equal(existingB.sends.length, 0);
-  assert.match(embedJson(harness.interaction.edits[0]).title, /Setup Pending/);
+  assert.equal(embedJson(interaction.edits[0]).title, 'Application Preview Failed');
+  assert.equal(interaction.edits[0].components.length, 0);
 });
 
-test('/apply reports partial success when Nexus channel attachment fails', async () => {
-  const harness = createApplyHarness();
+test('/apply rejects use outside its resolved guild before calling Nexus', async () => {
+  const { interaction, sessions } = createHarness();
+  interaction.guildId = '923456789012345678';
   const apiService = {
-    createApplication: async () => createApplicationResponse(),
-    attachApplicationChannel: async () => { throw new Error('Nexus unavailable'); },
+    previewApplication: async () => assert.fail('foreign guild must not call Nexus'),
   };
 
-  await executeApply(harness.interaction, { logger: createLogger(), apiService, guildId: GUILD_ID });
+  await executeApply(interaction, {
+    logger: createLogger(), apiService, sessions, guildId: GUILD_ID,
+  });
 
-  assert.match(embedJson(harness.interaction.edits[0]).title, /Setup Pending/);
-  assert.match(embedJson(harness.interaction.edits[0]).description, /submitted in Nexus/i);
-  assert.equal(harness.createChannelResult.sends.length, 0);
-});
-
-test('/apply reports partial success when an intro send is interrupted', async () => {
-  const existing = createChannel();
-  existing.send = async () => { throw new Error('Discord unavailable'); };
-  const harness = createApplyHarness({ channels: [existing] });
-  const response = createApplicationResponse();
-  response.application.discord_channel_id = CHANNEL_ID;
-  const apiService = {
-    createApplication: async () => response,
-    attachApplicationChannel: async () => assert.fail('already attached channel must not be attached again'),
-  };
-
-  await executeApply(harness.interaction, { logger: createLogger(), apiService, guildId: GUILD_ID });
-
-  assert.match(embedJson(harness.interaction.edits[0]).title, /Setup Pending/);
+  assert.equal(interaction.replies[0].ephemeral, true);
+  assert.equal(embedJson(interaction.replies[0]).title, 'Application Unavailable');
 });
