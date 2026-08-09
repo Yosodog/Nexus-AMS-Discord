@@ -238,6 +238,20 @@ const endpointCases = [
     method: 'get', pathname: '/api/v1/discord/milcom/assignments', relay: 'actor',
   },
   {
+    name: 'previewMilcomAssignmentResponse',
+    invoke: (service) => service.previewMilcomAssignmentResponse(ACTOR, 'assignment / 8', {
+      response: 'unavailable', reason: 'No offensive slot.',
+    }),
+    method: 'post', pathname: '/api/v1/discord/milcom/assignments/assignment%20%2F%208/response/preview',
+    body: { response: 'unavailable', reason: 'No offensive slot.' }, relay: 'actor',
+  },
+  {
+    name: 'confirmMilcomAssignmentResponse',
+    invoke: (service) => service.confirmMilcomAssignmentResponse(ACTOR, 'assignment / 8', 'intent-token'),
+    method: 'post', pathname: '/api/v1/discord/milcom/assignments/assignment%20%2F%208/response/confirm',
+    body: { intent_id: 'intent-token' }, relay: 'actor',
+  },
+  {
     name: 'getMilcomReadiness',
     invoke: (service) => service.getMilcomReadiness(ACTOR, { nation_id: 77, ignored: 'value' }),
     method: 'get', pathname: '/api/v1/discord/milcom/readiness',

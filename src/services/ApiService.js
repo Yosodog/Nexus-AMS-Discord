@@ -418,6 +418,18 @@ export class ApiService {
     return this.#requestDiscord('milcom/assignments', { actor, retryMode: RetryMode.SAFE });
   }
 
+  previewMilcomAssignmentResponse(actor, assignmentId, payload) {
+    return this.#requestDiscord(`milcom/assignments/${encodeURIComponent(assignmentId)}/response/preview`, {
+      method: 'post', actor, data: payload,
+    });
+  }
+
+  confirmMilcomAssignmentResponse(actor, assignmentId, intentId) {
+    return this.#requestDiscord(`milcom/assignments/${encodeURIComponent(assignmentId)}/response/confirm`, {
+      method: 'post', actor, data: { intent_id: intentId }, retryMode: RetryMode.IDEMPOTENT,
+    });
+  }
+
   getMilcomReadiness(actor, params = {}) {
     return this.#requestDiscord('milcom/readiness', {
       actor,

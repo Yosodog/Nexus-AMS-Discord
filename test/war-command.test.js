@@ -1,12 +1,74 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { autocomplete, data, execute } from '../src/commands/war.js';
+import { autocomplete, button, data, execute, modal } from '../src/commands/war.js';
+import { InteractionSessionStore } from '../src/services/InteractionSessionStore.js';
 import { embedJson } from './helpers.js';
 
 const USER_ID = '123456789012345678';
 const GUILD_ID = '223456789012345678';
 
-test('/war no longer registers legacy member assignment response controls', () => {
+const sessions = () => {
+  let sequence = 0;
+  return new InteractionSessionStore({
+    createToken: () => `war${String(sequence += 1).padStart(30, '0')}`,
+  });
+};
+
+const buttonInteraction = (customId) => {
+  const replies = [];
+  const modals = [];
+  const interaction = {
+    customId,
+    id: '423456789012345678',
+    commandName: 'war',
+    guildId: GUILD_ID,
+    user: { id: USER_ID },
+    deferred: false,
+    deferUpdate: async () => { interaction.deferred = true; },
+    editReply: async (payload) => { replies.push(payload); return payload; },
+    update: async (payload) => { replies.push(payload); return payload; },
+    showModal: async (payload) => { modals.push(payload); return payload; },
+    reply: async (payload) => { replies.push(payload); return payload; },
+    replies,
+    modals,
+  };
+  return interaction;
+};
+
+const modalInteraction = (customId, reason) => {
+  const replies = [];
+  const interaction = {
+    customId,
+    id: '523456789012345678',
+    commandName: 'war',
+    guildId: GUILD_ID,
+    user: { id: USER_ID },
+    deferred: false,
+    fields: { getTextInputValue: () => reason },
+    deferReply: async ({ ephemeral }) => {
+      assert.equal(ephemeral, true);
+      interaction.deferred = true;
+    },
+    editReply: async (payload) => { replies.push(payload); return payload; },
+    reply: async (payload) => { replies.push(payload); return payload; },
+    replies,
+  };
+  return interaction;
+};
+
+const assignment = (overrides = {}) => ({
+  assignment_id: 8,
+  status: 'approved',
+  rank: 1,
+  operation: { name: 'Shield', wave: 2 },
+  objective: { id: 19, status: 'approved', priority: 'p1', war_type: 'ordinary' },
+  target: { id: 99, nation_name: 'Target Nation', alliance: { name: 'Target AA' } },
+  room: { available: true, discord_channel_id: '423456789012345678' },
+  links: { target_nation: 'https://politicsandwar.com/nation/id=99' },
+  ...overrides,
+});
+
+test('/war keeps Milcom responses inside the assignments view instead of legacy subcommands', () => {
   const subcommands = data.toJSON().options.map((option) => option.name);
   assert.deepEqual(subcommands, ['active', 'assignments', 'readiness', 'room', 'counter', 'simulate']);
 });
@@ -76,6 +138,7 @@ test('/war readiness autocomplete uses the Nexus nation directory', async () => 
 
 test('/war assignments renders only the Milcom-v2 projection', async () => {
   const replies = [];
+  const store = sessions();
   const interaction = {
     id: '323456789012345678',
     guildId: GUILD_ID,
@@ -86,24 +149,151 @@ test('/war assignments renders only the Milcom-v2 projection', async () => {
   };
   await execute(interaction, {
     apiService: {
-      getMilcomAssignments: async () => [{
-        assignment_id: 8,
-        status: 'approved',
-        rank: 1,
-        operation: { name: 'Shield', wave: 2 },
-        objective: { id: 19, status: 'approved', priority: 'p1', war_type: 'ordinary' },
-        target: { id: 99, nation_name: 'Target Nation', alliance: { name: 'Target AA' } },
-        room: { available: true, discord_channel_id: '423456789012345678' },
-        links: { target_nation: 'https://politicsandwar.com/nation/id=99' },
+      getMilcomAssignments: async () => [assignment({
         private_notes: 'must not render',
-      }],
+      })],
     },
+    sessions: store,
   });
   const embed = embedJson(replies[0]);
   assert.match(embed.title, /Milcom-v2 Assignments/);
   assert.match(JSON.stringify(embed), /Target Nation/);
   assert.doesNotMatch(JSON.stringify(embed), /must not render/);
   assert.deepEqual(replies[0].allowedMentions, { parse: [] });
+  assert.equal(replies[0].components.length, 1);
+  const controls = replies[0].components[0].toJSON().components;
+  assert.deepEqual(controls.map((control) => control.label), ['Acknowledge #8', 'Unavailable #8']);
+  assert.equal(store.resolve(controls[0].custom_id, USER_ID).event, 'assignment-acknowledge-start');
+});
+
+test('/war assignment acknowledgement uses Nexus preview then opaque-intent confirmation', async () => {
+  const store = sessions();
+  const calls = [];
+  const apiService = {
+    previewMilcomAssignmentResponse: async (actor, id, payload) => {
+      calls.push(['preview', actor, id, payload]);
+      return {
+        intent: { id: 'a'.repeat(64), expires_at: '2026-08-09T12:15:00Z' },
+        assignment: assignment(),
+        proposed_response: { response: 'acknowledged', reason: null },
+      };
+    },
+    confirmMilcomAssignmentResponse: async (actor, id, intentId) => {
+      calls.push(['confirm', actor, id, intentId]);
+      return { assignment_type: 'milcom_v2', assignment_id: id, response: 'acknowledged' };
+    },
+  };
+  const startId = store.create({
+    commandName: 'war', userId: USER_ID,
+    event: 'assignment-acknowledge-start', state: { assignmentId: 8 }, oneShot: true,
+  });
+  const start = buttonInteraction(startId);
+  await button(start, { apiService, sessions: store, session: store.resolve(startId, USER_ID) });
+
+  assert.deepEqual(calls[0].slice(0, 1), ['preview']);
+  assert.equal(calls[0][1].discordCommand, 'war');
+  assert.deepEqual(calls[0].slice(2), [8, { response: 'acknowledged' }]);
+  assert.match(embedJson(start.replies[0]).title, /Confirm Assignment Acknowledgement/);
+  const confirmationId = start.replies[0].components[0].toJSON().components[0].custom_id;
+  const confirm = buttonInteraction(confirmationId);
+  await button(confirm, {
+    apiService,
+    sessions: store,
+    session: store.resolve(confirmationId, USER_ID),
+  });
+
+  assert.deepEqual(calls[1].slice(0, 1), ['confirm']);
+  assert.equal(calls[1][1].discordCommand, 'war');
+  assert.deepEqual(calls[1].slice(2), [8, 'a'.repeat(64)]);
+  assert.match(embedJson(confirm.replies[0]).title, /Assignment Acknowledged/);
+});
+
+test('/war unavailable response requires a modal reason before Nexus preview', async () => {
+  const store = sessions();
+  const calls = [];
+  const apiService = {
+    previewMilcomAssignmentResponse: async (...args) => {
+      calls.push(args);
+      return {
+        intent: { id: 'b'.repeat(64), expires_at: '2026-08-09T12:15:00Z' },
+        assignment: assignment(),
+        proposed_response: { response: 'unavailable', reason: 'No offensive slot.' },
+      };
+    },
+  };
+  const startId = store.create({
+    commandName: 'war', userId: USER_ID,
+    event: 'assignment-unavailable-start', state: { assignmentId: 8 }, oneShot: true,
+  });
+  const start = buttonInteraction(startId);
+  await button(start, { sessions: store, session: store.resolve(startId, USER_ID) });
+
+  assert.equal(calls.length, 0);
+  assert.equal(start.modals.length, 1);
+  const modalJson = start.modals[0].toJSON();
+  const reasonInput = modalJson.components[0].components[0];
+  assert.equal(reasonInput.max_length, 500);
+  const modalSession = store.resolve(modalJson.custom_id, USER_ID);
+  const submitted = modalInteraction(modalJson.custom_id, '  No offensive slot.  ');
+  submitted.fields.getTextInputValue = (customId) => {
+    assert.equal(customId, modalSession.state.reasonId);
+    return '  No offensive slot.  ';
+  };
+  await modal(submitted, { apiService, sessions: store, session: modalSession });
+
+  assert.equal(calls[0][0].discordCommand, 'war');
+  assert.deepEqual(calls[0].slice(1), [8, {
+    response: 'unavailable', reason: 'No offensive slot.',
+  }]);
+  assert.match(embedJson(submitted.replies[0]).title, /Confirm Assignment Unavailable/);
+  assert.match(JSON.stringify(embedJson(submitted.replies[0])), /No offensive slot/);
+});
+
+test('/war assignment confirmation renders stale Nexus errors without a local state change', async () => {
+  const store = sessions();
+  const controlId = store.create({
+    commandName: 'war', userId: USER_ID,
+    event: 'assignment-response-confirm',
+    state: { assignmentId: 8, intentId: 'c'.repeat(64) },
+    oneShot: true,
+  });
+  const interaction = buttonInteraction(controlId);
+  await button(interaction, {
+    sessions: store,
+    session: store.resolve(controlId, USER_ID),
+    apiService: {
+      confirmMilcomAssignmentResponse: async () => {
+        throw { code: 'STALE_INTENT' };
+      },
+    },
+  });
+
+  assert.equal(embedJson(interaction.replies[0]).title, 'Request Failed');
+  assert.match(embedJson(interaction.replies[0]).description, /changed or expired/);
+});
+
+test('/war assignments limits response controls to Discord five-row maximum', async () => {
+  const replies = [];
+  const interaction = {
+    id: '323456789012345678',
+    guildId: GUILD_ID,
+    user: { id: USER_ID },
+    options: { getSubcommand: () => 'assignments' },
+    deferReply: async () => {},
+    editReply: async (payload) => { replies.push(payload); },
+  };
+  await execute(interaction, {
+    apiService: {
+      getMilcomAssignments: async () => Array.from({ length: 7 }, (_, index) => assignment({
+        assignment_id: index + 1,
+        target: { id: 100 + index, nation_name: `Target ${index + 1}` },
+      })),
+    },
+    sessions: sessions(),
+  });
+
+  assert.equal(replies[0].components.length, 5);
+  assert.match(embedJson(replies[0]).footer.text, /first 5/);
 });
 
 test('/war readiness does not calculate policy in Discord', async () => {

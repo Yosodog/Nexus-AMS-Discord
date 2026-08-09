@@ -1,11 +1,14 @@
-import { SlashCommandBuilder } from 'discord.js';
+import {
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder,
+  SlashCommandBuilder, TextInputBuilder, TextInputStyle,
+} from 'discord.js';
 import {
   actorFromInteraction, collectionMessage, deferEphemeral, executeAutocomplete,
   normalizeCollection, replyError, summarizeItem,
 } from '../utils/commandSupport.js';
 import {
   buildEmbed, buildPlainMessages, escapeMarkdown, formatDiscordTime, formatMilitary,
-  formatNumber, markdownLink, statusLabel, titleCase, truncate,
+  formatNumber, markdownLink, statusLabel, statusMessage, titleCase, truncate,
 } from '../utils/discordUi.js';
 
 export const data = new SlashCommandBuilder().setName('war').setDescription('View active wars and war guidance.')
@@ -97,6 +100,7 @@ const assignmentField = (assignment) => {
   const operation = assignment?.operation ?? {};
   const war = assignment?.war;
   const links = assignment?.links ?? {};
+  const response = assignment?.response;
   const room = assignment?.room?.available ? channelReference(assignment.room.discord_channel_id) : null;
   const lines = [
     `**Operation:** ${safeText(operation.name)} · Wave ${formatNumber(operation.wave, { maximumFractionDigits: 0 })}`,
@@ -104,6 +108,9 @@ const assignmentField = (assignment) => {
     `**Objective:** ${safeText(statusLabel(objective.status) ?? titleCase(objective.status))} · ${safeText(titleCase(objective.war_type))}`,
     allianceLabel(target.alliance) ? `**Alliance:** ${allianceLabel(target.alliance)}` : null,
     objective.deadline_at ? `**Deadline:** ${formatDiscordTime(objective.deadline_at)}` : null,
+    response?.response
+      ? `**Response:** ${safeText(statusLabel(response.response) ?? titleCase(response.response))}${response.reason ? ` · ${safeText(response.reason)}` : ''}`
+      : '**Response:** Awaiting your response',
     war ? `**War:** ${formatNumber(war.turns_left, { maximumFractionDigits: 0 })} turns · ${formatNumber(war.friendly_resistance, { maximumFractionDigits: 0 })}/${formatNumber(war.target_resistance, { maximumFractionDigits: 0 })} resistance` : null,
     room ? `**Room:** ${room}` : '**Room:** Not attached',
     [
@@ -118,7 +125,38 @@ const assignmentField = (assignment) => {
   };
 };
 
-const assignmentsMessage = (result) => {
+const assignmentId = (assignment) => {
+  const value = Number(assignment?.assignment_id);
+  return Number.isSafeInteger(value) && value > 0 ? value : null;
+};
+
+const assignmentControls = (assignments, interaction, context) => assignments.slice(0, 5)
+  .map((assignment) => {
+    const id = assignmentId(assignment);
+    if (id === null) return null;
+    const currentResponse = assignment?.response?.response;
+    return new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(context.sessions.create({
+          commandName: 'war', userId: interaction.user.id,
+          event: 'assignment-acknowledge-start', state: { assignmentId: id }, oneShot: true,
+        }))
+        .setLabel(`Acknowledge #${id}`)
+        .setStyle(ButtonStyle.Success)
+        .setDisabled(currentResponse === 'acknowledged'),
+      new ButtonBuilder()
+        .setCustomId(context.sessions.create({
+          commandName: 'war', userId: interaction.user.id,
+          event: 'assignment-unavailable-start', state: { assignmentId: id }, oneShot: true,
+        }))
+        .setLabel(`Unavailable #${id}`)
+        .setStyle(ButtonStyle.Danger)
+        .setDisabled(currentResponse === 'unavailable'),
+    );
+  })
+  .filter(Boolean);
+
+const assignmentsMessage = (result, interaction, context) => {
   const assignments = normalizeCollection(result).items;
   return {
     embeds: [buildEmbed({
@@ -130,12 +168,75 @@ const assignmentsMessage = (result) => {
       fields: assignments.slice(0, 10).map(assignmentField),
       footer: assignments.length > 10
         ? `Showing 10 of ${assignments.length} assignments. Open Nexus for the complete list.`
-        : `${assignments.length} current assignment${assignments.length === 1 ? '' : 's'}`,
+        : `${assignments.length} current assignment${assignments.length === 1 ? '' : 's'}${assignments.length > 5 ? ' · Response controls shown for the first 5' : ''}`,
       timestamp: true,
     })],
-    components: [],
+    components: assignmentControls(assignments, interaction, context),
     allowedMentions: { parse: [] },
   };
+};
+
+const invalidAssignmentControl = () => Object.assign(
+  new Error('This assignment control is no longer valid. Run /war assignments to refresh it.'),
+  { code: 'VALIDATION_ERROR' },
+);
+
+const unavailableModal = (interaction, context, id) => {
+  const reasonId = context.sessions.create({
+    commandName: 'war', userId: interaction.user.id, event: 'field', oneShot: true,
+  });
+  const modalId = context.sessions.create({
+    commandName: 'war', userId: interaction.user.id,
+    event: 'assignment-unavailable-reason', state: { assignmentId: id, reasonId }, oneShot: true,
+  });
+  return new ModalBuilder()
+    .setCustomId(modalId)
+    .setTitle('Assignment unavailable')
+    .addComponents(new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId(reasonId)
+        .setLabel('Why are you unavailable?')
+        .setRequired(true)
+        .setMaxLength(500)
+        .setStyle(TextInputStyle.Paragraph),
+    ));
+};
+
+const assignmentResponseConfirmation = (interaction, context, preview) => {
+  const id = assignmentId(preview?.assignment);
+  const intentId = `${preview?.intent?.id ?? ''}`;
+  const proposed = preview?.proposed_response ?? {};
+  if (id === null || !intentId) throw invalidAssignmentControl();
+  const target = preview.assignment?.target ?? {};
+  const confirmId = context.sessions.create({
+    commandName: 'war', userId: interaction.user.id,
+    event: 'assignment-response-confirm', state: { assignmentId: id, intentId }, oneShot: true,
+  });
+  const cancelId = context.sessions.create({
+    commandName: 'war', userId: interaction.user.id,
+    event: 'assignment-response-cancel', state: { assignmentId: id }, oneShot: true,
+  });
+  return statusMessage({
+    title: proposed.response === 'unavailable'
+      ? 'Confirm Assignment Unavailable'
+      : 'Confirm Assignment Acknowledgement',
+    tone: 'warning',
+    description: 'Nexus will revalidate the assignment, your linked nation, and this installation when you confirm.',
+    fields: [
+      { name: 'Assignment', value: `#${id}`, inline: true },
+      { name: 'Target', value: safeText(target.nation_name, `Nation #${target.id ?? '?'}`), inline: true },
+      { name: 'Response', value: safeText(statusLabel(proposed.response) ?? titleCase(proposed.response)), inline: true },
+      proposed.reason ? { name: 'Reason', value: safeText(proposed.reason) } : null,
+      preview.intent?.expires_at
+        ? { name: 'Confirmation expires', value: formatDiscordTime(preview.intent.expires_at), inline: true }
+        : null,
+    ],
+    footer: 'The response is recorded and audited in Nexus. It does not change the assignment state by itself.',
+    components: [new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(confirmId).setLabel('Confirm response').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId(cancelId).setLabel('Cancel').setStyle(ButtonStyle.Secondary),
+    )],
+  });
 };
 
 const readinessMessage = (readiness) => {
@@ -242,7 +343,7 @@ export const execute = async (interaction, context) => {
   try {
     if (subcommand === 'assignments') {
       const result = await context.apiService.getMilcomAssignments(actor);
-      await interaction.editReply(assignmentsMessage(result));
+      await interaction.editReply(assignmentsMessage(result, interaction, context));
       return;
     }
     if (subcommand === 'readiness') {
@@ -307,6 +408,87 @@ export const execute = async (interaction, context) => {
       description: 'Wars currently active for your linked nation.',
       baseUrl: context.apiService.baseUrl,
       pageSize: 3,
+    }));
+  } catch (error) { await replyError(interaction, error); }
+};
+
+export const modal = async (interaction, context) => {
+  if (context.session.event !== 'assignment-unavailable-reason') {
+    await replyError(interaction, invalidAssignmentControl());
+    return;
+  }
+  const id = Number(context.session.state.assignmentId);
+  const reason = interaction.fields.getTextInputValue(context.session.state.reasonId).trim();
+  if (!Number.isSafeInteger(id) || id < 1 || !reason) {
+    await replyError(interaction, invalidAssignmentControl());
+    return;
+  }
+  await interaction.deferReply({ ephemeral: true });
+  try {
+    const preview = await context.apiService.previewMilcomAssignmentResponse(
+      actorFromInteraction(interaction, 'war'),
+      id,
+      { response: 'unavailable', reason },
+    );
+    await interaction.editReply(assignmentResponseConfirmation(interaction, context, preview));
+  } catch (error) { await replyError(interaction, error); }
+};
+
+export const button = async (interaction, context) => {
+  const event = context.session.event;
+  const id = Number(context.session.state.assignmentId);
+  if (!Number.isSafeInteger(id) || id < 1) {
+    await replyError(interaction, invalidAssignmentControl());
+    return;
+  }
+  if (event === 'assignment-unavailable-start') {
+    await interaction.showModal(unavailableModal(interaction, context, id));
+    return;
+  }
+  if (event === 'assignment-response-cancel') {
+    await interaction.update(statusMessage({
+      title: 'Assignment Response Cancelled',
+      tone: 'neutral',
+      description: 'No Milcom-v2 assignment response was changed.',
+    }));
+    return;
+  }
+  if (event === 'assignment-acknowledge-start') {
+    await interaction.deferUpdate();
+    try {
+      const preview = await context.apiService.previewMilcomAssignmentResponse(
+        actorFromInteraction(interaction, 'war'),
+        id,
+        { response: 'acknowledged' },
+      );
+      await interaction.editReply(assignmentResponseConfirmation(interaction, context, preview));
+    } catch (error) { await replyError(interaction, error); }
+    return;
+  }
+  if (event !== 'assignment-response-confirm' || !context.session.state.intentId) {
+    await replyError(interaction, invalidAssignmentControl());
+    return;
+  }
+  await interaction.deferUpdate();
+  try {
+    const result = await context.apiService.confirmMilcomAssignmentResponse(
+      actorFromInteraction(interaction, 'war'),
+      id,
+      context.session.state.intentId,
+    );
+    const unavailable = result?.response === 'unavailable';
+    await interaction.editReply(statusMessage({
+      title: unavailable ? 'Assignment Marked Unavailable' : 'Assignment Acknowledged',
+      tone: unavailable ? 'warning' : 'success',
+      description: unavailable
+        ? 'Nexus recorded that you are unavailable for this assignment.'
+        : 'Nexus recorded your assignment acknowledgement.',
+      fields: [
+        { name: 'Assignment', value: `#${id}`, inline: true },
+        { name: 'Response', value: safeText(statusLabel(result?.response) ?? titleCase(result?.response)), inline: true },
+        result?.reason ? { name: 'Reason', value: safeText(result.reason) } : null,
+      ],
+      footer: 'Run /war assignments to refresh your current assignment view.',
     }));
   } catch (error) { await replyError(interaction, error); }
 };
