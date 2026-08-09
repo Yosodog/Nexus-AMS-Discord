@@ -1,5 +1,10 @@
-import { SlashCommandBuilder } from 'discord.js';
-import { actorFromInteraction } from '../utils/commandSupport.js';
+import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  SlashCommandBuilder,
+} from 'discord.js';
+import { actorFromInteraction, replyError } from '../utils/commandSupport.js';
 import {
   buildEmbed,
   escapeMarkdown,
@@ -19,7 +24,7 @@ export const data = new SlashCommandBuilder()
     option
       .setName('note')
       .setDescription('Optional audit note for the Nexus sweep log.')
-      .setMaxLength(500)
+      .setMaxLength(255)
       .setRequired(false),
   )
   .setDMPermission(false);
@@ -35,7 +40,7 @@ export const help = Object.freeze({
  * @param {import('discord.js').ChatInputCommandInteraction} interaction
  * @param {{ logger: import('../services/Logger.js').Logger, apiService: import('../services/ApiService.js').ApiService }} context
  */
-export const execute = async (interaction, { logger, apiService }) => {
+export const execute = async (interaction, { logger, apiService, sessions }) => {
   const moderatorId = interaction.user?.id ?? null;
   const note = interaction.options.getString('note')?.trim() ?? '';
   const noteValue = note.length > 0 ? note : undefined;
@@ -54,7 +59,7 @@ export const execute = async (interaction, { logger, apiService }) => {
     return;
   }
 
-  if (!apiService?.sweepPrimaryOffshore) {
+  if (!apiService?.previewPrimaryOffshoreSweep || !sessions) {
     logger.error('ApiService unavailable for /sweepbank', logContext);
     await interaction.reply({
       embeds: [buildErrorEmbed('Sweep service unavailable. Please try again later.')],
@@ -66,69 +71,127 @@ export const execute = async (interaction, { logger, apiService }) => {
   await interaction.deferReply({ ephemeral: true });
 
   try {
-    const response = await apiService.sweepPrimaryOffshore(
-      {
-        moderator_discord_id: interaction.user.id,
-        request_id: interaction.id,
-        ...(noteValue ? { note: noteValue } : {}),
-      },
+    const response = await apiService.previewPrimaryOffshoreSweep(
       actorFromInteraction(interaction, 'sweepbank'),
+      noteValue ? { note: noteValue } : {},
     );
 
     logger.info('Sweep bank request succeeded', {
       ...logContext,
-      status: 200,
-      swept: Boolean(response?.swept),
-      offshoreId: response?.offshore?.id ?? null,
-      offshoreName: response?.offshore?.name ?? null,
-      transferId: response?.transfer?.id ?? null,
+      status: 201,
+      sweepRequired: response?.sweep_required === true,
+      offshoreId: response?.summary?.offshore?.id ?? null,
+      offshoreName: response?.summary?.offshore?.name ?? null,
     });
 
-    const embed = response?.swept
-      ? buildSuccessEmbed(response, apiService.baseUrl)
-      : buildNoOpEmbed(response, apiService.baseUrl);
-
-    await interaction.editReply({ embeds: [embed] });
+    const summary = response?.summary ?? {};
+    if (response?.sweep_required !== true) {
+      await interaction.editReply({
+        embeds: [buildNoOpEmbed(summary, apiService.baseUrl)],
+        allowedMentions: { parse: [] },
+      });
+      return;
+    }
+    const intentId = `${response?.intent?.id ?? ''}`;
+    if (!/^[a-zA-Z0-9]{64}$/.test(intentId)) {
+      throw new TypeError('Nexus returned an invalid bank sweep confirmation token.');
+    }
+    const confirmId = sessions.create({
+      commandName: 'sweepbank',
+      userId: interaction.user.id,
+      event: 'confirm',
+      state: { intentId },
+      oneShot: true,
+    });
+    const warnings = Array.isArray(response?.warnings)
+      ? response.warnings.filter((warning) => typeof warning === 'string' && warning.trim() !== '')
+      : [];
+    await interaction.editReply({
+      embeds: [buildEmbed({
+        title: 'Review Main Bank Sweep',
+        tone: 'warning',
+        description: truncate(summary.description ?? 'Confirm to sweep these refreshed balances.', 1_200),
+        fields: [
+          {
+            name: 'Destination',
+            value: escapeMarkdown(truncate(summary?.offshore?.name ?? 'Primary Offshore', 100)),
+            inline: true,
+          },
+          {
+            name: 'Alliance',
+            value: summary?.offshore?.alliance_id ? `#${summary.offshore.alliance_id}` : 'Unknown',
+            inline: true,
+          },
+          { name: 'Resources', value: formatResourceSummary(summary.resources ?? {}) },
+          summary.note
+            ? { name: 'Audit note', value: escapeMarkdown(truncate(summary.note, 500)) }
+            : null,
+          response?.intent?.expires_at
+            ? { name: 'Confirmation expires', value: formatDiscordTime(response.intent.expires_at), inline: true }
+            : null,
+          warnings.length
+            ? { name: 'Nexus warning', value: escapeMarkdown(truncate(warnings.join('\n'), 1_000)) }
+            : null,
+        ],
+        footer: 'Nexus will refresh balances, permission, and destination again when you confirm.',
+      })],
+      components: [new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(confirmId)
+          .setLabel('Confirm bank sweep')
+          .setStyle(ButtonStyle.Danger),
+      )],
+      allowedMentions: { parse: [] },
+    });
   } catch (error) {
-    const { status = null, data = null } = error?.response ?? {};
     logger.error('Sweep bank request failed', {
       ...logContext,
-      status,
-      backendErrorCode: data?.error ?? null,
-      backendMessage: data?.message ?? null,
+      status: error?.status ?? error?.response?.status ?? null,
+      backendErrorCode: error?.code ?? null,
     });
+    await replyError(interaction, error, 'Sweep Preview Failed');
+  }
+};
 
-    if (status === 403 && data?.error === 'moderator_not_found') {
+export const button = async (interaction, context) => {
+  await interaction.deferUpdate();
+  try {
+    if (context.session?.event !== 'confirm') {
+      throw new TypeError('This bank sweep confirmation is invalid or expired.');
+    }
+    const intentId = `${context.session?.state?.intentId ?? ''}`;
+    if (!/^[a-zA-Z0-9]{64}$/.test(intentId)) {
+      throw new TypeError('This bank sweep confirmation is invalid or expired.');
+    }
+    const response = await context.apiService.confirmPrimaryOffshoreSweep(
+      actorFromInteraction(interaction, 'sweepbank'),
+      { intent_id: intentId },
+    );
+    if (response?.reconciliation_required === true) {
       await interaction.editReply({
-        embeds: [buildErrorEmbed('Your Discord account is not linked to Nexus.')],
+        embeds: [buildErrorEmbed('Nexus recorded an ambiguous bank response. Do not retry; reconcile this transfer in Nexus.')],
+        components: [],
+        allowedMentions: { parse: [] },
       });
       return;
     }
-
-    if (status === 403) {
-      await interaction.editReply({
-        embeds: [buildErrorEmbed('Your Discord account is not authorized to sweep the bank in Nexus.')],
-      });
-      return;
+    if (response?.swept !== true || !response?.transfer?.id) {
+      throw new TypeError('Nexus returned an invalid bank sweep result.');
     }
-
-    if (status === 409 && data?.error === 'sweep_reconciliation_required') {
-      await interaction.editReply({
-        embeds: [buildErrorEmbed('Nexus could not safely determine the prior sweep result. Staff must reconcile it before retrying.')],
-      });
-      return;
-    }
-
-    if (status === 422) {
-      await interaction.editReply({
-        embeds: [buildErrorEmbed(`The sweep request failed: ${data?.message ?? 'Unknown error.'}`)],
-      });
-      return;
-    }
-
     await interaction.editReply({
-      embeds: [buildErrorEmbed('A temporary error prevented the bank sweep. Please try again shortly.')],
+      embeds: [buildSuccessEmbed(response, context.apiService.baseUrl)],
+      components: [],
+      allowedMentions: { parse: [] },
     });
+  } catch (error) {
+    context.logger?.error?.('Sweep bank confirmation failed', {
+      command: 'sweepbank',
+      guildId: interaction.guildId,
+      moderatorId: interaction.user?.id ?? null,
+      status: error?.status ?? error?.response?.status ?? null,
+      backendErrorCode: error?.code ?? null,
+    });
+    await replyError(interaction, error, 'Sweep Confirmation Failed');
   }
 };
 
@@ -189,7 +252,7 @@ function buildErrorEmbed(message) {
     title: 'Sweep Failed',
     tone: 'danger',
     description: truncate(message, 4_096),
-    footer: 'No additional Discord confirmation is required before retrying.',
+    footer: 'Review the Nexus error before retrying.',
     timestamp: true,
   });
 }

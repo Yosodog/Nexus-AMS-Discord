@@ -915,6 +915,34 @@ export class ApiService {
     }, RetryMode.IDEMPOTENT);
   }
 
+  /** Preview fresh main-bank balances before an authorized offshore sweep. */
+  previewPrimaryOffshoreSweep(actor, payload) {
+    return this.#requestDiscord('offshores/sweep-primary/preview', {
+      method: 'post',
+      data: payload,
+      actor: {
+        ...actor,
+        discordCommand: 'sweepbank',
+        discordAction: 'sweepbank',
+      },
+      retryMode: RetryMode.NEVER,
+    });
+  }
+
+  /** Confirm an opaque, balance-versioned offshore sweep intent. */
+  confirmPrimaryOffshoreSweep(actor, payload) {
+    return this.#requestDiscord('offshores/sweep-primary/confirm', {
+      method: 'post',
+      data: payload,
+      actor: {
+        ...actor,
+        discordCommand: 'sweepbank',
+        discordAction: 'sweepbank',
+      },
+      retryMode: RetryMode.IDEMPOTENT,
+    });
+  }
+
   /**
    * Log a Discord message to Nexus for transcript storage.
    * @param {{ discord_channel_id: string, discord_message_id: string, discord_user_id: string, discord_username: string, content: string, sent_at: number }} payload message payload; Nexus derives staff status

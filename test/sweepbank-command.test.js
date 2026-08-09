@@ -1,122 +1,233 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execute as executeSweepbank } from '../src/commands/sweepbank.js';
+import { button, data, execute } from '../src/commands/sweepbank.js';
 import { createLogger, embedJson } from './helpers.js';
 
-function createSweepInteraction({ inGuild = true, roles = ['guild-1'], note = null } = {}) {
+const USER_ID = '123456789012345678';
+const GUILD_ID = '223456789012345678';
+const CHANNEL_ID = '323456789012345678';
+const INTERACTION_ID = '423456789012345678';
+const INTENT_ID = 'a'.repeat(64);
+
+const sessionsRecorder = () => {
+  const created = [];
+  return {
+    created,
+    create: (value) => {
+      created.push(value);
+      return `nxs:${created.length.toString().padStart(16, '0')}`;
+    },
+  };
+};
+
+function createSweepInteraction({ inGuild = true, roles = [GUILD_ID], note = null } = {}) {
   const interaction = {
-    id: '123456789012345678',
-    user: { id: 'moderator-1' },
-    guildId: 'guild-1',
-    channelId: 'channel-1',
+    id: INTERACTION_ID,
+    user: { id: USER_ID },
+    guildId: GUILD_ID,
+    channelId: CHANNEL_ID,
     member: { roles },
+    deferred: false,
+    replied: false,
     replies: [],
     edits: [],
     defers: [],
     inGuild: () => inGuild,
-    options: {
-      getString: () => note,
-    },
+    options: { getString: () => note },
     reply: async (payload) => {
+      interaction.replied = true;
       interaction.replies.push(payload);
+      return payload;
     },
     deferReply: async (payload) => {
+      interaction.deferred = true;
       interaction.defers.push(payload);
+    },
+    deferUpdate: async () => {
+      interaction.deferred = true;
     },
     editReply: async (payload) => {
       interaction.edits.push(payload);
+      return payload;
     },
   };
 
   return interaction;
 }
 
+const preview = (overrides = {}) => ({
+  sweep_required: true,
+  intent: { id: INTENT_ID, expires_at: '2026-08-08T12:10:00Z' },
+  summary: {
+    description: 'Confirm the refreshed main-bank balances.',
+    offshore: { id: 7, name: 'Primary Vault', alliance_id: 42 },
+    resources: { money: 1234567, food: 50, uranium: 0 },
+    note: 'after audit',
+  },
+  warnings: ['Balances will be refreshed before transfer.'],
+  ...overrides,
+});
+
 test('/sweepbank delegates authorization to Nexus even without a local Discord role', async () => {
-  const interaction = createSweepInteraction({ roles: ['guild-1'] });
+  const interaction = createSweepInteraction({ roles: [GUILD_ID] });
   const logger = createLogger();
   let called = false;
+  const error = Object.assign(new Error('You do not have permission to manage offshores.'), {
+    code: 'forbidden',
+    status: 403,
+  });
   const apiService = {
-    sweepPrimaryOffshore: async () => {
+    previewPrimaryOffshoreSweep: async () => {
       called = true;
-      const error = new Error('Forbidden');
-      error.response = { status: 403, data: { error: 'forbidden' } };
       throw error;
     },
   };
 
-  await executeSweepbank(interaction, { logger, apiService });
+  await execute(interaction, { logger, apiService, sessions: sessionsRecorder() });
 
   assert.equal(called, true);
   assert.equal(interaction.defers[0].ephemeral, true);
-  assert.match(embedJson(interaction.edits[0]).description, /not authorized/i);
+  assert.match(embedJson(interaction.edits[0]).description, /permission/i);
 });
 
-test('/sweepbank sends moderator id and trimmed note, then renders swept resources', async () => {
-  const interaction = createSweepInteraction({ roles: ['guild-1', 'finance-role'], note: '  after audit  ' });
+test('/sweepbank previews only Nexus-owned fresh state and creates a one-shot confirmation', async () => {
+  const interaction = createSweepInteraction({
+    roles: [GUILD_ID, '523456789012345678'],
+    note: '  after audit  ',
+  });
   const logger = createLogger();
-  let apiPayload = null;
+  const sessions = sessionsRecorder();
+  const calls = [];
   const apiService = {
-    sweepPrimaryOffshore: async (payload) => {
-      apiPayload = payload;
+    baseUrl: 'https://nexus.example',
+    previewPrimaryOffshoreSweep: async (actor, payload) => {
+      calls.push({ actor, payload });
+      return preview();
+    },
+  };
+
+  await execute(interaction, { logger, apiService, sessions });
+
+  assert.deepEqual(calls[0].payload, { note: 'after audit' });
+  assert.equal(calls[0].actor.discordUserId, USER_ID);
+  assert.equal(calls[0].actor.discordGuildId, GUILD_ID);
+  assert.equal(calls[0].actor.discordInteractionId, INTERACTION_ID);
+  assert.equal(calls[0].actor.discordAction, 'sweepbank');
+  assert.doesNotMatch(JSON.stringify(calls[0].payload), /moderator|request_id|balance/i);
+  assert.equal(interaction.defers[0].ephemeral, true);
+  assert.equal(sessions.created.length, 1);
+  assert.deepEqual(sessions.created[0], {
+    commandName: 'sweepbank',
+    userId: USER_ID,
+    event: 'confirm',
+    state: { intentId: INTENT_ID },
+    oneShot: true,
+  });
+
+  const message = interaction.edits[0];
+  const embed = embedJson(message);
+  assert.equal(embed.title, 'Review Main Bank Sweep');
+  assert.match(embed.fields.find(({ name }) => name === 'Resources').value, /Money: \$1,234,567/);
+  assert.match(embed.fields.find(({ name }) => name === 'Resources').value, /Food: 50/);
+  assert.doesNotMatch(embed.fields.find(({ name }) => name === 'Resources').value, /Uranium/);
+  assert.equal(message.components[0].toJSON().components[0].label, 'Confirm bank sweep');
+  assert.deepEqual(message.allowedMentions, { parse: [] });
+});
+
+test('/sweepbank renders an empty fresh preview without a confirmation control', async () => {
+  const interaction = createSweepInteraction();
+  const sessions = sessionsRecorder();
+  await execute(interaction, {
+    logger: createLogger(),
+    sessions,
+    apiService: {
+      baseUrl: 'https://nexus.example',
+      previewPrimaryOffshoreSweep: async () => preview({
+        sweep_required: false,
+        intent: null,
+        summary: {
+          offshore: { id: 7, name: 'Primary Vault', alliance_id: 42 },
+          resources: {},
+          note: 'unused',
+        },
+        warnings: [],
+      }),
+    },
+  });
+
+  assert.equal(sessions.created.length, 0);
+  assert.equal(embedJson(interaction.edits[0]).title, 'No Sweep Needed');
+  assert.equal(interaction.edits[0].components, undefined);
+});
+
+test('/sweepbank confirmation submits only the opaque Nexus intent and renders the transfer', async () => {
+  const interaction = createSweepInteraction();
+  let call = null;
+  const apiService = {
+    baseUrl: 'https://nexus.example',
+    confirmPrimaryOffshoreSweep: async (actor, payload) => {
+      call = { actor, payload };
       return {
         swept: true,
-        offshore: { id: 7, name: 'Primary Vault' },
+        reconciliation_required: false,
+        offshore: { id: 7, name: 'Primary Vault', alliance_id: 42 },
         transfer: {
           id: 99,
           payload: { money: 1234567, food: 50, uranium: 0 },
-          message: 'Transfer queued.',
+          message: 'Transfer completed.',
+          completed_at: '2026-08-08T12:05:00Z',
         },
       };
     },
   };
 
-  await executeSweepbank(interaction, { logger, apiService });
-
-  assert.deepEqual(apiPayload, {
-    moderator_discord_id: 'moderator-1',
-    request_id: '123456789012345678',
-    note: 'after audit',
+  await button(interaction, {
+    apiService,
+    logger: createLogger(),
+    session: { event: 'confirm', state: { intentId: INTENT_ID } },
   });
-  assert.equal(interaction.defers[0].ephemeral, true);
 
-  const embed = embedJson(interaction.edits[0]);
-  assert.equal(embed.title, 'Bank Swept');
-  assert.match(embed.description, /Primary Vault/);
-  assert.match(embed.fields[0].value, /Money: \$1,234,567/);
-  assert.match(embed.fields[0].value, /Food: 50/);
-  assert.doesNotMatch(embed.fields[0].value, /Uranium/);
+  assert.deepEqual(call.payload, { intent_id: INTENT_ID });
+  assert.deepEqual(Object.keys(call.payload), ['intent_id']);
+  assert.equal(call.actor.discordUserId, USER_ID);
+  assert.equal(embedJson(interaction.edits[0]).title, 'Bank Swept');
+  assert.deepEqual(interaction.edits[0].components, []);
 });
 
-test('/sweepbank stops ambiguous idempotent retries for manual reconciliation', async () => {
+test('/sweepbank warns staff not to retry an ambiguous transfer', async () => {
   const interaction = createSweepInteraction();
-  const logger = createLogger();
-  const apiService = {
-    sweepPrimaryOffshore: async () => {
-      const error = new Error('Conflict');
-      error.response = { status: 409, data: { error: 'sweep_reconciliation_required' } };
-      throw error;
+  await button(interaction, {
+    logger: createLogger(),
+    apiService: {
+      confirmPrimaryOffshoreSweep: async () => ({
+        swept: false,
+        reconciliation_required: true,
+        transfer: { id: 99, status: 'reconciliation_required' },
+      }),
     },
-  };
+    session: { event: 'confirm', state: { intentId: INTENT_ID } },
+  });
 
-  await executeSweepbank(interaction, { logger, apiService });
-
+  assert.match(embedJson(interaction.edits[0]).description, /do not retry/i);
   assert.match(embedJson(interaction.edits[0]).description, /reconcile/i);
 });
 
-test('/sweepbank maps Nexus moderator_not_found errors to a link-account response', async () => {
-  const interaction = createSweepInteraction({ roles: ['guild-1', 'finance-role'] });
-  const logger = createLogger();
-  const apiService = {
-    sweepPrimaryOffshore: async () => {
-      const error = new Error('Forbidden');
-      error.response = { status: 403, data: { error: 'moderator_not_found' } };
-      throw error;
+test('/sweepbank rejects stale component state before calling Nexus', async () => {
+  const interaction = createSweepInteraction();
+  let called = false;
+  await button(interaction, {
+    logger: createLogger(),
+    apiService: {
+      confirmPrimaryOffshoreSweep: async () => { called = true; },
     },
-  };
+    session: { event: 'confirm', state: { intentId: 'invalid' } },
+  });
 
-  await executeSweepbank(interaction, { logger, apiService });
+  assert.equal(called, false);
+  assert.equal(embedJson(interaction.edits[0]).title, 'Sweep Confirmation Failed');
+});
 
-  const embed = embedJson(interaction.edits[0]);
-  assert.equal(embed.title, 'Sweep Failed');
-  assert.equal(embed.description, 'Your Discord account is not linked to Nexus.');
+test('/sweepbank note length matches the Nexus intent contract', () => {
+  const command = data.toJSON();
+  assert.equal(command.options.find(({ name }) => name === 'note').max_length, 255);
 });

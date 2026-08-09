@@ -494,6 +494,18 @@ const endpointCases = [
     body: { moderator_discord_id: ACTOR.discordUserId }, relay: 'actor', explicitBearer: true,
   },
   {
+    name: 'previewPrimaryOffshoreSweep',
+    invoke: (service) => service.previewPrimaryOffshoreSweep(ACTOR, { note: 'Review first' }),
+    method: 'post', pathname: '/api/v1/discord/offshores/sweep-primary/preview',
+    body: { note: 'Review first' }, relay: 'actor',
+  },
+  {
+    name: 'confirmPrimaryOffshoreSweep',
+    invoke: (service) => service.confirmPrimaryOffshoreSweep(ACTOR, { intent_id: 'sweep-intent' }),
+    method: 'post', pathname: '/api/v1/discord/offshores/sweep-primary/confirm',
+    body: { intent_id: 'sweep-intent' }, relay: 'actor',
+  },
+  {
     name: 'logApplicationMessage',
     invoke: (service) => service.logApplicationMessage({ discord_message_id: '789' }),
     method: 'post', pathname: '/api/v1/discord/applications/messages',
