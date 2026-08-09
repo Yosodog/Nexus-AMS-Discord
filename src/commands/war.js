@@ -13,7 +13,7 @@ import {
 
 export const data = new SlashCommandBuilder().setName('war').setDescription('View active wars and war guidance.')
   .addSubcommand((sub) => sub.setName('active').setDescription('View your active wars.'))
-  .addSubcommand((sub) => sub.setName('assignments').setDescription('View your current Milcom-v2 assignments.'))
+  .addSubcommand((sub) => sub.setName('assignments').setDescription('View and respond to current Milcom-v2 assignments.'))
   .addSubcommand((sub) => sub.setName('readiness').setDescription('View a Nexus Milcom-v2 readiness snapshot.')
     .addStringOption((option) => option.setName('nation').setDescription('Nation; defaults to your linked nation.')
       .setAutocomplete(true)))
