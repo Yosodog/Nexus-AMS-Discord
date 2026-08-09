@@ -117,6 +117,9 @@ test('/approve is a confirmation-only alias of the canonical applications handle
     event: 'approve-confirm',
     state: { applicantDiscordId: APPLICANT_ID, target: 'Applicant Example' },
     oneShot: true,
+    connectionId: null,
+    generation: null,
+    guildId: null,
     expiresAt: session.expiresAt,
   });
 
@@ -129,6 +132,7 @@ test('/approve is a confirmation-only alias of the canonical applications handle
       discordGuildId: GUILD_ID,
       discordInteractionId: confirmation.id,
       discordCommand: 'applications',
+      discordAction: 'applications',
     },
     query: { applicant_discord_id: APPLICANT_ID, filter: 'pending', limit: 2 },
   }]);
@@ -138,6 +142,7 @@ test('/approve is a confirmation-only alias of the canonical applications handle
       discordGuildId: GUILD_ID,
       discordInteractionId: confirmation.id,
       discordCommand: 'applications',
+      discordAction: 'applications',
     },
     application: 'opaque-application',
     decision: 'approve',
@@ -193,6 +198,7 @@ test('/deny uses the canonical reason modal, confirmation, lookup, and decision 
       discordGuildId: GUILD_ID,
       discordInteractionId: confirmation.id,
       discordCommand: 'applications',
+      discordAction: 'applications',
     },
     application: 'opaque-application',
     decision: 'deny',
