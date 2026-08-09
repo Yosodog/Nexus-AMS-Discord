@@ -18,7 +18,7 @@ export const registerCommands = async ({
   // Loading and validating the complete command set must finish before the first REST mutation.
   const { commandData } = await commandLoader(logger);
   const shared = isOfficialSharedMode(deploymentMode);
-  logger.info(`Registering ${commandData.length} slash command(s) for ${shared ? 'global' : 'guild'} deployment...`);
+  logger.info(`Registering ${commandData.length} application command(s) for ${shared ? 'global' : 'guild'} deployment...`);
   await rest.put(
     shared ? Routes.applicationCommands(clientId) : Routes.applicationGuildCommands(clientId, guildId),
     { body: commandData },

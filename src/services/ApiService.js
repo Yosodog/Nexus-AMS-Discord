@@ -498,6 +498,53 @@ export class ApiService {
     );
   }
 
+  /** Return the minimal Nexus identity projection for a Discord user. */
+  getDirectoryDiscordUser(actor, discordUserId) {
+    if (!/^\d{17,20}$/.test(`${discordUserId ?? ''}`)) {
+      throw new TypeError('A valid Discord user ID is required.');
+    }
+    return this.#requestDiscord(`directory/discord-users/${encodeURIComponent(discordUserId)}`, {
+      actor,
+      retryMode: RetryMode.SAFE,
+    });
+  }
+
+  /** Search Nexus's cached nation directory. */
+  searchDirectoryNations(actor, query) {
+    return this.#requestDiscord('directory/nations', {
+      actor,
+      params: selectQueryParams({ query }, ['query']),
+      retryMode: RetryMode.SAFE,
+    });
+  }
+
+  /** Return one allowlisted nation projection. */
+  getDirectoryNation(actor, nationId) {
+    if (!/^\d{1,10}$/.test(`${nationId ?? ''}`)) throw new TypeError('A valid nation ID is required.');
+    return this.#requestDiscord(`directory/nations/${encodeURIComponent(nationId)}`, {
+      actor,
+      retryMode: RetryMode.SAFE,
+    });
+  }
+
+  /** Search Nexus's cached alliance directory. */
+  searchDirectoryAlliances(actor, query) {
+    return this.#requestDiscord('directory/alliances', {
+      actor,
+      params: selectQueryParams({ query }, ['query']),
+      retryMode: RetryMode.SAFE,
+    });
+  }
+
+  /** Return one allowlisted alliance projection. */
+  getDirectoryAlliance(actor, allianceId) {
+    if (!/^\d{1,10}$/.test(`${allianceId ?? ''}`)) throw new TypeError('A valid alliance ID is required.');
+    return this.#requestDiscord(`directory/alliances/${encodeURIComponent(allianceId)}`, {
+      actor,
+      retryMode: RetryMode.SAFE,
+    });
+  }
+
   getMyAlerts(actor) {
     return this.#requestDiscord('me/alerts', { actor, retryMode: RetryMode.SAFE });
   }

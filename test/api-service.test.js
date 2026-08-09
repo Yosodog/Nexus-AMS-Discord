@@ -311,6 +311,34 @@ const endpointCases = [
     method: 'get', pathname: '/api/v1/discord/staff/work-items/loan%20reviews/loan%20%2F%2042', relay: 'actor',
   },
   {
+    name: 'getDirectoryDiscordUser',
+    invoke: (service) => service.getDirectoryDiscordUser(ACTOR, '223456789012345678'),
+    method: 'get', pathname: '/api/v1/discord/directory/discord-users/223456789012345678',
+    relay: 'actor',
+  },
+  {
+    name: 'searchDirectoryNations',
+    invoke: (service) => service.searchDirectoryNations(ACTOR, 'Example'),
+    method: 'get', pathname: '/api/v1/discord/directory/nations',
+    query: { query: 'Example' }, relay: 'actor',
+  },
+  {
+    name: 'getDirectoryNation',
+    invoke: (service) => service.getDirectoryNation(ACTOR, 42),
+    method: 'get', pathname: '/api/v1/discord/directory/nations/42', relay: 'actor',
+  },
+  {
+    name: 'searchDirectoryAlliances',
+    invoke: (service) => service.searchDirectoryAlliances(ACTOR, 'Nexus'),
+    method: 'get', pathname: '/api/v1/discord/directory/alliances',
+    query: { query: 'Nexus' }, relay: 'actor',
+  },
+  {
+    name: 'getDirectoryAlliance',
+    invoke: (service) => service.getDirectoryAlliance(ACTOR, 7),
+    method: 'get', pathname: '/api/v1/discord/directory/alliances/7', relay: 'actor',
+  },
+  {
     name: 'getMyAlerts',
     invoke: (service) => service.getMyAlerts(ACTOR),
     method: 'get', pathname: '/api/v1/discord/me/alerts', relay: 'actor',

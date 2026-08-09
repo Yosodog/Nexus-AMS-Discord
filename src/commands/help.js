@@ -105,6 +105,7 @@ const serializeCommand = (candidate) => {
     const serialized = typeof dataCandidate.toJSON === 'function'
       ? dataCandidate.toJSON()
       : dataCandidate;
+    if (serialized?.type !== undefined && serialized.type !== 1) return null;
     const name = typeof serialized?.name === 'string' ? serialized.name.trim().toLowerCase() : '';
     if (!name) return null;
     return {

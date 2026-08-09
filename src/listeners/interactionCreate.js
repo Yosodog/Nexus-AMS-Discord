@@ -7,6 +7,7 @@ import { statusMessage } from '../utils/discordUi.js';
 const interactionKinds = (interaction) => ({
   autocomplete: interaction.isAutocomplete?.(),
   chat: interaction.isChatInputCommand?.(),
+  context: interaction.isUserContextMenuCommand?.() || interaction.isMessageContextMenuCommand?.(),
   button: interaction.isButton?.(),
   select: interaction.isStringSelectMenu?.()
     || interaction.isUserSelectMenu?.()
@@ -24,7 +25,7 @@ const resolutionFailure = async (interaction, kinds, logger, error) => {
   });
   if (kinds.autocomplete) {
     await interaction.respond?.([]).catch?.(() => {});
-  } else if (kinds.chat || kinds.button || kinds.select || kinds.modal) {
+  } else if (kinds.chat || kinds.context || kinds.button || kinds.select || kinds.modal) {
     await interaction.reply?.({
       ...statusMessage({
         title: 'Nexus Unavailable',
@@ -59,9 +60,12 @@ export const registerInteractionListener = (
     let connection = null;
     if (resolver) {
       try {
+        const contextCommand = kinds.context
+          ? commands.get(interaction.commandName)?.connectionCommandName ?? null
+          : null;
         connection = resolver.resolveInteraction(interaction, {
           applicationId,
-          commandName: kinds.chat || kinds.autocomplete ? interaction.commandName : null,
+          commandName: kinds.chat || kinds.autocomplete ? interaction.commandName : contextCommand,
         });
       } catch (error) {
         await resolutionFailure(interaction, kinds, logger, error);
