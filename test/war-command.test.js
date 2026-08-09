@@ -8,7 +8,7 @@ const GUILD_ID = '223456789012345678';
 
 test('/war no longer registers legacy member assignment response controls', () => {
   const subcommands = data.toJSON().options.map((option) => option.name);
-  assert.deepEqual(subcommands, ['active', 'counter', 'simulate']);
+  assert.deepEqual(subcommands, ['active', 'assignments', 'readiness', 'room', 'counter', 'simulate']);
 });
 
 test('/war autocomplete filters active wars locally without provider query parameters', async () => {
@@ -47,6 +47,143 @@ test('/war autocomplete filters active wars locally without provider query param
 
   assert.equal(calls.length, cases.length);
   assert.equal(calls.every((args) => args.length === 1), true);
+});
+
+test('/war readiness autocomplete uses the Nexus nation directory', async () => {
+  const responses = [];
+  const calls = [];
+  const interaction = {
+    id: '323456789012345678',
+    guildId: GUILD_ID,
+    user: { id: USER_ID },
+    options: {
+      getFocused: () => ({ name: 'nation', value: 'alpha' }),
+      getSubcommand: () => 'readiness',
+    },
+    respond: async (choices) => { responses.push(choices); },
+  };
+  await autocomplete(interaction, {
+    apiService: {
+      searchDirectoryNations: async (...args) => {
+        calls.push(args);
+        return { items: [{ id: 44, name: 'Alpha Nation', description: 'Leader Alpha' }] };
+      },
+    },
+  });
+  assert.deepEqual(responses[0], [{ name: 'Alpha Nation · Leader Alpha', value: '44' }]);
+  assert.equal(calls[0][1], 'alpha');
+});
+
+test('/war assignments renders only the Milcom-v2 projection', async () => {
+  const replies = [];
+  const interaction = {
+    id: '323456789012345678',
+    guildId: GUILD_ID,
+    user: { id: USER_ID },
+    options: { getSubcommand: () => 'assignments' },
+    deferReply: async () => {},
+    editReply: async (payload) => { replies.push(payload); },
+  };
+  await execute(interaction, {
+    apiService: {
+      getMilcomAssignments: async () => [{
+        assignment_id: 8,
+        status: 'approved',
+        rank: 1,
+        operation: { name: 'Shield', wave: 2 },
+        objective: { id: 19, status: 'approved', priority: 'p1', war_type: 'ordinary' },
+        target: { id: 99, nation_name: 'Target Nation', alliance: { name: 'Target AA' } },
+        room: { available: true, discord_channel_id: '423456789012345678' },
+        links: { target_nation: 'https://politicsandwar.com/nation/id=99' },
+        private_notes: 'must not render',
+      }],
+    },
+  });
+  const embed = embedJson(replies[0]);
+  assert.match(embed.title, /Milcom-v2 Assignments/);
+  assert.match(JSON.stringify(embed), /Target Nation/);
+  assert.doesNotMatch(JSON.stringify(embed), /must not render/);
+  assert.deepEqual(replies[0].allowedMentions, { parse: [] });
+});
+
+test('/war readiness does not calculate policy in Discord', async () => {
+  const replies = [];
+  const calls = [];
+  const interaction = {
+    id: '323456789012345678',
+    guildId: GUILD_ID,
+    user: { id: USER_ID },
+    options: {
+      getSubcommand: () => 'readiness',
+      getString: () => null,
+    },
+    deferReply: async () => {},
+    editReply: async (payload) => { replies.push(payload); },
+  };
+  await execute(interaction, {
+    apiService: {
+      getMilcomReadiness: async (...args) => {
+        calls.push(args);
+        return {
+          nation: { id: 7, nation_name: 'Ready Nation', leader_name: 'Leader' },
+          score: 1234.5,
+          cities: 20,
+          vacation_turns: 0,
+          beige_turns: 3,
+          offensive_slots: { capacity_at_snapshot: 5, active_wars_at_snapshot: 2, reserved_at_snapshot: 1 },
+          military: { soldiers: 100000, tanks: 5000, aircraft: 1200, ships: 80 },
+          freshness: { fetched_at: '2026-08-09T12:00:00Z', completeness_percent: 97 },
+          readiness_decision: 'must not render',
+        };
+      },
+    },
+  });
+  const embed = embedJson(replies[0]);
+  assert.match(embed.description, /does not recalculate readiness/);
+  assert.match(JSON.stringify(embed), /Capacity/);
+  assert.doesNotMatch(JSON.stringify(embed), /available|must not render/i);
+  assert.deepEqual(calls[0][1], {});
+});
+
+test('/war room renders the actor-safe Nexus summary', async () => {
+  const replies = [];
+  const calls = [];
+  const interaction = {
+    id: '323456789012345678',
+    guildId: GUILD_ID,
+    user: { id: USER_ID },
+    options: {
+      getSubcommand: () => 'room',
+      getInteger: () => 19,
+    },
+    deferReply: async () => {},
+    editReply: async (payload) => { replies.push(payload); },
+  };
+  await execute(interaction, {
+    apiService: {
+      getMilcomWarRoom: async (...args) => {
+        calls.push(args);
+        return {
+          objective_id: 19,
+          discord_channel_id: '423456789012345678',
+          status: 'engaged',
+          priority: 'p1',
+          war_type: 'ordinary',
+          operation: { name: 'Shield', type: 'defensive', wave: 2 },
+          target: { id: 99, nation_name: 'Target Nation', leader_name: 'Target Leader', score: 1400, cities: 20 },
+          assigned_members: [{ assignment_id: 8, status: 'engaged', nation: { id: 7, nation_name: 'Ready Nation' } }],
+          links: { target_nation: 'https://politicsandwar.com/nation/id=99' },
+          recommendation_score: 'must not render',
+        };
+      },
+    },
+  });
+  const embed = embedJson(replies[0]);
+  assert.match(embed.title, /Target Nation/);
+  assert.match(JSON.stringify(embed), /Ready Nation/);
+  assert.doesNotMatch(JSON.stringify(embed), /must not render/);
+  assert.equal(calls[0][1], 19);
+  assert.deepEqual(replies[0].allowedMentions, { parse: [] });
 });
 
 test('/war simulate uses readable plain-message continuation parts for long summaries', async () => {
