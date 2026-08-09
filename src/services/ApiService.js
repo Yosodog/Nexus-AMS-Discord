@@ -414,6 +414,24 @@ export class ApiService {
     });
   }
 
+  getMilcomAssignments(actor) {
+    return this.#requestDiscord('milcom/assignments', { actor, retryMode: RetryMode.SAFE });
+  }
+
+  getMilcomReadiness(actor, params = {}) {
+    return this.#requestDiscord('milcom/readiness', {
+      actor,
+      params: selectQueryParams(params, ['nation_id']),
+      retryMode: RetryMode.SAFE,
+    });
+  }
+
+  getMilcomWarRoom(actor, objectiveId) {
+    return this.#requestDiscord(`milcom/war-rooms/${encodeURIComponent(objectiveId)}`, {
+      actor, retryMode: RetryMode.SAFE,
+    });
+  }
+
   getMySpyAssignments(actor) {
     return this.#requestDiscord('me/spy-assignments', { actor, retryMode: RetryMode.SAFE });
   }
@@ -550,24 +568,74 @@ export class ApiService {
   }
 
   createAlert(actor, payload) {
-    return this.#requestDiscord('me/alerts', { method: 'post', actor, data: payload });
+    return this.#requestDiscord('me/alerts', {
+      method: 'post', actor, data: payload, retryMode: RetryMode.IDEMPOTENT,
+    });
+  }
+
+  getAlertSettings(actor) {
+    return this.#requestDiscord('me/alerts/settings', { actor, retryMode: RetryMode.SAFE });
+  }
+
+  updateAlertSettings(actor, payload) {
+    return this.#requestDiscord('me/alerts/settings', {
+      method: 'put', actor, data: payload, retryMode: RetryMode.IDEMPOTENT,
+    });
+  }
+
+  getAlertActivity(actor, params = {}) {
+    return this.#requestDiscord('me/alerts/activity', {
+      actor,
+      params: selectQueryParams(params, ['before_delivery_id', 'limit']),
+      retryMode: RetryMode.SAFE,
+    });
+  }
+
+  setAlertActivityRead(actor, deliveryId) {
+    return this.#requestDiscord(`me/alerts/activity/${encodeURIComponent(deliveryId)}/read`, {
+      method: 'patch', actor, data: {}, retryMode: RetryMode.IDEMPOTENT,
+    });
+  }
+
+  previewAlert(actor, payload) {
+    return this.#requestDiscord('me/alerts/preview', {
+      method: 'post', actor, data: payload, retryMode: RetryMode.IDEMPOTENT,
+    });
+  }
+
+  testAlertDraft(actor, payload) {
+    return this.#requestDiscord('me/alerts/test', {
+      method: 'post', actor, data: payload, retryMode: RetryMode.IDEMPOTENT,
+    });
+  }
+
+  updateAlert(actor, alertId, payload) {
+    return this.#requestDiscord(`me/alerts/${encodeURIComponent(alertId)}`, {
+      method: 'put', actor, data: payload, retryMode: RetryMode.IDEMPOTENT,
+    });
+  }
+
+  getAlertDelivery(actor, deliveryId) {
+    return this.#requestDiscord(`me/alerts/deliveries/${encodeURIComponent(deliveryId)}`, {
+      actor, retryMode: RetryMode.SAFE,
+    });
   }
 
   updateAlertStatus(actor, alertId, isActive) {
     return this.#requestDiscord(`me/alerts/${encodeURIComponent(alertId)}/status`, {
-      method: 'patch', actor, data: { is_active: isActive },
+      method: 'patch', actor, data: { is_active: isActive }, retryMode: RetryMode.IDEMPOTENT,
     });
   }
 
   testAlert(actor, alertId) {
     return this.#requestDiscord(`me/alerts/${encodeURIComponent(alertId)}/test`, {
-      method: 'post', actor, data: {},
+      method: 'post', actor, data: {}, retryMode: RetryMode.IDEMPOTENT,
     });
   }
 
   deleteAlert(actor, alertId) {
     return this.#requestDiscord(`me/alerts/${encodeURIComponent(alertId)}`, {
-      method: 'delete', actor,
+      method: 'delete', actor, retryMode: RetryMode.IDEMPOTENT,
     });
   }
 

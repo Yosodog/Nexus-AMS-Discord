@@ -233,6 +233,22 @@ const endpointCases = [
     method: 'get', pathname: '/api/v1/discord/me/wars/war%20%2F%2011/simulation', relay: 'actor',
   },
   {
+    name: 'getMilcomAssignments',
+    invoke: (service) => service.getMilcomAssignments(ACTOR),
+    method: 'get', pathname: '/api/v1/discord/milcom/assignments', relay: 'actor',
+  },
+  {
+    name: 'getMilcomReadiness',
+    invoke: (service) => service.getMilcomReadiness(ACTOR, { nation_id: 77, ignored: 'value' }),
+    method: 'get', pathname: '/api/v1/discord/milcom/readiness',
+    query: { nation_id: '77' }, relay: 'actor',
+  },
+  {
+    name: 'getMilcomWarRoom',
+    invoke: (service) => service.getMilcomWarRoom(ACTOR, 'objective / 4'),
+    method: 'get', pathname: '/api/v1/discord/milcom/war-rooms/objective%20%2F%204', relay: 'actor',
+  },
+  {
     name: 'getMySpyAssignments',
     invoke: (service) => service.getMySpyAssignments(ACTOR, { query: 'ignored', page: 2 }),
     method: 'get', pathname: '/api/v1/discord/me/spy-assignments', relay: 'actor',
@@ -347,6 +363,54 @@ const endpointCases = [
     name: 'createAlert',
     invoke: (service) => service.createAlert(ACTOR, { type: 'nation', target_id: 7 }),
     method: 'post', pathname: '/api/v1/discord/me/alerts', body: { type: 'nation', target_id: 7 }, relay: 'actor',
+  },
+  {
+    name: 'getAlertSettings',
+    invoke: (service) => service.getAlertSettings(ACTOR),
+    method: 'get', pathname: '/api/v1/discord/me/alerts/settings', relay: 'actor',
+  },
+  {
+    name: 'updateAlertSettings',
+    invoke: (service) => service.updateAlertSettings(ACTOR, { timezone: 'America/Chicago' }),
+    method: 'put', pathname: '/api/v1/discord/me/alerts/settings',
+    body: { timezone: 'America/Chicago' }, relay: 'actor',
+  },
+  {
+    name: 'getAlertActivity',
+    invoke: (service) => service.getAlertActivity(ACTOR, {
+      before_delivery_id: 91, limit: 20, page: 4,
+    }),
+    method: 'get', pathname: '/api/v1/discord/me/alerts/activity',
+    query: { before_delivery_id: '91', limit: '20' }, relay: 'actor',
+  },
+  {
+    name: 'setAlertActivityRead',
+    invoke: (service) => service.setAlertActivityRead(ACTOR, 'delivery / 2'),
+    method: 'patch', pathname: '/api/v1/discord/me/alerts/activity/delivery%20%2F%202/read',
+    body: {}, relay: 'actor',
+  },
+  {
+    name: 'previewAlert',
+    invoke: (service) => service.previewAlert(ACTOR, { event: 'nation.updated' }),
+    method: 'post', pathname: '/api/v1/discord/me/alerts/preview',
+    body: { event: 'nation.updated' }, relay: 'actor',
+  },
+  {
+    name: 'testAlertDraft',
+    invoke: (service) => service.testAlertDraft(ACTOR, { event: 'nation.updated' }),
+    method: 'post', pathname: '/api/v1/discord/me/alerts/test',
+    body: { event: 'nation.updated' }, relay: 'actor',
+  },
+  {
+    name: 'updateAlert',
+    invoke: (service) => service.updateAlert(ACTOR, 'alert / 6', { active: true }),
+    method: 'put', pathname: '/api/v1/discord/me/alerts/alert%20%2F%206',
+    body: { active: true }, relay: 'actor',
+  },
+  {
+    name: 'getAlertDelivery',
+    invoke: (service) => service.getAlertDelivery(ACTOR, 'delivery / 3'),
+    method: 'get', pathname: '/api/v1/discord/me/alerts/deliveries/delivery%20%2F%203', relay: 'actor',
   },
   {
     name: 'updateAlertStatus',
