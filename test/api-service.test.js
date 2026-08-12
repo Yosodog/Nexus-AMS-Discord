@@ -358,6 +358,11 @@ const endpointCases = [
     method: 'get', pathname: '/api/v1/discord/directory/nations/42', relay: 'actor',
   },
   {
+    name: 'getMyBuildRecommendation',
+    invoke: (service) => service.getMyBuildRecommendation(ACTOR),
+    method: 'get', pathname: '/api/v1/discord/me/build-recommendation', relay: 'actor',
+  },
+  {
     name: 'searchDirectoryAlliances',
     invoke: (service) => service.searchDirectoryAlliances(ACTOR, 'Nexus'),
     method: 'get', pathname: '/api/v1/discord/directory/alliances',

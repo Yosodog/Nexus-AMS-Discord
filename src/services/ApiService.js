@@ -557,6 +557,14 @@ export class ApiService {
     });
   }
 
+  /** Return the actor's current Nexus build recommendation. */
+  getMyBuildRecommendation(actor) {
+    return this.#requestDiscord('me/build-recommendation', {
+      actor,
+      retryMode: RetryMode.SAFE,
+    });
+  }
+
   /** Search Nexus's cached alliance directory. */
   searchDirectoryAlliances(actor, query) {
     return this.#requestDiscord('directory/alliances', {
