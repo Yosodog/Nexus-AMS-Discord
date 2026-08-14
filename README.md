@@ -120,7 +120,7 @@ Generate the asymmetric relay key pair once:
 npm run keygen:relay
 ```
 
-Store `NEXUS_DISCORD_RELAY_PRIVATE_KEY` only in the bot environment. Put the generated `DISCORD_RELAY_PUBLIC_KEY` in the Nexus environment. Do not reuse the Discord bot token or Discord application public key for this purpose.
+Store `NEXUS_DISCORD_RELAY_PRIVATE_KEY` only in the bot environment. Put the generated `DISCORD_RELAY_CURRENT_PUBLIC_KEY` in the Nexus environment. Do not reuse the Discord bot token or Discord application public key for this purpose.
 
 Discord.js receives interactions through the Gateway, which does not include Discord's HTTP interaction signature headers. The relay proof is therefore generated from the Gateway interaction object inside the bot and signed with this dedicated private key. Nexus verifies the signature, guild, actor, interaction ID, freshness, and action before resolving permissions.
 
@@ -128,7 +128,7 @@ Startup rejects malformed URLs and Discord snowflakes. Dedicated traffic is cons
 
 ## Running and commands
 
-The expanded user-facing commands are `/accounts`, `/deposit`, `/withdraw`, `/transactions`, `/requests`, `/grant`, `/loan`, `/waraid`, `/rebuild`, `/raid`, `/war`, `/spy`, and `/applications`. They are registered as normal top-level Discord commands; domain commands use subcommands where appropriate. Nexus resolves the linked actor and remains authoritative for ownership, permissions, balances, eligibility, limits, and all state changes.
+The expanded user-facing commands are `/accounts`, `/deposit`, `/withdraw`, `/transactions`, `/requests`, `/grant`, `/loan`, `/build`, `/waraid`, `/rebuild`, `/raid`, `/war`, `/spy`, and `/applications`. They are registered as normal top-level Discord commands; domain commands use subcommands where appropriate. Nexus resolves the linked actor and remains authoritative for ownership, permissions, balances, eligibility, limits, and all state changes.
 
 Register the validated command set after adding or changing commands:
 
@@ -178,7 +178,7 @@ Recommended rollout order:
 2. In dedicated mode, set matching `DISCORD_BOT_KEY`/`NEXUS_API_KEY` values and the same `DISCORD_GUILD_ID` in both services. In official-shared mode, prepare the complete connection snapshot after Nexus accepts the binding.
 3. Generate each relay key pair, keep its private key with the bot connection secret, and put only its public key in the corresponding Nexus installation.
 4. Keep the Nexus private-notification master switch disabled.
-5. Deploy the bot, run `npm run register`, and restart the queue worker.
+5. Deploy the bot, run `npm run register`, and restart the bot service. The leased queue workers run inside this process.
 6. Smoke-test account reads, a deposit code, a within-limit withdrawal, an above-limit review case, and DM failure handling.
 7. Enable private Discord notifications in Nexus when delivery results are healthy.
 

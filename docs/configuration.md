@@ -35,7 +35,7 @@ npm run keygen:relay > relay-keys.env
 The file contains:
 
 - `NEXUS_DISCORD_RELAY_PRIVATE_KEY`, which stays on the bot host.
-- `DISCORD_RELAY_PUBLIC_KEY`, which goes to Nexus.
+- `DISCORD_RELAY_CURRENT_PUBLIC_KEY`, which goes to Nexus.
 
 Delete `relay-keys.env` after both systems are configured, or store it in an encrypted secret manager.
 
@@ -49,11 +49,7 @@ Create a connection ID:
 node -e "console.log(require('node:crypto').randomUUID())"
 ```
 
-Convert the generated public key from hex to base64url for Nexus v2. Replace the sample argument with the public hex value from `relay-keys.env`:
-
-```bash
-node -e "console.log(Buffer.from(process.argv[1], 'hex').toString('base64url'))" PASTE_PUBLIC_KEY_HEX_HERE
-```
+The generated `DISCORD_RELAY_CURRENT_PUBLIC_KEY` value is already the base64url-encoded raw Ed25519 public key required by Nexus v2; copy it without conversion.
 
 Add these values to the bot `.env`:
 
@@ -93,7 +89,7 @@ DISCORD_CAPABILITIES=relay.proof.v2,queue.leases.v1,queue.connection-context.v1,
 Current queue actions:
 
 ```env
-DISCORD_SUPPORTED_QUEUE_ACTIONS=ALERT_DELIVERY_V1,APPLICATION_DISCORD_RECONCILE,WAR_ALERT,ALLIANCE_DEPARTURE,INACTIVITY_ALERT,ALLIANCE_ROLE_REMOVAL,BEIGE_ALERT,CITY_TIER_SYNC,WAR_ROOM_CREATE,WAR_ROOM_ARCHIVE,PRIVATE_NOTIFICATION
+DISCORD_SUPPORTED_QUEUE_ACTIONS=ALERT_DELIVERY_V1,APPLICATION_DISCORD_RECONCILE,WAR_ALERT,ALLIANCE_DEPARTURE,INACTIVITY_ALERT,MEMBER_PROFILE_SYNC,ALLIANCE_ROLE_REMOVAL,BEIGE_ALERT,CITY_TIER_SYNC,WAR_ROOM_CREATE,WAR_ROOM_ARCHIVE,PRIVATE_NOTIFICATION
 ```
 
 Only advertise queue actions available in the bot version you are running. Feature switches and Nexus permissions still decide whether Nexus creates any work for those actions.

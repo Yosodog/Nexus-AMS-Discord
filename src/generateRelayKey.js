@@ -7,6 +7,6 @@ const rawPublicKey = publicDer.subarray(-32);
 
 process.stdout.write([
   `NEXUS_DISCORD_RELAY_PRIVATE_KEY=${privateDer.toString('base64')}`,
-  `DISCORD_RELAY_PUBLIC_KEY=${rawPublicKey.toString('hex')}`,
+  `DISCORD_RELAY_CURRENT_PUBLIC_KEY=${rawPublicKey.toString('base64url')}`,
   '',
 ].join('\n'));
