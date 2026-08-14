@@ -68,7 +68,7 @@ export const config = {
     discordRelayPrivateKey: process.env.NEXUS_DISCORD_RELAY_PRIVATE_KEY ?? '',
     connectionId: process.env.NEXUS_DISCORD_CONNECTION_ID ?? '',
     connectionGeneration: process.env.NEXUS_DISCORD_CONNECTION_GENERATION ?? '1',
-    relayProtocolVersion: process.env.NEXUS_DISCORD_RELAY_PROTOCOL ?? '1',
+    relayProtocolVersion: process.env.NEXUS_DISCORD_RELAY_PROTOCOL ?? '2',
     relayKeyId: process.env.NEXUS_DISCORD_RELAY_KEY_ID ?? '',
     relayCurrentKeyId: process.env.NEXUS_DISCORD_RELAY_CURRENT_KEY_ID ?? '',
     relayNextKeyId: process.env.NEXUS_DISCORD_RELAY_NEXT_KEY_ID ?? '',
@@ -89,8 +89,5 @@ export const config = {
   build: {
     commit: safeIdentifier(process.env.BUILD_COMMIT),
     release: safeIdentifier(process.env.NEXUS_RELEASE_ID),
-  },
-  queue: {
-    laneAware: process.env.NEXUS_QUEUE_LANE_AWARE !== 'false',
   },
 };

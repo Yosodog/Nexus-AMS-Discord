@@ -21,6 +21,22 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 1_048_576;
 const DEFAULT_MAX_REQUEST_BYTES = 262_144;
+const DISCORD_SNOWFLAKE_PATTERN = /^\d{17,20}$/;
+const CONNECTION_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const assertV2ConnectionContext = (context) => {
+  const valid = context
+    && Number(context.protocolVersion) === 2
+    && DISCORD_SNOWFLAKE_PATTERN.test(`${context.applicationId ?? ''}`.trim())
+    && DISCORD_SNOWFLAKE_PATTERN.test(`${context.guildId ?? ''}`.trim())
+    && CONNECTION_UUID_PATTERN.test(`${context.connectionId ?? ''}`.trim())
+    && Number.isSafeInteger(Number(context.generation))
+    && Number(context.generation) > 0;
+  if (!valid) {
+    throw new TypeError('Discord queue claims require a complete relay protocol v2 connection context.');
+  }
+  return context;
+};
 
 const selectQueryParams = (params, supportedKeys) => {
   const values = params ?? {};
@@ -74,6 +90,15 @@ export class ApiService {
     this.logger = logger;
     this.relaySigner = relaySigner;
     this.connectionContext = connectionContext;
+    if (connectionContext && Number(connectionContext.protocolVersion) !== 2) {
+      throw new TypeError('ApiService requires relay protocol v2 connection context.');
+    }
+    if (relaySigner) {
+      if (Number(relaySigner.protocolVersion) !== 2) {
+        throw new TypeError('ApiService requires a relay protocol v2 signer.');
+      }
+      assertV2ConnectionContext(connectionContext);
+    }
     const sharedConnection = isOfficialSharedMode(connectionContext?.mode);
     if (sharedConnection) {
       this.baseUrl = validateNexusEndpoint(baseUrl, { shared: true });
@@ -683,52 +708,49 @@ export class ApiService {
     });
   }
 
-  /**
-   * Fetch pending Discord commands from the Nexus queue API.
-   * @param {number} [limit=20] maximum number of items to fetch per poll
-   * @returns {Promise<{ data: any[] }>} response payload from Nexus
-   */
-  async fetchDiscordQueue(limit = 20) {
-    const endpointUrl = new URL('/api/v1/discord/queue', this.baseUrl);
-    endpointUrl.searchParams.set('limit', String(limit));
-
-    const options = {
-      method: 'get',
-      url: endpointUrl.toString(),
-    };
-    return this.request(options, RetryMode.SAFE);
-  }
-
-  /** Claim one queue item with an idempotent request identifier and optional lane. */
+  /** Claim one queue item with an idempotent request identifier and explicit v2 binding. */
   async claimDiscordQueue(
     workerId,
     requestId,
-    lane = null,
-    guildId = this.relaySigner?.guildId ?? this.connectionContext?.guildId ?? null,
+    lane,
+    guildId = this.connectionContext?.guildId ?? null,
     connectionContext = this.connectionContext,
   ) {
+    const normalizedLane = typeof lane === 'string' ? lane.trim() : '';
+    if (!normalizedLane) {
+      throw new TypeError('Discord queue claims require a non-empty queue lane.');
+    }
+    const context = assertV2ConnectionContext(connectionContext);
+    if (`${guildId ?? ''}`.trim() !== context.guildId) {
+      throw new TypeError('Discord queue claim guild must match the relay-v2 connection context.');
+    }
+    if (this.connectionContext && (
+      context.connectionId !== this.connectionContext.connectionId
+      || Number(context.generation) !== Number(this.connectionContext.generation)
+      || context.applicationId !== this.connectionContext.applicationId
+      || context.guildId !== this.connectionContext.guildId
+    )) {
+      throw new TypeError('Discord queue claim context does not match the configured relay connection.');
+    }
     const endpointUrl = new URL('/api/v1/discord/queue/claim', this.baseUrl).toString();
-    const data = { worker_id: workerId, request_id: requestId };
-    if (typeof lane === 'string' && lane.trim() !== '') {
-      data.lanes = [lane.trim()];
-    }
-    if (typeof guildId === 'string' && guildId.trim() !== '') {
-      data.guild_id = guildId.trim();
-    }
-    if (this.#isV2Relay() && connectionContext) {
-      data.connection_id = connectionContext.connectionId;
-      data.generation = connectionContext.generation;
-      data.application_id = connectionContext.applicationId;
-    }
+    const data = {
+      worker_id: workerId,
+      request_id: requestId,
+      lanes: [normalizedLane],
+      guild_id: context.guildId,
+      connection_id: context.connectionId,
+      generation: context.generation,
+      application_id: context.applicationId,
+    };
 
     const options = {
       method: 'post',
       url: endpointUrl,
       data,
+      headers: this.#serviceRelayHeaders('queue.claim', { method: 'post', url: endpointUrl, data }),
     };
-    if (this.#isV2Relay()) options.headers = this.#serviceRelayHeaders('queue.claim', options);
     const response = await this.request(options, RetryMode.IDEMPOTENT);
-    if (this.#isV2Relay()) this.#assertQueueBinding(response, connectionContext);
+    this.#assertQueueBinding(response, context);
     return response;
   }
 
@@ -744,7 +766,7 @@ export class ApiService {
       url: endpointUrl,
       data: { lease_token: leaseToken },
     };
-    if (this.#isV2Relay()) options.headers = this.#serviceRelayHeaders('queue.lease', options);
+    options.headers = this.#serviceRelayHeaders('queue.lease', options);
     return this.request(options, RetryMode.IDEMPOTENT);
   }
 
@@ -760,7 +782,7 @@ export class ApiService {
       url: endpointUrl,
       data: { lease_token: leaseToken, result },
     };
-    if (this.#isV2Relay()) options.headers = this.#serviceRelayHeaders('queue.checkpoint', options);
+    options.headers = this.#serviceRelayHeaders('queue.checkpoint', options);
     return this.request(options, RetryMode.IDEMPOTENT);
   }
 
@@ -770,16 +792,17 @@ export class ApiService {
    * @param {'complete' | 'failed'} status processing status to report
    * @returns {Promise<any>} response payload
    */
-  async updateDiscordQueueStatus(id, status, leaseToken = null, outcomeDetails = {}) {
+  async updateDiscordQueueStatus(id, status, leaseToken, outcomeDetails = {}) {
+    if (typeof leaseToken !== 'string' || leaseToken.trim() === '') {
+      throw new TypeError('Discord queue acknowledgements require a lease token.');
+    }
+
     const endpointUrl = new URL(
       `/api/v1/discord/queue/${encodeURIComponent(id)}/status`,
       this.baseUrl,
     );
 
-    const data = { status };
-    if (leaseToken) {
-      data.lease_token = leaseToken;
-    }
+    const data = { status, lease_token: leaseToken };
     if (outcomeDetails?.result !== undefined) {
       data.result = outcomeDetails.result;
     }
@@ -795,8 +818,8 @@ export class ApiService {
       url: endpointUrl.toString(),
       data,
     };
-    if (this.#isV2Relay()) options.headers = this.#serviceRelayHeaders('queue.acknowledge', options);
-    return this.request(options, leaseToken ? RetryMode.IDEMPOTENT : RetryMode.NEVER);
+    options.headers = this.#serviceRelayHeaders('queue.acknowledge', options);
+    return this.request(options, RetryMode.IDEMPOTENT);
   }
 
   /** Fetch the Nexus renderer manifest before claiming alert-lane work. */
@@ -806,8 +829,7 @@ export class ApiService {
       method: 'get',
       url: endpointUrl,
     };
-    if (this.#isV2Relay()) options.headers = this.#serviceRelayHeaders('alerts.manifest', options);
-    else options.headers = this.#serviceRelayHeaders('alerts.manifest');
+    options.headers = this.#serviceRelayHeaders('alerts.manifest', options);
     return this.request(options, RetryMode.SAFE);
   }
 
@@ -908,58 +930,26 @@ export class ApiService {
     });
   }
 
-  /** Fetch the current persisted war-counter record. */
+  /** Fetch the persisted war-counter room binding for queue reconciliation. */
   async getWarCounter(id) {
     const endpointUrl = new URL(
       `/api/v1/discord/war-counters/${encodeURIComponent(id)}`,
       this.baseUrl,
     ).toString();
-    return this.request({ method: 'get', url: endpointUrl }, RetryMode.SAFE);
+    const options = { method: 'get', url: endpointUrl };
+    options.headers = this.#serviceRelayHeaders('war-counters.show', options);
+    return this.request(options, RetryMode.SAFE);
   }
 
-  /** Fetch the current persisted Milcom objective for room reconciliation. */
+  /** Fetch the persisted Milcom objective room binding for queue reconciliation. */
   async getMilcomObjective(id) {
     const endpointUrl = new URL(
       `/api/v1/discord/milcom/objectives/${encodeURIComponent(id)}`,
       this.baseUrl,
     ).toString();
-    return this.request({ method: 'get', url: endpointUrl }, RetryMode.SAFE);
-  }
-
-  /**
-   * Submit a new application on behalf of a Discord user.
-   * @param {{ nation_id: number, discord_user_id: string, discord_username: string }} payload application payload
-   * @returns {Promise<any>} Nexus response containing application and config
-   */
-  async createApplication(payload) {
-    const endpointUrl = new URL('/api/v1/discord/applications', this.baseUrl).toString();
-
-    return this.request({
-      method: 'post',
-      url: endpointUrl,
-      data: payload,
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-      },
-    }, RetryMode.NEVER);
-  }
-
-  /**
-   * Attach a Discord channel to an application for transcript correlation.
-   * @param {{ application_id: number|string, discord_channel_id: string }} payload association payload
-   * @returns {Promise<any>} Nexus response
-   */
-  async attachApplicationChannel(payload) {
-    const endpointUrl = new URL('/api/v1/discord/applications/attach-channel', this.baseUrl).toString();
-
-    return this.request({
-      method: 'post',
-      url: endpointUrl,
-      data: payload,
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-      },
-    }, RetryMode.IDEMPOTENT);
+    const options = { method: 'get', url: endpointUrl };
+    options.headers = this.#serviceRelayHeaders('milcom.objectives.show', options);
+    return this.request(options, RetryMode.SAFE);
   }
 
   /**
@@ -975,9 +965,9 @@ export class ApiService {
       data: payload,
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
-        ...(this.#isV2Relay()
-          ? this.#serviceRelayHeaders('war-counters.attach-channel', { method: 'post', url: endpointUrl, data: payload })
-          : this.#serviceRelayHeaders('war-counters.attach-channel')),
+        ...this.#serviceRelayHeaders('war-counters.attach-channel', {
+          method: 'post', url: endpointUrl, data: payload,
+        }),
       },
     };
     return this.request(options, RetryMode.IDEMPOTENT);
@@ -1000,9 +990,9 @@ export class ApiService {
       data: payload,
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
-        ...(this.#isV2Relay()
-          ? this.#serviceRelayHeaders('milcom.objectives.attach-room', { method: 'post', url: endpointUrl, data: payload })
-          : this.#serviceRelayHeaders('milcom.objectives.attach-room')),
+        ...this.#serviceRelayHeaders('milcom.objectives.attach-room', {
+          method: 'post', url: endpointUrl, data: payload,
+        }),
       },
     };
     return this.request(options, RetryMode.IDEMPOTENT);
@@ -1024,27 +1014,6 @@ export class ApiService {
         Authorization: `Bearer ${this.apiKey}`,
         ...this.#discordActorHeaders(actor, true, {
           method: 'post', url: endpointUrl, data: payload, action: 'war-counters.archive',
-        }),
-      },
-    }, RetryMode.IDEMPOTENT);
-  }
-
-  /**
-   * Sweep the main bank into the primary enabled offshore.
-   * @param {{ moderator_discord_id: string, note?: string }} payload sweep request payload
-   * @returns {Promise<any>} Nexus response
-   */
-  async sweepPrimaryOffshore(payload, actor) {
-    const endpointUrl = new URL('/api/v1/discord/offshores/sweep-primary', this.baseUrl).toString();
-
-    return this.request({
-      method: 'post',
-      url: endpointUrl,
-      data: payload,
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-        ...this.#discordActorHeaders(actor, true, {
-          method: 'post', url: endpointUrl, data: payload, action: 'offshores.sweep-primary',
         }),
       },
     }, RetryMode.IDEMPOTENT);
@@ -1091,9 +1060,9 @@ export class ApiService {
       data: payload,
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
-        ...(this.#isV2Relay()
-          ? this.#serviceRelayHeaders('applications.message', { method: 'post', url: endpointUrl, data: payload })
-          : {}),
+        ...this.#serviceRelayHeaders('applications.message', {
+          method: 'post', url: endpointUrl, data: payload,
+        }),
       },
     };
     return this.request(options, RetryMode.IDEMPOTENT);
@@ -1112,158 +1081,12 @@ export class ApiService {
       data: payload,
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
-        ...(this.#isV2Relay()
-          ? this.#serviceRelayHeaders('intel.report', { method: 'post', url: endpointUrl, data: payload })
-          : {}),
+        ...this.#serviceRelayHeaders('intel.report', {
+          method: 'post', url: endpointUrl, data: payload,
+        }),
       },
     };
     return this.request(options, RetryMode.IDEMPOTENT);
-  }
-
-  /**
-   * Approve an applicant via Nexus.
-   * @param {{ applicant_discord_id: string, moderator_discord_id: string, approval_request_id?: string }} payload approval payload
-   * @returns {Promise<any>} Nexus response containing config for post-approval actions
-   */
-  async approveApplication(payload, actor) {
-    const endpointUrl = new URL('/api/v1/discord/applications/approve', this.baseUrl).toString();
-
-    return this.request({
-      method: 'post',
-      url: endpointUrl,
-      data: payload,
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-        ...this.#discordActorHeaders(actor, true, {
-          method: 'post', url: endpointUrl, data: payload, action: 'applications.approve',
-        }),
-      },
-    }, RetryMode.IDEMPOTENT);
-  }
-
-  /**
-   * Deny an applicant via Nexus.
-   * @param {{ applicant_discord_id: string, moderator_discord_id: string, denial_request_id?: string }} payload denial payload
-   * @returns {Promise<any>} Nexus response
-   */
-  async denyApplication(payload, actor) {
-    const endpointUrl = new URL('/api/v1/discord/applications/deny', this.baseUrl).toString();
-
-    return this.request({
-      method: 'post',
-      url: endpointUrl,
-      data: payload,
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-        ...this.#discordActorHeaders(actor, true, {
-          method: 'post', url: endpointUrl, data: payload, action: 'applications.deny',
-        }),
-      },
-    }, RetryMode.IDEMPOTENT);
-  }
-
-  /**
-   * Exchange a Discord-issued verification code with Nexus to link user accounts.
-   * Always returns a normalized outcome instead of throwing so callers can render friendly errors.
-   * @param {object} payload verification payload to send to Nexus
-   * @param {string} payload.token verification code provided by the user
-   * @param {string} payload.discord_id Discord user snowflake ID
-   * @param {string} payload.discord_username Discord username (non-unique)
-   * @param {string} [payload.discord_global_name] Discord global display name, if available
-   * @param {string} [payload.discord_discriminator] Legacy discriminator/tag when present
-   * @param {string} [payload.discord_avatar] Fully-qualified avatar URL for auditing
-   * @param {object} [payload.metadata] Optional metadata for troubleshooting/auditing
-   * @returns {Promise<{ success: boolean, data?: any, error?: { status: number | null, code: string, message: string, details?: any } }>}
-   */
-  async verifyUser(payload) {
-    const endpointUrl = new URL('/api/v1/discord/verify', this.baseUrl).toString();
-
-    // Mask secrets before logging to avoid leaking user-provided codes.
-    const maskedPayload = {
-      ...payload,
-      token: '[REDACTED]',
-    };
-
-    this.logger.info('Sending verification request to Nexus', {
-      url: endpointUrl,
-      discordId: maskedPayload.discord_id ?? null,
-    });
-
-    try {
-      const response = await this.http.post(endpointUrl, payload, {
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-        },
-      });
-
-      this.logger.info('Verification request succeeded', {
-        status: response.status,
-        endpoint: endpointUrl,
-      });
-
-      return { success: true, data: response.data };
-    } catch (error) {
-      // Axios error classification: response (API returned an error), request (no response), or config.
-      if (error.response) {
-        const { status, data } = error.response;
-
-        const errorCode = this.#mapStatusToErrorCode(status, data);
-        const message = this.#deriveErrorMessage(status, data);
-        const details = this.#sanitizeErrorData(data);
-
-        const normalized = {
-          success: false,
-          status,
-          code: errorCode,
-          message,
-          details,
-          error: {
-            status,
-            code: errorCode,
-            message,
-            details,
-          },
-        };
-
-        this.logger.warn('Verification request failed with API response', {
-          status,
-          endpoint: endpointUrl,
-          code: errorCode,
-        });
-
-        return normalized;
-      }
-
-      if (error.request) {
-        // Request was sent but no response received.
-        this.logger.error('Verification request reached Nexus but no response was received', error.message ?? error);
-        return {
-          success: false,
-          status: null,
-          code: 'NETWORK_ERROR',
-          message: 'Unable to reach Nexus right now. Please try again shortly.',
-          error: {
-            status: null,
-            code: 'NETWORK_ERROR',
-            message: 'Unable to reach Nexus right now. Please try again shortly.',
-          },
-        };
-      }
-
-      // Something went wrong constructing the request before it could be sent.
-      this.logger.error('Unexpected verification failure before request was sent', error);
-      return {
-        success: false,
-        status: null,
-        code: 'UNEXPECTED_ERROR',
-        message: 'An unexpected error occurred while preparing your verification.',
-        error: {
-          status: null,
-          code: 'UNEXPECTED_ERROR',
-          message: 'An unexpected error occurred while preparing your verification.',
-        },
-      };
-    }
   }
 
   async #delay(durationMs) {
@@ -1326,11 +1149,11 @@ export class ApiService {
       throw new TypeError('Discord actor context does not match the resolved Nexus connection.');
     }
 
-    if (!this.relaySigner) {
-      throw new TypeError('Discord actor requests require a configured relay signer.');
+    if (!this.relaySigner || !this.#isV2Relay()) {
+      throw new TypeError('Discord actor requests require a configured relay-v2 signer and connection.');
     }
 
-    const signedRequest = this.#isV2Relay() && request.url
+    const signedRequest = request.url
       ? { ...request, url: this.#canonicalRequestUrl(request.url) }
       : request;
     return this.relaySigner.interactionHeaders({
@@ -1346,14 +1169,14 @@ export class ApiService {
   }
 
   #serviceRelayHeaders(action, request = {}) {
-    if (!this.relaySigner) {
-      throw new TypeError('Discord service requests require a configured relay signer.');
+    if (!this.relaySigner || !this.#isV2Relay()) {
+      throw new TypeError('Discord service requests require a configured relay-v2 signer and connection.');
     }
-    if (this.#isV2Relay() && !V2_SERVICE_PROOF_ACTIONS.includes(action)) {
+    if (!V2_SERVICE_PROOF_ACTIONS.includes(action)) {
       throw new TypeError(`Unsupported v2 service proof action: ${action}`);
     }
 
-    const signedRequest = this.#isV2Relay() && request.url
+    const signedRequest = request.url
       ? { ...request, url: this.#canonicalRequestUrl(request.url) }
       : request;
     return this.relaySigner.serviceHeaders(action, {
@@ -1446,74 +1269,4 @@ export class ApiService {
     return Math.min(Math.max(date - Date.now(), 0), 5 * 60 * 1000);
   }
 
-  #mapStatusToErrorCode(status, data) {
-    if (status === 400) {
-      return 'VALIDATION_ERROR';
-    }
-
-    if (status === 401 || status === 403) {
-      return 'AUTHENTICATION_FAILED';
-    }
-
-    if (status === 404) {
-      return 'NOT_FOUND';
-    }
-
-    if (status === 409) {
-      return 'CONFLICT';
-    }
-
-    if (status >= 500) {
-      return 'SERVER_ERROR';
-    }
-
-    // Fall back to any server-provided error code to aid troubleshooting.
-    if (typeof data?.code === 'string' && data.code.trim() !== '') {
-      return data.code;
-    }
-
-    return 'API_ERROR';
-  }
-
-  #deriveErrorMessage(status, data) {
-    if (typeof data?.message === 'string' && data.message.trim() !== '') {
-      return data.message;
-    }
-
-    if (status === 400) {
-      return 'The verification code appears invalid or has expired.';
-    }
-
-    if (status === 401 || status === 403) {
-      return 'Authentication with Nexus failed. Please contact an administrator.';
-    }
-
-    if (status === 404) {
-      return 'No verification request was found for that code.';
-    }
-
-    if (status === 409) {
-      return 'This verification request was already used or the account is already linked.';
-    }
-
-    if (status >= 500) {
-      return 'Nexus is unavailable right now. Please try again later.';
-    }
-
-    return 'An unexpected error occurred while verifying your account.';
-  }
-
-  #sanitizeErrorData(data) {
-    if (!data || typeof data !== 'object') {
-      return data;
-    }
-
-    const clone = { ...data };
-
-    if (clone.token) {
-      clone.token = '[REDACTED]';
-    }
-
-    return clone;
-  }
 }

@@ -38,7 +38,7 @@ const resolutionFailure = async (interaction, kinds, logger, error) => {
 };
 
 /**
- * Register the interaction listener. Dedicated mode uses the legacy guild
+ * Register the interaction listener. Dedicated mode uses its configured guild
  * argument; shared mode resolves every interaction through the same explicit
  * application/guild/connection/generation context.
  */

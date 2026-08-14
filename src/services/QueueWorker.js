@@ -20,7 +20,7 @@ export class QueueWorker {
     leaseSafetyMs = 5000,
     workerId = randomUUID(),
     createRequestId = randomUUID,
-    lane = null,
+    lane = 'side_effects',
     enabled = true,
     connectionResolver = null,
     scheduler = null,
@@ -38,7 +38,11 @@ export class QueueWorker {
     this.leaseSafetyMs = leaseSafetyMs;
     this.workerId = workerId;
     this.createRequestId = createRequestId;
-    this.lane = typeof lane === 'string' && lane.trim() !== '' ? lane.trim() : null;
+    const normalizedLane = typeof lane === 'string' ? lane.trim() : '';
+    if (!normalizedLane) {
+      throw new TypeError('Queue workers require an explicit queue lane.');
+    }
+    this.lane = normalizedLane;
     this.enabled = enabled;
     this.connectionResolver = connectionResolver;
     this.scheduler = scheduler ?? (connectionResolver ? new FairScheduler() : null);
@@ -168,6 +172,7 @@ export class QueueWorker {
           requestId,
           this.lane,
           this.apiService?.relaySigner?.guildId ?? null,
+          this.apiService?.connectionContext ?? null,
         ),
         apiService: this.apiService,
         connection: null,

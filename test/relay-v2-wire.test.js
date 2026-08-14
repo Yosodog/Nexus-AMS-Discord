@@ -184,26 +184,3 @@ test('capability manifests derive queue actions from the registered action set',
   });
   assert.deepEqual(document.supported_queue_actions, registeredQueueActions());
 });
-
-test('v1 retains its exact current payload/signature/timestamp shape', () => {
-  const signer = new DiscordRelaySigner({
-    privateKeyBase64: base64Private(fixedPrivateKey()),
-    guildId: GUILD_ID,
-    clock: () => 1_700_000_000_000,
-    randomUUID: () => '11111111-2222-4333-8444-555555555555',
-  });
-  const headers = signer.interactionHeaders({
-    discordUserId: ACTOR.discordUserId,
-    discordGuildId: GUILD_ID,
-    discordInteractionId: ACTOR.discordInteractionId,
-    discordCommand: 'applications.approve',
-  });
-  assert.deepEqual(Object.keys(headers).sort(), [
-    'X-Discord-Guild-ID',
-    'X-Discord-Interaction-ID',
-    'X-Discord-User-ID',
-    'X-Nexus-Discord-Relay-Payload',
-    'X-Nexus-Discord-Relay-Signature',
-    'X-Nexus-Discord-Relay-Timestamp',
-  ].sort());
-});

@@ -19,6 +19,7 @@ import { Logger } from './services/Logger.js';
 import { ProcessHealth } from './services/ProcessHealth.js';
 import { QueueDispatcher } from './services/QueueDispatcher.js';
 import { QueueWorker } from './services/QueueWorker.js';
+import { buildQueueWorkerDefinitions } from './services/QueueWorkerDefinitions.js';
 import { DiscordStatusService } from './services/status/DiscordStatusService.js';
 import { alertRendererRegistry } from './services/queueActions/alertRendererRegistry.js';
 import { config } from './utils/config.js';
@@ -30,7 +31,10 @@ if (config.discord.deploymentMode === CONNECTION_MODES.DEDICATED) {
     'DISCORD_GUILD_ID',
     'NEXUS_API_URL',
     'NEXUS_API_KEY',
+    'NEXUS_DISCORD_CONNECTION_ID',
+    'NEXUS_DISCORD_CONNECTION_GENERATION',
     'NEXUS_DISCORD_RELAY_PRIVATE_KEY',
+    'NEXUS_DISCORD_RELAY_KEY_ID',
   );
 }
 
@@ -41,7 +45,7 @@ const logger = new Logger('Bot');
 
 const aggregateQueueHealth = (workers) => {
   const snapshots = workers.map((worker) => ({
-    lane: worker.lane ?? 'compatibility',
+    lane: worker.lane,
     ...worker.getHealthSnapshot(),
   }));
   const leaseStates = snapshots
@@ -258,9 +262,6 @@ export const bootstrap = async () => {
     ?? alertManifestResponse?.manifest?.capabilities
     ?? alertManifestResponse?.data?.manifest?.capabilities
     ?? {};
-  const laneAware = config.queue.laneAware
-    && alertManifestStatus.valid
-    && manifestCapabilities.queue_lanes === true;
   const dispatcherFactory = (connection = dedicatedConnection) => {
     if (!connection) return null;
     const key = runtimeConnectionKey(connection);
@@ -281,17 +282,13 @@ export const bootstrap = async () => {
   };
   const baseDispatcher = dispatcherFactory(dedicatedConnection);
 
-  const workerDefinitions = laneAware
-    ? [
-        { lane: 'side_effects', enabled: true },
-        { lane: 'alerts', enabled: alertManifestStatus.valid },
-        { lane: 'digests', enabled: alertManifestStatus.valid },
-      ]
-    : [{ lane: null, enabled: true }];
+  const alertLanesEnabled = config.discord.deploymentMode === CONNECTION_MODES.OFFICIAL_SHARED
+    || (alertManifestStatus.valid && manifestCapabilities.queue_lanes === true);
+  const workerDefinitions = buildQueueWorkerDefinitions({ alertLanesEnabled });
   const queueWorkers = workerDefinitions.map(({ lane, enabled }) => new QueueWorker({
     apiService: baseApiService,
     dispatcher: baseDispatcher,
-    logger: new Logger(lane ? `QueueWorker:${lane}` : 'QueueWorker'),
+    logger: new Logger(`QueueWorker:${lane}`),
     lane,
     enabled,
     connectionResolver: config.discord.deploymentMode === CONNECTION_MODES.OFFICIAL_SHARED ? connectionResolver : null,

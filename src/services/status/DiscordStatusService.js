@@ -65,7 +65,6 @@ export class DiscordStatusService {
       },
       capabilities: {
         supported: PHASE2_CAPABILITY_KEYS,
-        reads_legacy_queue_lanes: true,
         supported_queue_actions: registeredQueueActions(),
       },
       discord: {

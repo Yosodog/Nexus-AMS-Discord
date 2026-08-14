@@ -1,73 +1,97 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { generateKeyPairSync, verify } from 'node:crypto';
+import { generateKeyPairSync } from 'node:crypto';
 import { DiscordRelaySigner, RelayHeaders } from '../src/services/DiscordRelaySigner.js';
 
-const GUILD_ID = '123456789012345678';
-const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+const APP_ID = '123456789012345678';
+const GUILD_ID = '223456789012345678';
+const CONNECTION_ID = '11111111-2222-4333-8444-555555555555';
+const { privateKey } = generateKeyPairSync('ed25519');
 const privateKeyBase64 = privateKey.export({ format: 'der', type: 'pkcs8' }).toString('base64');
 
 const signer = new DiscordRelaySigner({
   privateKeyBase64,
+  appId: APP_ID,
   guildId: GUILD_ID,
+  connectionId: CONNECTION_ID,
+  generation: 7,
+  protocolVersion: 2,
+  keyId: 'relay-current',
   clock: () => 1_700_000_000_000,
   randomUUID: () => '11111111-2222-4333-8444-555555555555',
 });
 
-function verifyHeaders(headers) {
-  const payload = Buffer.from(headers[RelayHeaders.PAYLOAD], 'base64url').toString();
-  const signature = Buffer.from(headers[RelayHeaders.SIGNATURE], 'hex');
-  assert.equal(
-    verify(null, Buffer.from(headers[RelayHeaders.TIMESTAMP] + payload), publicKey, signature),
-    true,
-  );
-  return JSON.parse(payload);
-}
+const readPayload = (headers) => JSON.parse(
+  Buffer.from(headers[RelayHeaders.PAYLOAD], 'base64url').toString('utf8'),
+);
 
-test('DiscordRelaySigner signs the actual gateway actor and command path', () => {
+test('DiscordRelaySigner signs the actual gateway actor and command path as relay-v2', () => {
   const headers = signer.interactionHeaders({
-    discordUserId: '223456789012345678',
+    discordUserId: '323456789012345678',
     discordGuildId: GUILD_ID,
-    discordInteractionId: '323456789012345678',
-    discordCommand: 'applications.approve',
+    discordInteractionId: '423456789012345678',
+    discordCommand: 'applications',
+    discordAction: 'applications.approve',
+  }, {
+    method: 'POST',
+    path: '/api/v1/discord/applications/confirm',
+    body: { intent_id: 'intent-1' },
   });
-  const payload = verifyHeaders(headers);
+  const payload = readPayload(headers);
 
-  assert.equal(headers[RelayHeaders.TIMESTAMP], '1700000000');
-  assert.equal(payload.proof_type, 'interaction');
-  assert.equal(payload.id, '323456789012345678');
-  assert.equal(payload.guild_id, GUILD_ID);
-  assert.equal(payload.member.user.id, '223456789012345678');
-  assert.deepEqual(payload.data, {
-    name: 'applications',
-    options: [{ type: 1, name: 'approve' }],
+  assert.equal(headers[RelayHeaders.VERSION], '2');
+  assert.equal(headers[RelayHeaders.CONNECTION_ID], CONNECTION_ID);
+  assert.equal(headers[RelayHeaders.GENERATION], '7');
+  assert.equal(payload.contract, 'relay-proof');
+  assert.equal(payload.contract_version, 2);
+  assert.deepEqual(payload.proof, {
+    type: 'interaction',
+    interaction_id: '423456789012345678',
+    user_id: '323456789012345678',
+    command: 'applications',
+    action: 'applications.approve',
   });
 });
 
-test('DiscordRelaySigner signs action-bound service callbacks', () => {
-  const payload = verifyHeaders(signer.serviceHeaders('war-counters.attach-channel'));
+test('DiscordRelaySigner signs action-bound service callbacks as relay-v2', () => {
+  const payload = readPayload(signer.serviceHeaders('war-counters.attach-channel', {
+    method: 'POST',
+    path: '/api/v1/discord/war-counters/attach-channel',
+    body: { war_counter_id: 7 },
+  }));
 
-  assert.deepEqual(payload, {
-    relay_version: 1,
-    proof_type: 'service',
-    nonce: '11111111-2222-4333-8444-555555555555',
-    guild_id: GUILD_ID,
+  assert.equal(payload.contract, 'relay-proof');
+  assert.equal(payload.contract_version, 2);
+  assert.deepEqual(payload.proof, {
+    type: 'service',
     action: 'war-counters.attach-channel',
+    nonce: '11111111-2222-4333-8444-555555555555',
   });
 });
 
-test('DiscordRelaySigner rejects invalid keys and caller-asserted guilds', () => {
+test('DiscordRelaySigner rejects protocol versions other than v2 and incomplete bindings', () => {
   assert.throws(
-    () => new DiscordRelaySigner({ privateKeyBase64: 'not-a-key', guildId: GUILD_ID }),
-    /PKCS#8 Ed25519 private key/,
+    () => new DiscordRelaySigner({
+      privateKeyBase64,
+      appId: APP_ID,
+      guildId: GUILD_ID,
+      connectionId: CONNECTION_ID,
+      protocolVersion: 1,
+    }),
+    /relay protocol v2/i,
+  );
+  assert.throws(
+    () => new DiscordRelaySigner({ privateKeyBase64, guildId: GUILD_ID }),
+    /appId and connectionId/i,
   );
   assert.throws(
     () => signer.interactionHeaders({
-      discordUserId: '223456789012345678',
-      discordGuildId: '999999999999999999',
-      discordInteractionId: '323456789012345678',
+      discordUserId: '323456789012345678',
+      discordGuildId: '923456789012345678',
+      discordInteractionId: '423456789012345678',
       discordCommand: 'sweepbank',
+      discordAction: 'sweepbank',
     }),
-    /configured guild/,
+    /configured guild/i,
   );
 });

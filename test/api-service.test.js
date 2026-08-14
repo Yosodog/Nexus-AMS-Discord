@@ -6,11 +6,14 @@ import { DiscordRelaySigner } from '../src/services/DiscordRelaySigner.js';
 import { createLogger } from './helpers.js';
 
 const GUILD_ID = '223456789012345678';
+const APP_ID = '123456789012345678';
+const CONNECTION_ID = '11111111-2222-4333-8444-555555555555';
 const ACTOR = {
   discordUserId: '123456789012345678',
   discordGuildId: GUILD_ID,
   discordInteractionId: '323456789012345678',
-  discordCommand: 'contract.test',
+  discordCommand: 'contract',
+  discordAction: 'contract.test',
 };
 const { privateKey: relayPrivateKey } = generateKeyPairSync('ed25519');
 const relayPrivateKeyBase64 = relayPrivateKey.export({ format: 'der', type: 'pkcs8' }).toString('base64');
@@ -20,9 +23,23 @@ function createApiService(options = {}) {
     baseUrl: 'https://nexus.example',
     apiKey: 'secret-key',
     logger: createLogger(),
+    connectionContext: {
+      mode: 'dedicated',
+      protocolVersion: 2,
+      applicationId: APP_ID,
+      guildId: GUILD_ID,
+      connectionId: CONNECTION_ID,
+      generation: 1,
+      keyId: 'relay-current',
+    },
     relaySigner: new DiscordRelaySigner({
       privateKeyBase64: relayPrivateKeyBase64,
+      appId: APP_ID,
       guildId: GUILD_ID,
+      connectionId: CONNECTION_ID,
+      generation: 1,
+      protocolVersion: 2,
+      keyId: 'relay-current',
       clock: () => 1_700_000_000_000,
       randomUUID: () => '11111111-2222-4333-8444-555555555555',
     }),
@@ -474,32 +491,34 @@ const endpointCases = [
     method: 'post', pathname: '/api/v1/discord/me/blockade-relief/request%20%2F%2011/cancel', body: {}, relay: 'actor',
   },
   {
-    name: 'fetchDiscordQueue',
-    invoke: (service) => service.fetchDiscordQueue(7),
-    method: 'get', pathname: '/api/v1/discord/queue', query: { limit: '7' },
-  },
-  {
     name: 'claimDiscordQueue',
     invoke: (service) => service.claimDiscordQueue('worker-1', 'request-1', 'alerts'),
     method: 'post', pathname: '/api/v1/discord/queue/claim',
-    body: { worker_id: 'worker-1', request_id: 'request-1', lanes: ['alerts'], guild_id: GUILD_ID },
+    body: {
+      worker_id: 'worker-1', request_id: 'request-1', lanes: ['alerts'], guild_id: GUILD_ID,
+      connection_id: CONNECTION_ID, generation: 1, application_id: APP_ID,
+    },
+    relay: 'service',
   },
   {
     name: 'renewDiscordQueueLease',
     invoke: (service) => service.renewDiscordQueueLease('queue / 1', 'lease-1'),
     method: 'post', pathname: '/api/v1/discord/queue/queue%20%2F%201/lease', body: { lease_token: 'lease-1' },
+    relay: 'service',
   },
   {
     name: 'checkpointDiscordQueue',
     invoke: (service) => service.checkpointDiscordQueue('queue / 2', 'lease-2', { discord_channel_id: '123' }),
     method: 'patch', pathname: '/api/v1/discord/queue/queue%20%2F%202/checkpoint',
     body: { lease_token: 'lease-2', result: { discord_channel_id: '123' } },
+    relay: 'service',
   },
   {
     name: 'updateDiscordQueueStatus',
     invoke: (service) => service.updateDiscordQueueStatus('queue / 3', 'complete', 'lease-3', { result: { sent: true } }),
     method: 'post', pathname: '/api/v1/discord/queue/queue%20%2F%203/status',
     body: { status: 'complete', lease_token: 'lease-3', result: { sent: true } },
+    relay: 'service',
   },
   {
     name: 'getAlertRendererManifest',
@@ -562,23 +581,12 @@ const endpointCases = [
   {
     name: 'getWarCounter',
     invoke: (service) => service.getWarCounter('counter / 77'),
-    method: 'get', pathname: '/api/v1/discord/war-counters/counter%20%2F%2077',
+    method: 'get', pathname: '/api/v1/discord/war-counters/counter%20%2F%2077', relay: 'service',
   },
   {
     name: 'getMilcomObjective',
     invoke: (service) => service.getMilcomObjective('objective / 123'),
-    method: 'get', pathname: '/api/v1/discord/milcom/objectives/objective%20%2F%20123',
-  },
-  {
-    name: 'createApplication',
-    invoke: (service) => service.createApplication({ nation_id: 1 }),
-    method: 'post', pathname: '/api/v1/discord/applications', body: { nation_id: 1 }, explicitBearer: true,
-  },
-  {
-    name: 'attachApplicationChannel',
-    invoke: (service) => service.attachApplicationChannel({ application_id: 1, discord_channel_id: '123' }),
-    method: 'post', pathname: '/api/v1/discord/applications/attach-channel',
-    body: { application_id: 1, discord_channel_id: '123' }, explicitBearer: true,
+    method: 'get', pathname: '/api/v1/discord/milcom/objectives/objective%20%2F%20123', relay: 'service',
   },
   {
     name: 'attachWarCounterChannel',
@@ -599,12 +607,6 @@ const endpointCases = [
     relay: 'actor', explicitBearer: true,
   },
   {
-    name: 'sweepPrimaryOffshore',
-    invoke: (service) => service.sweepPrimaryOffshore({ moderator_discord_id: ACTOR.discordUserId }, ACTOR),
-    method: 'post', pathname: '/api/v1/discord/offshores/sweep-primary',
-    body: { moderator_discord_id: ACTOR.discordUserId }, relay: 'actor', explicitBearer: true,
-  },
-  {
     name: 'previewPrimaryOffshoreSweep',
     invoke: (service) => service.previewPrimaryOffshoreSweep(ACTOR, { note: 'Review first' }),
     method: 'post', pathname: '/api/v1/discord/offshores/sweep-primary/preview',
@@ -620,34 +622,16 @@ const endpointCases = [
     name: 'logApplicationMessage',
     invoke: (service) => service.logApplicationMessage({ discord_message_id: '789' }),
     method: 'post', pathname: '/api/v1/discord/applications/messages',
-    body: { discord_message_id: '789' }, explicitBearer: true,
+    body: { discord_message_id: '789' }, relay: 'service', explicitBearer: true,
   },
   {
     name: 'sendIntelReport',
     invoke: (service) => service.sendIntelReport({ report: 'intel' }),
-    method: 'post', pathname: '/api/v1/discord/intel', body: { report: 'intel' }, explicitBearer: true,
-  },
-  {
-    name: 'approveApplication',
-    invoke: (service) => service.approveApplication({ applicant_discord_id: '456' }, ACTOR),
-    method: 'post', pathname: '/api/v1/discord/applications/approve',
-    body: { applicant_discord_id: '456' }, relay: 'actor', explicitBearer: true,
-  },
-  {
-    name: 'denyApplication',
-    invoke: (service) => service.denyApplication({ applicant_discord_id: '456' }, ACTOR),
-    method: 'post', pathname: '/api/v1/discord/applications/deny',
-    body: { applicant_discord_id: '456' }, relay: 'actor', explicitBearer: true,
-  },
-  {
-    name: 'verifyUser',
-    invoke: (service) => service.verifyUser({ token: 'verify-token', discord_id: ACTOR.discordUserId }),
-    method: 'post', pathname: '/api/v1/discord/verify',
-    body: { token: 'verify-token', discord_id: ACTOR.discordUserId }, explicitBearer: true, directPost: true,
+    method: 'post', pathname: '/api/v1/discord/intel', body: { report: 'intel' }, relay: 'service', explicitBearer: true,
   },
 ];
 
-test('ApiService builds queue fetch and status update requests', async () => {
+test('ApiService builds queue status update requests', async () => {
   const service = createApiService();
   const requests = [];
   service.http.request = async (options) => {
@@ -655,22 +639,28 @@ test('ApiService builds queue fetch and status update requests', async () => {
     return { data: { ok: true } };
   };
 
-  assert.deepEqual(await service.fetchDiscordQueue(7), { ok: true });
-  assert.deepEqual(await service.updateDiscordQueueStatus('queue-1', 'complete'), { ok: true });
+  assert.deepEqual(await service.updateDiscordQueueStatus('queue-1', 'complete', 'lease-1'), { ok: true });
 
-  assert.equal(requests[0].method, 'get');
-  assert.equal(requests[0].url, 'https://nexus.example/api/v1/discord/queue?limit=7');
-  assert.equal(requests[1].method, 'post');
-  assert.equal(requests[1].url, 'https://nexus.example/api/v1/discord/queue/queue-1/status');
-  assert.deepEqual(requests[1].data, { status: 'complete' });
+  assert.equal(requests[0].method, 'post');
+  assert.equal(requests[0].url, 'https://nexus.example/api/v1/discord/queue/queue-1/status');
+  assert.deepEqual(requests[0].data, { status: 'complete', lease_token: 'lease-1' });
 });
 
-test('ApiService builds leased queue and war-counter requests', async () => {
+test('ApiService refuses queue acknowledgements without a lease token', async () => {
+  const service = createApiService();
+
+  await assert.rejects(
+    () => service.updateDiscordQueueStatus('queue-1', 'complete'),
+    /require a lease token/,
+  );
+});
+
+test('ApiService builds leased queue requests with complete v2 binding', async () => {
   const service = createApiService();
   const requests = [];
   service.http.request = async (options) => {
     requests.push(options);
-    return { data: { ok: true } };
+    return requests.length === 1 ? { data: { data: null } } : { data: { ok: true } };
   };
 
   await service.claimDiscordQueue('worker-1', 'request-1', 'alerts');
@@ -681,14 +671,15 @@ test('ApiService builds leased queue and war-counter requests', async () => {
     error_message: 'Discord rejected the message',
     result: { delivery: 'failed', retryable: true },
   });
-  await service.getWarCounter(77);
-
-  assert.deepEqual(requests.map(({ method }) => method), ['post', 'post', 'patch', 'post', 'get']);
+  assert.deepEqual(requests.map(({ method }) => method), ['post', 'post', 'patch', 'post']);
   assert.deepEqual(requests[0].data, {
     worker_id: 'worker-1',
     request_id: 'request-1',
     lanes: ['alerts'],
     guild_id: GUILD_ID,
+    connection_id: CONNECTION_ID,
+    generation: 1,
+    application_id: APP_ID,
   });
   assert.deepEqual(requests[2].data, {
     lease_token: 'lease-1',
@@ -701,7 +692,6 @@ test('ApiService builds leased queue and war-counter requests', async () => {
     error_message: 'Discord rejected the message',
     result: { delivery: 'failed', retryable: true },
   });
-  assert.equal(requests[4].url, 'https://nexus.example/api/v1/discord/war-counters/77');
 });
 
 test('ApiService signs and retries the idempotent Milcom objective room callback', async () => {
@@ -725,34 +715,57 @@ test('ApiService signs and retries the idempotent Milcom objective room callback
     return { data: { ok: true } };
   };
 
-  assert.deepEqual(await service.getMilcomObjective(123), { ok: true });
   assert.deepEqual(await service.attachMilcomObjectiveRoom({
     objective_id: 123,
     dispatch_id: 456,
     discord_channel_id: '323456789012345678',
   }), { ok: true });
 
-  assert.equal(requests[0].method, 'get');
-  assert.equal(requests[0].url, 'https://nexus.example/api/v1/discord/milcom/objectives/123');
   assert.equal(callbackAttempts, 2);
-  assert.equal(requests[1].url, 'https://nexus.example/api/v1/discord/milcom/objectives/attach-room');
-  assert.deepEqual(requests[1].data, {
+  assert.equal(requests[0].url, 'https://nexus.example/api/v1/discord/milcom/objectives/attach-room');
+  assert.deepEqual(requests[0].data, {
     objective_id: 123,
     dispatch_id: 456,
     discord_channel_id: '323456789012345678',
   });
-  assert.equal(requests[1].headers.Authorization, 'Bearer secret-key');
-  assert.equal(typeof requests[1].headers['X-Nexus-Discord-Relay-Signature'], 'string');
+  assert.equal(requests[0].headers.Authorization, 'Bearer secret-key');
+  assert.equal(typeof requests[0].headers['X-Nexus-Discord-Relay-Signature'], 'string');
   const relayPayload = JSON.parse(Buffer.from(
-    requests[1].headers['X-Nexus-Discord-Relay-Payload'],
+    requests[0].headers['X-Nexus-Discord-Relay-Payload'],
     'base64url',
   ).toString('utf8'));
-  assert.deepEqual(relayPayload, {
-    relay_version: 1,
-    proof_type: 'service',
-    nonce: '11111111-2222-4333-8444-555555555555',
+  assert.deepEqual({
+    contract: relayPayload.contract,
+    contract_version: relayPayload.contract_version,
+    issuer: relayPayload.issuer,
+    audience: relayPayload.audience,
+    key_scope: relayPayload.key_scope,
+    connection_id: relayPayload.connection_id,
+    app_id: relayPayload.app_id,
+    guild_id: relayPayload.guild_id,
+    generation: relayPayload.generation,
+    key_id: relayPayload.key_id,
+    proof: relayPayload.proof,
+    method: relayPayload.method,
+    normalized_path_query: relayPayload.normalized_path_query,
+  }, {
+    contract: 'relay-proof',
+    contract_version: 2,
+    issuer: 'discord-relay',
+    audience: 'nexus',
+    key_scope: 'discord-relay->nexus',
+    connection_id: CONNECTION_ID,
+    app_id: APP_ID,
     guild_id: GUILD_ID,
-    action: 'milcom.objectives.attach-room',
+    generation: 1,
+    key_id: 'relay-current',
+    proof: {
+      type: 'service',
+      action: 'milcom.objectives.attach-room',
+      nonce: '11111111-2222-4333-8444-555555555555',
+    },
+    method: 'POST',
+    normalized_path_query: '/api/v1/discord/milcom/objectives/attach-room',
   });
 });
 
@@ -772,7 +785,9 @@ test('ApiService route matrix covers every public endpoint method exactly', asyn
       const requests = [];
       service.http.request = async (options) => {
         requests.push(options);
-        return { data: { data: { ok: true }, meta: { contract_version: 1 } } };
+        return endpointCase.name === 'claimDiscordQueue'
+          ? { data: { data: null } }
+          : { data: { data: { ok: true }, meta: { contract_version: 1 } } };
       };
       service.http.post = async (url, data, options = {}) => {
         requests.push({ method: 'post', url, data, headers: options.headers });
@@ -796,17 +811,22 @@ test('ApiService route matrix covers every public endpoint method exactly', asyn
         assert.equal(headers.Authorization, 'Bearer secret-key');
       }
       if (endpointCase.relay === 'actor') {
-        assert.equal(headers['X-Discord-User-ID'], ACTOR.discordUserId);
-        assert.equal(headers['X-Discord-Guild-ID'], ACTOR.discordGuildId);
-        assert.equal(headers['X-Discord-Interaction-ID'], ACTOR.discordInteractionId);
         assert.equal(typeof headers['X-Nexus-Discord-Relay-Signature'], 'string');
+        const relayPayload = JSON.parse(Buffer.from(
+          headers['X-Nexus-Discord-Relay-Payload'],
+          'base64url',
+        ).toString('utf8'));
+        assert.equal(relayPayload.contract_version, 2);
+        assert.equal(relayPayload.proof.user_id, ACTOR.discordUserId);
+        assert.equal(relayPayload.proof.interaction_id, ACTOR.discordInteractionId);
+        assert.equal(relayPayload.proof.type, 'interaction');
       } else if (endpointCase.relay === 'service') {
         assert.equal(typeof headers['X-Nexus-Discord-Relay-Signature'], 'string');
         const relayPayload = JSON.parse(Buffer.from(
           headers['X-Nexus-Discord-Relay-Payload'],
           'base64url',
         ).toString('utf8'));
-        assert.equal(relayPayload.proof_type, 'service');
+        assert.equal(relayPayload.proof.type, 'service');
       } else {
         assert.equal(headers['X-Nexus-Discord-Relay-Signature'], undefined);
       }
@@ -1019,54 +1039,4 @@ test('ApiService validates retry modes and supports HTTP-date Retry-After header
   await service.request({ method: 'get', url: '/date-retry' }, RetryMode.SAFE);
   assert.equal(sleeps.length, 1);
   assert.equal(sleeps[0] > 50_000 && sleeps[0] <= 60_000, true);
-});
-
-test('ApiService verifyUser normalizes API errors and redacts token details', async () => {
-  const service = createApiService();
-  service.http.post = async () => {
-    const error = new Error('Conflict');
-    error.response = {
-      status: 409,
-      data: {
-        message: 'Already linked.',
-        token: 'secret-user-token',
-      },
-    };
-    throw error;
-  };
-
-  const result = await service.verifyUser({
-    token: 'secret-user-token',
-    discord_id: 'user-1',
-    discord_username: 'Tester',
-  });
-
-  assert.equal(result.success, false);
-  assert.equal(result.status, 409);
-  assert.equal(result.code, 'CONFLICT');
-  assert.equal(result.message, 'Already linked.');
-  assert.equal(result.details.token, '[REDACTED]');
-  assert.equal(result.error.details.token, '[REDACTED]');
-});
-
-test('ApiService verifyUser returns network and setup failures without throwing', async () => {
-  const networkService = createApiService();
-  networkService.http.post = async () => {
-    const error = new Error('No response');
-    error.request = {};
-    throw error;
-  };
-
-  const networkResult = await networkService.verifyUser({ token: 'code' });
-  assert.equal(networkResult.success, false);
-  assert.equal(networkResult.code, 'NETWORK_ERROR');
-
-  const setupService = createApiService();
-  setupService.http.post = async () => {
-    throw new Error('Invalid config');
-  };
-
-  const setupResult = await setupService.verifyUser({ token: 'code' });
-  assert.equal(setupResult.success, false);
-  assert.equal(setupResult.code, 'UNEXPECTED_ERROR');
 });

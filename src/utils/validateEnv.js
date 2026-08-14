@@ -1,4 +1,9 @@
-import { isDiscordSnowflake, isHttpUrl } from './boundaryValidators.js';
+import {
+  isDiscordSnowflake,
+  isHttpUrl,
+  isUuid,
+  toPositiveInteger,
+} from './boundaryValidators.js';
 import { createPrivateKey } from 'node:crypto';
 
 /**
@@ -40,6 +45,26 @@ export const validateEnv = (requiredKeys, logger) => {
     } catch {
       invalid.push('NEXUS_DISCORD_RELAY_PRIVATE_KEY must be a base64 PKCS#8 Ed25519 private key');
     }
+  }
+
+  const relayProtocol = process.env.NEXUS_DISCORD_RELAY_PROTOCOL;
+  if (relayProtocol && relayProtocol.trim() !== '2') {
+    invalid.push('NEXUS_DISCORD_RELAY_PROTOCOL must be 2; relay protocol v1 is not supported');
+  }
+
+  const connectionId = process.env.NEXUS_DISCORD_CONNECTION_ID;
+  if (connectionId && !isUuid(connectionId)) {
+    invalid.push('NEXUS_DISCORD_CONNECTION_ID must be a UUID');
+  }
+
+  const connectionGeneration = process.env.NEXUS_DISCORD_CONNECTION_GENERATION;
+  if (connectionGeneration && toPositiveInteger(connectionGeneration) === null) {
+    invalid.push('NEXUS_DISCORD_CONNECTION_GENERATION must be a positive integer');
+  }
+
+  const relayKeyId = process.env.NEXUS_DISCORD_RELAY_KEY_ID;
+  if (relayKeyId && !/^[a-z0-9][a-z0-9._-]{0,127}$/.test(relayKeyId.trim().toLowerCase())) {
+    invalid.push('NEXUS_DISCORD_RELAY_KEY_ID is invalid');
   }
 
   if (missing.length === 0 && invalid.length === 0) {

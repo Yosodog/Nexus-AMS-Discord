@@ -125,7 +125,7 @@ export class DiscordRelaySigner {
     applicationId = appId,
     connectionId = null,
     generation = 1,
-    protocolVersion = 1,
+    protocolVersion = 2,
     keyScope = 'discord-relay->nexus',
     keyId = null,
     currentKeyId = null,
@@ -138,7 +138,10 @@ export class DiscordRelaySigner {
   }) {
     this.guildId = validateSnowflake(guildId, 'Discord relay guildId');
     this.appId = applicationId ? validateSnowflake(applicationId, 'Discord relay appId') : null;
-    this.protocolVersion = Number(protocolVersion) === 2 ? 2 : 1;
+    this.protocolVersion = Number(protocolVersion);
+    if (this.protocolVersion !== 2) {
+      throw new TypeError('Discord relay signer requires relay protocol v2.');
+    }
     this.connectionId = connectionId ? validateUuid(connectionId, 'Discord relay connectionId') : null;
     this.generation = Number(generation);
     if (!Number.isSafeInteger(this.generation) || this.generation < 1) {
@@ -148,16 +151,14 @@ export class DiscordRelaySigner {
     this.clock = clock;
     this.randomUUID = randomUUID;
 
-    if (this.protocolVersion === 2) {
-      if (!this.appId || !this.connectionId) {
-        throw new TypeError('Relay protocol v2 requires appId and connectionId.');
-      }
-      if (this.keyScope !== 'discord-relay->nexus') {
-        throw new TypeError('Discord relay signer must use the discord-relay->nexus key scope.');
-      }
+    if (!this.appId || !this.connectionId) {
+      throw new TypeError('Relay protocol v2 requires appId and connectionId.');
+    }
+    if (this.keyScope !== 'discord-relay->nexus') {
+      throw new TypeError('Discord relay signer must use the discord-relay->nexus key scope.');
     }
 
-    const currentId = `${currentKeyId ?? keyId ?? (this.protocolVersion === 1 ? 'legacy-v1' : 'relay-current')}`
+    const currentId = `${currentKeyId ?? keyId ?? 'relay-current'}`
       .trim().toLowerCase();
     this.keys = {
       current: keyInput({ keyId: currentId, privateKeyBase64 }),
@@ -177,59 +178,12 @@ export class DiscordRelaySigner {
     }
   }
 
-  /** Legacy v1 wire shape retained for standalone and dedicated deployments. */
   interactionHeaders(actor, request = {}) {
-    if (this.protocolVersion === 2 || request.protocolVersion === 2) {
-      return documentHeaders(this.#v2Document('interaction', actor, request));
-    }
-
-    const userId = `${actor?.discordUserId ?? actor?.userId ?? ''}`.trim();
-    const guildId = `${actor?.discordGuildId ?? actor?.guildId ?? ''}`.trim();
-    const interactionId = `${actor?.discordInteractionId ?? actor?.interactionId ?? ''}`.trim();
-    const command = `${actor?.discordCommand ?? actor?.command ?? 'interaction'}`.trim().toLowerCase();
-
-    if (!SNOWFLAKE_PATTERN.test(userId) || !SNOWFLAKE_PATTERN.test(interactionId)) {
-      throw new TypeError('Discord relay proof requires valid user and interaction snowflakes.');
-    }
-    if (!SNOWFLAKE_PATTERN.test(guildId) || guildId !== this.guildId) {
-      throw new TypeError('Discord relay proof must use the configured guild.');
-    }
-    if (!/^[a-z0-9][a-z0-9._-]{0,99}$/.test(command)) {
-      throw new TypeError('Discord relay proof requires a valid command name.');
-    }
-
-    return this.#legacyHeaders({
-      relay_version: 1,
-      proof_type: 'interaction',
-      id: interactionId,
-      guild_id: guildId,
-      member: { user: { id: userId } },
-      data: this.#commandData(command),
-    }, {
-      'X-Discord-User-ID': userId,
-      'X-Discord-Guild-ID': guildId,
-      'X-Discord-Interaction-ID': interactionId,
-    });
+    return documentHeaders(this.#v2Document('interaction', actor, request));
   }
 
-  /** Legacy service proof or a complete v2 signed relay-proof document. */
   serviceHeaders(action, request = {}) {
-    if (this.protocolVersion === 2 || request.protocolVersion === 2) {
-      return documentHeaders(this.#v2Document('service', { action }, request));
-    }
-
-    const normalizedAction = `${action ?? ''}`.trim().toLowerCase();
-    if (!/^[a-z0-9][a-z0-9._-]{0,99}$/.test(normalizedAction)) {
-      throw new TypeError('Discord relay service proof requires a valid action.');
-    }
-
-    return this.#legacyHeaders({
-      relay_version: 1,
-      proof_type: 'service',
-      nonce: this.randomUUID(),
-      guild_id: this.guildId,
-      action: normalizedAction,
-    });
+    return documentHeaders(this.#v2Document('service', { action }, request));
   }
 
   createCapabilityManifest({
@@ -240,7 +194,6 @@ export class DiscordRelaySigner {
     renderers = [],
     limits = {},
   } = {}) {
-    if (this.protocolVersion !== 2) throw new TypeError('Capability manifests require relay protocol v2.');
     const issued = issuedAt ? new Date(issuedAt) : new Date(this.clock());
     const expires = expiresAt ? new Date(expiresAt) : new Date(issued.getTime() + 24 * 60 * 60 * 1000);
     const current = this.keys.current;
@@ -314,6 +267,12 @@ export class DiscordRelaySigner {
     if (!['DELETE', 'GET', 'PATCH', 'POST', 'PUT'].includes(method)) {
       throw new TypeError('Relay proof method is not supported.');
     }
+    if (type === 'interaction') {
+      const actorGuildId = validateSnowflake(actor?.discordGuildId ?? actor?.guildId, 'guildId');
+      if (actorGuildId !== this.guildId) {
+        throw new TypeError('Discord relay proof must use the configured guild.');
+      }
+    }
 
     const document = {
       contract: 'relay-proof',
@@ -353,30 +312,6 @@ export class DiscordRelaySigner {
     return this.keys.current;
   }
 
-  #legacyHeaders(payload, extra = {}) {
-    const encodedPayload = JSON.stringify(payload);
-    const timestamp = `${Math.floor(this.clock() / 1000)}`;
-    const signature = sign(null, Buffer.from(timestamp + encodedPayload), this.keys.current.privateKey);
-    return {
-      [RelayHeaders.PAYLOAD]: Buffer.from(encodedPayload).toString('base64url'),
-      [RelayHeaders.SIGNATURE]: signature.toString('hex'),
-      [RelayHeaders.TIMESTAMP]: timestamp,
-      ...extra,
-    };
-  }
-
-  #commandData(command) {
-    const [name, ...subcommands] = command.split('.');
-    let options = [];
-    for (const subcommand of subcommands.reverse()) {
-      options = [{
-        type: 1,
-        name: subcommand,
-        ...(options.length > 0 ? { options } : {}),
-      }];
-    }
-    return { name, ...(options.length > 0 ? { options } : {}) };
-  }
 }
 
 /**

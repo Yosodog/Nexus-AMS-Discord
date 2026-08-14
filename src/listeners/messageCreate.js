@@ -11,7 +11,7 @@ export const INTEL_REPORT_REGEX = /^(?:\s*)[A-Za-z]{0,3}\s*successfully gather(?
 
 /**
  * Route each message through the same explicit connection resolver used by
- * interactions. The legacy guild argument remains the dedicated adapter.
+ * interactions. The configured guild argument remains the dedicated adapter.
  */
 export const registerMessageListener = (
   client,

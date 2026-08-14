@@ -142,7 +142,7 @@ Use the public-key conversion command in [Dedicated relay v2](configuration.md#d
 
 Nexus installations with active records in the `discord_connections` table use those records instead of the environment fallback. Update the active connection record through the owning Nexus provider rather than creating a competing environment connection.
 
-Some compatibility endpoints may still require `DISCORD_LEGACY_UNSIGNED_QUEUE_ENABLED` at its default setting. Test the complete application and queue workflow before disabling it.
+The bot requires relay-v2 queue claims and signed service callbacks. Keep `NEXUS_API_KEY` configured as the secondary Nexus API credential until the Nexus-side routes no longer require it.
 
 The file reader rejects:
 

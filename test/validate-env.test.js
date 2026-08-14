@@ -10,7 +10,11 @@ const KEYS = [
   'DISCORD_GUILD_ID',
   'NEXUS_API_URL',
   'NEXUS_API_KEY',
+  'NEXUS_DISCORD_CONNECTION_ID',
+  'NEXUS_DISCORD_CONNECTION_GENERATION',
   'NEXUS_DISCORD_RELAY_PRIVATE_KEY',
+  'NEXUS_DISCORD_RELAY_KEY_ID',
+  'NEXUS_DISCORD_RELAY_PROTOCOL',
   'NODE_ENV',
 ];
 
@@ -28,7 +32,11 @@ test('validateEnv permits development HTTP but requires production HTTPS and val
       DISCORD_GUILD_ID: '223456789012345678',
       NEXUS_API_URL: 'http://nexus.local',
       NEXUS_API_KEY: 'key',
+      NEXUS_DISCORD_CONNECTION_ID: '11111111-2222-4333-8444-555555555555',
+      NEXUS_DISCORD_CONNECTION_GENERATION: '1',
       NEXUS_DISCORD_RELAY_PRIVATE_KEY: privateKey.export({ format: 'der', type: 'pkcs8' }).toString('base64'),
+      NEXUS_DISCORD_RELAY_KEY_ID: 'relay-current',
+      NEXUS_DISCORD_RELAY_PROTOCOL: '2',
       NODE_ENV: 'development',
     });
     const required = KEYS.filter((key) => key !== 'NODE_ENV');
@@ -50,7 +58,31 @@ test('validateEnv permits development HTTP but requires production HTTPS and val
     const relayLogger = createLogger();
     assert.equal(validateEnv(required, relayLogger), false);
     assert.match(relayLogger.entries.error[0][0], /PKCS#8 Ed25519 private key/);
-    assert.deepEqual(exits, [1, 1, 1]);
+    process.env.NEXUS_DISCORD_RELAY_PRIVATE_KEY = privateKey.export({ format: 'der', type: 'pkcs8' }).toString('base64');
+    process.env.NEXUS_DISCORD_RELAY_PROTOCOL = '1';
+    const protocolLogger = createLogger();
+    assert.equal(validateEnv(required, protocolLogger), false);
+    assert.match(protocolLogger.entries.error[0][0], /protocol.*2/i);
+
+    process.env.NEXUS_DISCORD_RELAY_PROTOCOL = '2';
+    process.env.NEXUS_DISCORD_CONNECTION_ID = 'not-a-uuid';
+    const connectionLogger = createLogger();
+    assert.equal(validateEnv(required, connectionLogger), false);
+    assert.match(connectionLogger.entries.error[0][0], /CONNECTION_ID.*UUID/i);
+
+    process.env.NEXUS_DISCORD_CONNECTION_ID = '11111111-2222-4333-8444-555555555555';
+    process.env.NEXUS_DISCORD_CONNECTION_GENERATION = '0';
+    const generationLogger = createLogger();
+    assert.equal(validateEnv(required, generationLogger), false);
+    assert.match(generationLogger.entries.error[0][0], /GENERATION.*positive integer/i);
+
+    process.env.NEXUS_DISCORD_CONNECTION_GENERATION = '1';
+    process.env.NEXUS_DISCORD_RELAY_KEY_ID = 'Invalid key id';
+    const keyIdLogger = createLogger();
+    assert.equal(validateEnv(required, keyIdLogger), false);
+    assert.match(keyIdLogger.entries.error[0][0], /RELAY_KEY_ID.*invalid/i);
+
+    assert.deepEqual(exits, [1, 1, 1, 1, 1, 1, 1]);
   } finally {
     process.exit = originalExit;
     for (const [key, value] of Object.entries(originalValues)) {

@@ -68,15 +68,15 @@ export const connectionBinding = (context) => ({
 
 export const createConnectionContext = (input = {}) => {
   const mode = normalizeConnectionMode(input.mode);
-  const protocolVersion = Number(input.protocolVersion ?? input.relayProtocolVersion ?? 1);
-  if (![1, 2].includes(protocolVersion)) {
-    throw new ConnectionContextError('Connection relay protocol must be version 1 or 2.');
+  const protocolVersion = Number(input.protocolVersion ?? input.relayProtocolVersion ?? 2);
+  if (protocolVersion !== 2) {
+    throw new ConnectionContextError('Connection requires relay protocol v2.');
   }
   const generation = Number(input.generation ?? 1);
   if (!Number.isSafeInteger(generation) || generation < 1) {
     throw new ConnectionContextError('Connection generation must be a positive safe integer.');
   }
-  const keyId = `${input.keyId ?? (protocolVersion === 1 ? 'legacy-v1' : '')}`.trim().toLowerCase();
+  const keyId = `${input.keyId ?? 'relay-current'}`.trim().toLowerCase();
   if (!KEY_ID.test(keyId)) throw new ConnectionContextError('Connection keyId is invalid.');
 
   const context = {
@@ -117,9 +117,6 @@ export const createConnectionContext = (input = {}) => {
     } catch (error) {
       throw new ConnectionContextError(error.message, 'INVALID_ENDPOINT');
     }
-  }
-  if (mode === CONNECTION_MODES.OFFICIAL_SHARED && protocolVersion !== 2) {
-    throw new ConnectionContextError('Shared connections require relay protocol v2.');
   }
   return Object.freeze(context);
 };

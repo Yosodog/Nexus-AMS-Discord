@@ -64,6 +64,9 @@ Configure:
 - `NEXUS_API_URL`: Nexus base URL. Development may use HTTP; production startup requires HTTPS.
 - `NEXUS_API_KEY`: shared bot credential issued by Nexus.
 - `NEXUS_DISCORD_RELAY_PRIVATE_KEY`: base64 PKCS#8 Ed25519 private key used to sign the actual Gateway interaction identity and command sent to Nexus.
+- `NEXUS_DISCORD_CONNECTION_ID`: relay-v2 connection UUID configured in Nexus.
+- `NEXUS_DISCORD_CONNECTION_GENERATION`: positive generation configured for that connection in Nexus.
+- `NEXUS_DISCORD_RELAY_KEY_ID`: current relay-v2 key ID accepted by Nexus.
 - `PROCESS_HEALTH_FILE`: local atomic readiness file; defaults to `data/process-health.json`.
 - `PROCESS_HEALTH_INTERVAL_MS`: heartbeat interval; defaults to 15 seconds.
 - `PROCESS_HEALTH_STALE_AFTER_MS`: maximum accepted heartbeat age; defaults to 45 seconds.
@@ -165,19 +168,7 @@ War-room creation checkpoints the Discord thread ID in Nexus before follow-up me
 
 Nexus reaps expired leases every minute on one scheduler instance. Failed attempts retry after one and two minutes; the third failed/expired attempt becomes terminal. Keep the Nexus scheduler running in production.
 
-Legacy rows already marked `processing` without a lease are never replayed automatically. Inspect them from the Nexus application first:
-
-```bash
-php artisan discord-queue:recover-legacy
-```
-
-After reviewing possible Discord side effects, explicitly requeue selected IDs only:
-
-```bash
-php artisan discord-queue:recover-legacy 550e8400-e29b-41d4-a716-446655440000 --requeue
-```
-
-Deploy Nexus queue migrations/APIs before deploying this bot version.
+This bot only claims explicit relay-v2 queue lanes. Retire or migrate any pre-cutover Nexus queue rows before deploying it; unbound or legacy-lane rows are intentionally not claimed.
 
 Private workflow notifications use the structured `PRIVATE_NOTIFICATION` queue action and are delivered only by DM. The bot accepts local allowlisted event templates, never arbitrary Nexus message text or URLs, and never falls back to a public channel. Nexus ships the alliance-wide notification master switch disabled; an administrator must enable it after both deployments are healthy. Linked users default to disabled and must opt in by category in Nexus.
 

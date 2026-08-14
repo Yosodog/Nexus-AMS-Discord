@@ -120,6 +120,10 @@ DISCORD_GUILD_ID=your-server-id
 NEXUS_API_URL=https://your-nexus.example
 NEXUS_API_KEY=the-shared-api-credential
 NEXUS_DISCORD_RELAY_PRIVATE_KEY=the-generated-private-key
+NEXUS_DISCORD_CONNECTION_ID=the-connection-uuid-from-nexus
+NEXUS_DISCORD_CONNECTION_GENERATION=1
+NEXUS_DISCORD_RELAY_PROTOCOL=2
+NEXUS_DISCORD_RELAY_KEY_ID=relay-current
 ```
 
 Then set the matching Discord values in the Nexus `.env` file. Follow [Configure a dedicated connection](configuration.md#configure-a-dedicated-connection) to avoid mixing the bot variable names with the Nexus variable names.
