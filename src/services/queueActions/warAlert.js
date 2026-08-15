@@ -93,7 +93,9 @@ function buildWarAlertEmbed(command) {
 
   const counterUrl = safeUrl(payload.counter?.url);
   if (counterUrl) {
-    const counterLabel = payload.counter.id ? `Counter #${payload.counter.id}` : 'Counter';
+    const counterLabel = payload.counter.kind === 'milcom_incident'
+      ? 'Review fast counter'
+      : payload.counter.id ? `Counter #${payload.counter.id}` : 'Counter';
     links.push(markdownLink(counterLabel, counterUrl));
   }
 
