@@ -1,8 +1,21 @@
 import { ChannelType } from 'discord.js';
 import { isDiscordSnowflake, toPositiveInteger } from './boundaryValidators.js';
 
-export const APPLICATION_TOPIC_REGEX = /^nexus-application:(\d+);nation:(\d+)$/;
+export const APPLICATION_TOPIC_REGEX = /^nexus-application:(\d+);nation:(\d+)(?: \| https:\/\/politicsandwar\.com\/nation\/id=(\d+))?$/;
 export const LEGACY_APPLICATION_CHANNEL_REGEX = /^app-(\d+)-(\d+)-[a-z0-9]+(?:-[a-z0-9]+)*$/i;
+
+export const parseApplicationChannelTopic = (topic) => {
+  if (typeof topic !== 'string') return null;
+  const match = APPLICATION_TOPIC_REGEX.exec(topic.trim());
+  if (!match) return null;
+
+  const applicationId = toPositiveInteger(match[1]);
+  const nationId = toPositiveInteger(match[2]);
+  const linkedNationId = match[3] === undefined ? nationId : toPositiveInteger(match[3]);
+  if (!applicationId || !nationId || linkedNationId !== nationId) return null;
+
+  return { applicationId, nationId };
+};
 
 export const buildApplicationChannelTopic = (applicationId, nationId) => {
   const normalizedApplicationId = toPositiveInteger(applicationId);
@@ -12,7 +25,7 @@ export const buildApplicationChannelTopic = (applicationId, nationId) => {
     return null;
   }
 
-  return `nexus-application:${normalizedApplicationId};nation:${normalizedNationId}`;
+  return `nexus-application:${normalizedApplicationId};nation:${normalizedNationId} | https://politicsandwar.com/nation/id=${normalizedNationId}`;
 };
 
 export const resolveApplicationIdentity = (application, nation = null) => {
@@ -37,14 +50,11 @@ export const parseApplicationChannelIdentity = (channel) => {
 
   const topic = typeof channel.topic === 'string' ? channel.topic.trim() : '';
   if (topic) {
-    const match = APPLICATION_TOPIC_REGEX.exec(topic);
-    if (!match) {
-      return null;
-    }
+    const identity = parseApplicationChannelTopic(topic);
+    if (!identity) return null;
 
     return {
-      applicationId: Number(match[1]),
-      nationId: Number(match[2]),
+      ...identity,
       source: 'topic',
     };
   }

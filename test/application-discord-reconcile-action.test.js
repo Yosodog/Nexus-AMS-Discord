@@ -219,6 +219,13 @@ test('validates the closed v1 payload and rejects unknown, unsafe, and assignmen
   assert.equal(validate(unknownNested).valid, false);
   assert.equal(validate(payload({ application: { state: 'obsolete' } })).valid, false);
   assert.equal(validate(payload({ application: { revision: 0 } })).valid, false);
+  assert.deepEqual(validate(payload({
+    desired: {
+      channel: {
+        topic: 'nexus-application:42;nation:9001 | https://politicsandwar.com/nation/id=9002',
+      },
+    },
+  })), { valid: false, reason: 'invalid_channel_topic' });
 
   const mention = payload({
     desired: { notifications: [{
@@ -228,6 +235,15 @@ test('validates the closed v1 payload and rejects unknown, unsafe, and assignmen
     }] },
   });
   assert.equal(validate(mention).valid, false);
+
+  const channelMention = payload({
+    desired: { notifications: [{
+      key: 'notice',
+      destination: { type: 'channel', channel_id: CHANNEL_ID },
+      content: 'Continue in <#523456789012345678>.',
+    }] },
+  });
+  assert.equal(validate(channelMention).valid, true);
 
   const assignment = payload({
     desired: { notifications: [{
@@ -378,6 +394,21 @@ test('recovers one verified interview channel from a cold full-channel listing',
   assert.equal(runtimeData.events.some(([type]) => type === 'channel_create'), false);
 });
 
+test('reuses a legacy metadata topic when Nexus requests the linked topic format', async () => {
+  const existing = makeChannel(CHANNEL_ID, {
+    topic: 'nexus-application:42;nation:9001',
+  });
+  const runtimeData = makeRuntime({ channels: [existing] });
+  const input = payload({
+    desired: { channel: { channel_id: CHANNEL_ID, intro_messages: [] } },
+  });
+
+  const result = await execute(commandFor(input), runtimeData.runtime);
+
+  assert.equal(result.success, true);
+  assert.equal(runtimeData.events.some(([type]) => type === 'channel_create'), false);
+});
+
 test('fails closed on cold-cache duplicate topics and full-channel listing failure', async () => {
   const duplicateInput = payload({ desired: { channel: { intro_messages: [] } } });
   delete duplicateInput.desired.channel.topic;
@@ -445,6 +476,25 @@ test('rejects unknown and legacy-shaped durable checkpoints', async () => {
     makeRuntime().runtime,
   );
   assert.equal(stale.reason, 'checkpoint_revision_mismatch');
+
+  const terminalInput = payload({
+    application: { state: 'approved' },
+    desired: {
+      channel: { mode: 'absent', channel_id: CHANNEL_ID, intro_messages: [] },
+    },
+  });
+  const terminalWithChannel = await execute(commandFor(terminalInput, {
+    application_reconcile: {
+      application_revision: 12,
+      channel_id: CHANNEL_ID,
+      channel_deleted: false,
+      roles_added: [],
+      roles_removed: [],
+      intro_messages: [],
+      notifications: [],
+    },
+  }), makeRuntime().runtime);
+  assert.equal(terminalWithChannel.reason, 'invalid_checkpoint');
 });
 
 test('changes only Nexus-supplied roles, preserves unrelated roles, and rejects hierarchy failures', async () => {
@@ -494,6 +544,11 @@ test('deletes only the authoritative channel and treats an unknown channel as id
   assert.equal(deletedAuthoritative, true);
   assert.equal(runtimeData.guild.channels.cache.has(OTHER_CHANNEL_ID), true);
   assert.equal(result.result.application_reconcile.channel_deleted, true);
+  assert.equal(result.result.application_reconcile.channel_id, null);
+  assert.equal(runtimeData.checkpoints[0][2].application_reconcile.channel_id, null);
+  assert.equal(runtimeData.checkpoints[0][2].application_reconcile.channel_deleted, false);
+  assert.equal(runtimeData.checkpoints[1][2].application_reconcile.channel_id, null);
+  assert.equal(runtimeData.checkpoints[1][2].application_reconcile.channel_deleted, true);
 
   const missing = makeRuntime();
   const missingInput = payload({
@@ -502,6 +557,31 @@ test('deletes only the authoritative channel and treats an unknown channel as id
   const missingResult = await execute(commandFor(missingInput), missing.runtime);
   assert.equal(missingResult.success, true);
   assert.equal(missingResult.result.application_reconcile.channel_deleted, true);
+  assert.equal(missingResult.result.application_reconcile.channel_id, null);
+});
+
+test('sends raw channel mentions without enabling user, role, or broadcast mentions', async () => {
+  const announcement = makeChannel(CHANNEL_ID);
+  const runtimeData = makeRuntime({ channels: [announcement] });
+  const input = payload({
+    desired: {
+      channel: { mode: 'unchanged', intro_messages: [] },
+      notifications: [{
+        key: 'application.approved',
+        destination: { type: 'channel', channel_id: CHANNEL_ID },
+        content: 'Welcome! Read <#523456789012345678> and <#623456789012345678>.',
+      }],
+    },
+  });
+
+  const result = await execute(commandFor(input), runtimeData.runtime);
+
+  assert.equal(result.success, true);
+  const sent = runtimeData.events.find(([type]) => type === 'send');
+  assert.equal(sent[2].content, 'Welcome! Read <#523456789012345678> and <#623456789012345678>.');
+  assert.deepEqual(sent[2].allowedMentions, {
+    parse: [], users: [], roles: [], repliedUser: false,
+  });
 });
 
 test('requires reconciliation when a mutation succeeds but its checkpoint fails', async () => {

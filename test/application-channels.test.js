@@ -30,7 +30,18 @@ function createChannel(overrides = {}) {
 }
 
 test('application channel identity requires an exact topic or exact anchored legacy name', () => {
+  assert.equal(
+    buildApplicationChannelTopic(42, 9001),
+    'nexus-application:42;nation:9001 | https://politicsandwar.com/nation/id=9001',
+  );
   assert.deepEqual(parseApplicationChannelIdentity(createChannel()), {
+    applicationId: 42,
+    nationId: 9001,
+    source: 'topic',
+  });
+  assert.deepEqual(parseApplicationChannelIdentity(createChannel({
+    topic: 'nexus-application:42;nation:9001',
+  })), {
     applicationId: 42,
     nationId: 9001,
     source: 'topic',
@@ -42,6 +53,12 @@ test('application channel identity requires an exact topic or exact anchored leg
   });
   assert.equal(parseApplicationChannelIdentity(createChannel({ topic: null, name: 'app-42-9001-test-renamed!' })), null);
   assert.equal(parseApplicationChannelIdentity(createChannel({ topic: 'nexus-application:42;nation:9001 extra' })), null);
+  assert.equal(parseApplicationChannelIdentity(createChannel({
+    topic: 'nexus-application:42;nation:9001 | https://politicsandwar.com/nation/id=9002',
+  })), null);
+  assert.equal(parseApplicationChannelIdentity(createChannel({
+    topic: 'nexus-application:42;nation:9001 | https://example.com/nation/id=9001',
+  })), null);
 });
 
 test('cleanup deletes a verified authoritative application channel', async () => {

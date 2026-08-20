@@ -2,6 +2,7 @@ import { ChannelType, PermissionFlagsBits } from 'discord.js';
 import { isDiscordSnowflake, isUuid } from '../../utils/boundaryValidators.js';
 import {
   buildApplicationChannelTopic,
+  parseApplicationChannelTopic,
   validateApplicationInterviewChannel,
 } from '../../utils/applicationChannels.js';
 
@@ -35,7 +36,7 @@ const CHECKPOINT_KEYS = [
 const APPLICATION_STATES = new Set(['pending', 'approved', 'denied', 'cancelled']);
 const CHANNEL_MODES = new Set(['ensure', 'absent', 'unchanged']);
 const SAFE_DOTTED_IDENTIFIER = /^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)*$/;
-const UNSAFE_MENTION = /@(?:everyone|here)\b|<@!?\d{17,20}>|<@&\d{17,20}>|<#\d{17,20}>|<a?:[a-z0-9_~-]+:\d{17,20}>/i;
+const UNSAFE_MENTION = /@(?:everyone|here)\b|<@!?\d{17,20}>|<@&\d{17,20}>|<a?:[a-z0-9_~-]+:\d{17,20}>/i;
 const ASSIGNMENT_TERMINOLOGY = /\bassign\w*\b/i;
 const CONTROL_CHARACTERS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
 const NETWORK_ERROR_CODES = new Set(['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN', 'UND_ERR_CONNECT_TIMEOUT']);
@@ -201,6 +202,14 @@ export const validate = (payload) => {
   if (!hasOnlyKeys(payload.desired, DESIRED_KEYS)) return invalid('invalid_desired');
   const channel = validateChannel(payload.desired.channel);
   if (!channel.valid) return channel;
+  if (payload.desired.channel.topic !== undefined) {
+    const topicIdentity = parseApplicationChannelTopic(payload.desired.channel.topic);
+    if (!topicIdentity
+      || topicIdentity.applicationId !== payload.application.id
+      || topicIdentity.nationId !== payload.application.nation_id) {
+      return invalid('invalid_channel_topic');
+    }
+  }
   const roles = validateRoles(payload.desired.roles);
   if (!roles.valid) return roles;
   const notifications = validateNotifications(payload.desired.notifications);
@@ -364,6 +373,9 @@ const normalizeCheckpoint = (raw, payload) => {
   if (payload.desired.channel.mode === 'ensure' && checkpointValue.channel_deleted) {
     return invalid('invalid_checkpoint');
   }
+  if (payload.desired.channel.mode === 'absent' && checkpointValue.channel_id !== null) {
+    return invalid('invalid_checkpoint');
+  }
 
   const desiredChannelId = payload.desired.channel.channel_id?.trim() ?? null;
   if (checkpointValue.channel_id && desiredChannelId && checkpointValue.channel_id !== desiredChannelId) {
@@ -422,15 +434,19 @@ const listGuildChannels = async (guild) => {
   }
 };
 
-const exactTopicCandidates = (channels, topic, guildId) => {
-  const exactMatches = channels.filter((channel) => channel?.topic === topic);
-  if (exactMatches.some((channel) => !normalizeSnowflake(channel?.id))) {
+const applicationTopicCandidates = (channels, payload, guildId) => {
+  const matches = channels.filter((channel) => {
+    const identity = parseApplicationChannelTopic(channel?.topic);
+    return identity?.applicationId === payload.application.id
+      && identity?.nationId === payload.application.nation_id;
+  });
+  if (matches.some((channel) => !normalizeSnowflake(channel?.id))) {
     return { failure: failure('invalid_channel') };
   }
-  if (exactMatches.some((channel) => !guildScopedChannel(channel, guildId))) {
+  if (matches.some((channel) => !guildScopedChannel(channel, guildId))) {
     return { failure: failure('wrong_guild_channel') };
   }
-  const candidates = exactMatches.filter((channel) => guildScopedChannel(channel, guildId));
+  const candidates = matches.filter((channel) => guildScopedChannel(channel, guildId));
   if (candidates.length > 1) return { failure: failure('duplicate_channel_topic') };
   return { candidates };
 };
@@ -485,9 +501,6 @@ const interviewValidation = (channel, payload, guildId, fallbackTopic = undefine
     guildId,
   });
   if (!result.valid) return result;
-  if (payload.desired.channel.topic !== undefined && candidate.topic !== payload.desired.channel.topic) {
-    return { valid: false, reason: 'channel_topic_mismatch' };
-  }
   return result;
 };
 
@@ -562,7 +575,7 @@ const ensureChannel = async (command, runtime, guild, payload, accumulated) => {
     const classified = classifyError(listed.error, 'channel_collection_unavailable');
     return { failure: failure(classified.reason, { retryable: classified.retryable }) };
   }
-  const topicMatches = exactTopicCandidates(listed.channels, expectedTopic, guild.id);
+  const topicMatches = applicationTopicCandidates(listed.channels, payload, guild.id);
   if (topicMatches.failure) return topicMatches;
   if (topicMatches.candidates.length === 1) {
     const validation = interviewValidation(topicMatches.candidates[0], payload, guild.id);
@@ -877,6 +890,11 @@ const sendNotifications = async (command, runtime, guild, payload, accumulated) 
   return null;
 };
 
+const markChannelDeleted = (accumulated) => {
+  accumulated.channel_id = null;
+  accumulated.channel_deleted = true;
+};
+
 const deleteAuthoritativeChannel = async (command, runtime, guild, payload, accumulated) => {
   if (accumulated.channel_deleted) return null;
   const channelId = accumulated.channel_id ?? payload.desired.channel.channel_id?.trim() ?? null;
@@ -891,16 +909,15 @@ const deleteAuthoritativeChannel = async (command, runtime, guild, payload, accu
       const classified = classifyError(listed.error, 'channel_collection_unavailable');
       return failure(classified.reason, { retryable: classified.retryable });
     }
-    const topicMatches = exactTopicCandidates(listed.channels, expectedTopic, guild.id);
+    const topicMatches = applicationTopicCandidates(listed.channels, payload, guild.id);
     if (topicMatches.failure) return topicMatches.failure;
     if (topicMatches.candidates.length === 0) {
-      accumulated.channel_deleted = true;
+      markChannelDeleted(accumulated);
       return checkpoint(command, runtime, accumulated);
     }
     const recovered = topicMatches.candidates[0];
     const validation = interviewValidation(recovered, payload, guild.id);
     if (!validation.valid) return failure(validation.reason);
-    accumulated.channel_id = recovered.id.trim();
     if (typeof recovered.delete !== 'function') return failure('channel_delete_unavailable');
     if (!canContinue(runtime)) return failure('lease_lost', { retryable: true, checkpoint: accumulated });
     if (!checkpointAvailable(command, runtime)) return failure('checkpoint_unavailable', { checkpoint: accumulated });
@@ -908,7 +925,7 @@ const deleteAuthoritativeChannel = async (command, runtime, guild, payload, accu
       await withDiscordRetry(runtime, () => recovered.delete('Nexus AMS application Discord reconciliation'), 'delete application interview channel');
     } catch (error) {
       if (isUnknownChannel(error)) {
-        accumulated.channel_deleted = true;
+        markChannelDeleted(accumulated);
         const saved = await checkpoint(command, runtime, accumulated);
         return saved ?? null;
       }
@@ -919,7 +936,7 @@ const deleteAuthoritativeChannel = async (command, runtime, guild, payload, accu
         checkpoint: accumulated,
       });
     }
-    accumulated.channel_deleted = true;
+    markChannelDeleted(accumulated);
     return checkpoint(command, runtime, accumulated, { afterMutation: true });
   }
 
@@ -929,7 +946,7 @@ const deleteAuthoritativeChannel = async (command, runtime, guild, payload, accu
       const classified = classifyError(resolved.error, 'channel_fetch_failed');
       return failure(classified.reason, { retryable: classified.retryable, checkpoint: accumulated });
     }
-    accumulated.channel_deleted = true;
+    markChannelDeleted(accumulated);
     return checkpoint(command, runtime, accumulated);
   }
   if (!guildScopedChannel(resolved.channel, guild.id)) return failure('wrong_guild_channel');
@@ -943,7 +960,7 @@ const deleteAuthoritativeChannel = async (command, runtime, guild, payload, accu
     await withDiscordRetry(runtime, () => resolved.channel.delete('Nexus AMS application Discord reconciliation'), 'delete application interview channel');
   } catch (error) {
     if (isUnknownChannel(error)) {
-      accumulated.channel_deleted = true;
+      markChannelDeleted(accumulated);
       const saved = await checkpoint(command, runtime, accumulated);
       return saved ?? null;
     }
@@ -954,7 +971,7 @@ const deleteAuthoritativeChannel = async (command, runtime, guild, payload, accu
       checkpoint: accumulated,
     });
   }
-  accumulated.channel_deleted = true;
+  markChannelDeleted(accumulated);
   return checkpoint(command, runtime, accumulated, { afterMutation: true });
 };
 
@@ -1032,7 +1049,9 @@ export const execute = async (command, runtime) => {
   const checkpointResult = normalizeCheckpoint(command?.result?.application_reconcile, payload);
   if (!checkpointResult.valid) return failure(checkpointResult.reason);
   const accumulated = checkpointResult.value;
-  if (!accumulated.channel_id && payload.desired.channel.channel_id) {
+  if (payload.desired.channel.mode !== 'absent'
+    && !accumulated.channel_id
+    && payload.desired.channel.channel_id) {
     accumulated.channel_id = payload.desired.channel.channel_id.trim();
   }
 
