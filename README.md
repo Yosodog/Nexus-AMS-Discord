@@ -2,6 +2,12 @@
 
 Discord integration for Nexus AMS. The bot provides account verification, application workflows, moderation and finance commands, and leased delivery of Nexus-generated Discord actions.
 
+## Beta status
+
+Nexus AMS Discord is part of the Nexus AMS beta. Run a bot beta that is compatible with your Nexus AMS release. Nexus remains the source of permissions and workflow state, so mismatched versions can cause commands or queue actions to be rejected.
+
+Dedicated self-hosting is available in the beta. Public onboarding for the Nexus hosted bot is not ready yet. Hosted connections and `official-shared` mode are limited to operator-managed development and Cloud pilots.
+
 ## Features
 
 - Guild-scoped, ephemeral slash commands for accounts, deposits, withdrawals, transactions, requests, grants, loans, war aid, rebuilding, raids, wars, spy assignments, and applications, plus the existing operational commands.
@@ -17,15 +23,13 @@ Start with the guide for your deployment:
 
 | Setup | Guide |
 | --- | --- |
-| Invite the Nexus hosted bot | [Invite the hosted bot](docs/invite-hosted-bot.md) |
+| Read about hosted bot pilots | [Hosted bot status](docs/invite-hosted-bot.md) |
 | Run one bot for one Nexus installation | [Self-host the bot](docs/self-hosting.md) |
 | Configure bot and Nexus environment variables | [Configuration reference](docs/configuration.md) |
 | Operate the multi-alliance shared bot | [Shared hosting](docs/shared-hosting.md) |
 | Diagnose a setup or delivery problem | [Troubleshooting](docs/troubleshooting.md) |
 
-The [documentation index](docs/README.md) explains which deployment modes are ready today.
-
-Public onboarding for the Nexus hosted bot is not available in this release. Inviting the hosted application does not create a Nexus connection by itself. Hosted connections are currently limited to operator-managed pilots. Dedicated self-hosting is supported and does not require Nexus Cloud.
+The [documentation index](docs/README.md) explains which deployment modes are available in the beta. Inviting the hosted Discord application does not create a Nexus connection by itself.
 
 ## Project structure
 
@@ -42,7 +46,7 @@ Public onboarding for the Nexus hosted bot is not available in this release. Inv
 
 - Node.js 22 or newer.
 - A Discord application and bot user. Dedicated mode also configures one guild.
-- A compatible Nexus deployment with the leased Discord queue APIs and migrations.
+- A compatible Nexus AMS beta deployment with the leased Discord queue APIs and migrations.
 
 For a first installation, follow [Self-host the bot](docs/self-hosting.md). The complete list of settings is in the [configuration reference](docs/configuration.md).
 
@@ -79,7 +83,7 @@ Official-shared mode also supports:
 - `DISCORD_CONNECTION_REFRESH_MS`: snapshot refresh interval; defaults to 30 seconds.
 - `DISCORD_CONNECTIONS_JSON`: static startup fallback using the same array shape. It remains supported for compatibility but is not refreshed.
 
-Official-shared mode is an operator interface, not a public onboarding flow. Read [Operate the shared bot](docs/shared-hosting.md) before enabling it.
+Official-shared mode is an operator interface for managed pilots, not a public onboarding flow. Nexus Cloud will use this path once its onboarding and connection management are ready. Read [Operate the shared bot](docs/shared-hosting.md) before enabling it.
 
 ### Official-shared connection snapshots
 
@@ -141,6 +145,11 @@ Start the bot:
 ```bash
 npm start
 ```
+
+For a containerized dedicated deployment, the repository also ships a digest-pinned,
+non-root image and a hardened Compose service. Follow the
+[container instructions](docs/self-hosting.md#container-option) rather than adding
+ports or copying `.env` into the image.
 
 Probe the already-running process without making a Discord or Nexus request:
 

@@ -179,7 +179,8 @@ The bot checks the file at `DISCORD_CONNECTION_REFRESH_MS`. A valid changed file
 1. Have a Discord administrator install the hosted application with the official link.
 2. Confirm the Application ID and server ID from Discord.
 3. Confirm that an authorized Nexus administrator controls the destination installation.
-4. Verify that the Nexus endpoint is public HTTPS and passes the endpoint guard.
+4. Verify that the Nexus endpoint is public HTTPS on port 443 or 8443 and
+   passes the endpoint guard.
 5. Create a unique connection UUID and generation `1`.
 6. Create a separate API credential and relay key for this connection.
 7. Configure the matching v2 connection in Nexus.

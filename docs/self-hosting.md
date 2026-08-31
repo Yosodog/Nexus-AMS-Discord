@@ -195,7 +195,36 @@ Change the service account, working directory, and npm path to match your host.
 
 Create `/opt/nexus-ams-discord/data` and make it writable by the service account. The rest of the application can remain read-only.
 
-The repository does not currently ship a Docker image or Compose file. Do not assume that an unofficial container has the same shutdown, health, or secret-handling behavior.
+### Container option
+
+The repository ships a multi-architecture, digest-pinned, non-root image and a hardened Compose service for dedicated mode. It publishes no inbound ports, mounts only `data` as writable state, and gives shutdown up to 320 seconds to drain an active leased queue item.
+
+After creating and protecting `.env`, prepare the bind mount for the image's fixed user:
+
+```bash
+mkdir -p data
+chown 10001:10001 data
+docker compose build --pull
+docker compose run --rm bot node src/registerCommands.js
+docker compose up -d
+```
+
+The build context excludes `.env`, other environment files, and runtime data. Compose supplies `.env` only when the container starts; it is not stored in an image layer. The container runs with a read-only root filesystem, no Linux capabilities, and `no-new-privileges`.
+
+Check the service and its local process heartbeat:
+
+```bash
+docker compose ps
+docker compose exec bot node src/healthcheck.js
+```
+
+Stop it with the same drain window:
+
+```bash
+docker compose down --timeout 320
+```
+
+Do not add a `ports` mapping. The bot needs outbound Discord and Nexus access but accepts no inbound traffic.
 
 ## Updating the bot
 
