@@ -184,3 +184,40 @@ test('capability manifests derive queue actions from the registered action set',
   });
   assert.deepEqual(document.supported_queue_actions, registeredQueueActions());
 });
+
+test('relay proofs and capability manifests reject lifetimes above contract ceilings', () => {
+  const signer = makeSigner();
+
+  assert.doesNotThrow(() => signer.interactionHeaders(ACTOR, {
+    ...REQUEST,
+    issuedAt: '2026-08-08T12:00:00Z',
+    expiresAt: '2026-08-08T12:05:00Z',
+  }));
+  assert.throws(() => signer.interactionHeaders(ACTOR, {
+    ...REQUEST,
+    issuedAt: '2026-08-08T12:00:00Z',
+    expiresAt: '2026-08-08T12:05:01Z',
+  }), /maximum lifetime/);
+  assert.throws(() => signer.createCapabilityManifest({
+    manifestId: '66666666-7777-4777-8888-999999999999',
+    issuedAt: '2026-08-08T12:00:00Z',
+    expiresAt: '2026-08-09T12:00:01Z',
+    renderers: [{ renderer_id: 'discord.embed', version: 1, max_payload_bytes: 16_384 }],
+  }), /maximum lifetime/);
+});
+
+test('capability manifests reject limits outside the frozen contract ranges', () => {
+  const signer = makeSigner();
+  const manifest = (limits) => signer.createCapabilityManifest({
+    manifestId: '66666666-7777-4777-8888-999999999999',
+    issuedAt: '2026-08-08T12:00:00Z',
+    expiresAt: '2026-08-09T00:00:00Z',
+    renderers: [{ renderer_id: 'discord.embed', version: 1, max_payload_bytes: 16_384 }],
+    limits,
+  });
+
+  assert.throws(() => manifest({ max_batch_items: 101 }), /max_batch_items/);
+  assert.throws(() => manifest({ max_delivery_bytes: 1023 }), /max_delivery_bytes/);
+  assert.throws(() => manifest({ max_delivery_attempts: 9 }), /max_delivery_attempts/);
+  assert.throws(() => manifest({ unreviewed_limit: 1 }), /unreviewed_limit/);
+});

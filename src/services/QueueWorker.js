@@ -175,7 +175,7 @@ export class QueueWorker {
           this.apiService?.connectionContext ?? null,
         ),
         apiService: this.apiService,
-        connection: null,
+        connection: this.apiService?.connectionContext ?? null,
       };
     }
 

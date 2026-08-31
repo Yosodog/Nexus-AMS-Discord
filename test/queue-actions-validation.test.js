@@ -315,6 +315,40 @@ test('QueueActionRuntime creates deterministic nonce-safe messages and strict me
   );
 });
 
+test('QueueActionRuntime scopes nonces to connection generation and logical dedupe identity', () => {
+  const runtime = new QueueActionRuntime({
+    client: { channels: { cache: new Map() }, guilds: { cache: new Map() } },
+    logger: createLogger(),
+    guildId: CHANNEL_ID,
+  });
+  const firstDelivery = runtime.forExecution({
+    deliveryContext: {
+      scopedDedupeKey: '11111111-2222-4333-8444-555555555555:7:logical-delivery',
+    },
+  });
+  const retriedDelivery = runtime.forExecution({
+    deliveryContext: {
+      scopedDedupeKey: '11111111-2222-4333-8444-555555555555:7:logical-delivery',
+    },
+  });
+  const replacementGeneration = runtime.forExecution({
+    deliveryContext: {
+      scopedDedupeKey: '11111111-2222-4333-8444-555555555555:8:logical-delivery',
+    },
+  });
+
+  const first = firstDelivery.messagePayload({ id: 'queue-row-1' }, 'step-1', { content: 'first' });
+  const retried = retriedDelivery.messagePayload({ id: 'queue-row-2' }, 'step-1', { content: 'retry' });
+  const replaced = replacementGeneration.messagePayload(
+    { id: 'queue-row-2' },
+    'step-1',
+    { content: 'replacement' },
+  );
+
+  assert.equal(retried.nonce, first.nonce);
+  assert.notEqual(replaced.nonce, first.nonce);
+});
+
 test('QueueActionRuntime resolves only configured-guild channels across cache and fetch paths', async () => {
   const logger = createLogger();
   const cached = { guildId: CHANNEL_ID, isTextBased: () => true };

@@ -10,6 +10,8 @@ import {
 test('shared endpoint validation allows only public HTTPS origins', () => {
   assert.equal(validateNexusEndpoint('https://nexus.example', { shared: true }), 'https://nexus.example');
   assert.equal(validateNexusEndpoint('https://nexus.example:8443', { shared: true }), 'https://nexus.example:8443');
+  assert.throws(() => validateNexusEndpoint('https://nexus.example:1', { shared: true }), /port/);
+  assert.throws(() => validateNexusEndpoint('https://nexus.example:65535', { shared: true }), /port/);
   assert.throws(() => validateNexusEndpoint('http://nexus.example', { shared: true }), /HTTPS/);
   assert.throws(() => validateNexusEndpoint('https://nexus.example/api', { shared: true }), /path/);
   assert.throws(() => validateNexusEndpoint('https://user:pass@nexus.example', { shared: true }), /credentials/);

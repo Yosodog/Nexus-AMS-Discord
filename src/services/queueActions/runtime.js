@@ -135,8 +135,12 @@ export class QueueActionRuntime {
   }
 
   messagePayload(command, stepKey, payload) {
+    const scopedDedupeKey = this.execution?.deliveryContext?.scopedDedupeKey;
+    const deliveryIdentity = typeof scopedDedupeKey === 'string' && scopedDedupeKey.length > 0
+      ? scopedDedupeKey
+      : `${command?.id ?? 'unknown'}`;
     const nonce = createHash('sha256')
-      .update(`${command?.id ?? 'unknown'}:${stepKey}`)
+      .update(`${deliveryIdentity}:${stepKey}`)
       .digest('hex')
       .slice(0, 23);
 

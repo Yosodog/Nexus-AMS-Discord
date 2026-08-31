@@ -10,6 +10,11 @@ import {
   verify,
 } from 'node:crypto';
 import Ajv from 'ajv';
+import {
+  SUPPORTED_CONTRACT_VERSIONS,
+  contractSigningDomain,
+  verifySignedContract,
+} from '../src/services/connection/relayContracts.js';
 
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CONTRACT_DIR = path.resolve(TEST_DIR, '../contracts/discord');
@@ -97,6 +102,13 @@ const relayProofSigningMaterial = (document) => {
 
 test('parses and compiles the exact versioned schema set', () => {
   assert.deepEqual(schemaNames, EXPECTED_SCHEMAS);
+  assert.deepEqual(SUPPORTED_CONTRACT_VERSIONS, {
+    'relay-proof': [2],
+    'capability-manifest': [1],
+    'route-endorsement': [1],
+    'delivery-batch': [1],
+    'delivery-receipt': [1],
+  });
   for (const [name, schema] of schemaByName) {
     assert.equal(schema.type, 'object', `${name} must define an object contract`);
     assert.equal(schema.additionalProperties, false, `${name} envelope must be closed`);
@@ -238,4 +250,41 @@ test('query ordering and canonical action tampering change relay signing input a
   assert.notEqual(queryMaterial.signature, original.signature);
   assert.notEqual(actionMaterial.canonical, original.canonical);
   assert.notEqual(actionMaterial.signature, original.signature);
+});
+
+test('the shared signature verifier rejects a re-signed unknown contract version', () => {
+  const proof = readJson(path.join(VALID_DIR, 'relay-proof-v2.interaction.json'));
+  const future = structuredClone(proof);
+  future.contract_version = 999;
+  future.signature.value = relayProofSigningMaterial(future).signature;
+
+  assert.deepEqual(
+    verifySignedContract(future, fixedPublicKey, { now: Date.parse('2026-08-08T12:00:15Z') }),
+    { valid: false, reason: 'unknown_contract' },
+  );
+});
+
+test('the shared signature verifier rejects an overlong re-signed relay proof', () => {
+  const proof = readJson(path.join(VALID_DIR, 'relay-proof-v2.interaction.json'));
+  const overlong = structuredClone(proof);
+  overlong.expires_at = '2026-08-08T12:05:01Z';
+  overlong.signature.value = relayProofSigningMaterial(overlong).signature;
+
+  assert.deepEqual(
+    verifySignedContract(overlong, fixedPublicKey, { now: Date.parse('2026-08-08T12:00:15Z') }),
+    { valid: false, reason: 'lifetime_exceeded' },
+  );
+});
+
+test('prototype property names are rejected as unknown contracts without throwing', () => {
+  const proof = readJson(path.join(VALID_DIR, 'relay-proof-v2.interaction.json'));
+  const unknown = structuredClone(proof);
+  unknown.contract = '__proto__';
+  unknown.contract_version = 1;
+
+  assert.equal(contractSigningDomain('__proto__', 1), null);
+  assert.deepEqual(
+    verifySignedContract(unknown, fixedPublicKey, { now: Date.parse('2026-08-08T12:00:15Z') }),
+    { valid: false, reason: 'unknown_contract' },
+  );
 });

@@ -12,6 +12,32 @@ export const CONTRACT_SIGNING_DOMAINS = Object.freeze({
   'delivery-receipt': 'NEXUS-DISCORD-DELIVERY-RECEIPT-V1',
 });
 
+export const SUPPORTED_CONTRACT_VERSIONS = Object.freeze({
+  'relay-proof': Object.freeze([2]),
+  'capability-manifest': Object.freeze([1]),
+  'route-endorsement': Object.freeze([1]),
+  'delivery-batch': Object.freeze([1]),
+  'delivery-receipt': Object.freeze([1]),
+});
+
+const CONTRACT_MAX_LIFETIME_MS = Object.freeze({
+  'relay-proof': 300_000,
+  'capability-manifest': 86_400_000,
+  'route-endorsement': 300_000,
+  'delivery-batch': 300_000,
+});
+
+export const contractSigningDomain = (contract, version) => {
+  const supportedVersions = Object.hasOwn(SUPPORTED_CONTRACT_VERSIONS, contract)
+    ? SUPPORTED_CONTRACT_VERSIONS[contract]
+    : null;
+  if (!Number.isInteger(version) || !supportedVersions?.includes(version)) {
+    return null;
+  }
+
+  return CONTRACT_SIGNING_DOMAINS[contract] ?? null;
+};
+
 const UNRESERVED = /[A-Za-z0-9._~-]/;
 const PATH_SAFE = /[A-Za-z0-9._~!$'()*+,;=:@/-]/;
 const QUERY_SAFE = /[A-Za-z0-9._~!$'()*+,;:@/-]/;
@@ -331,8 +357,8 @@ export const verifySignedContract = (
     }
   }
 
-  const domain = CONTRACT_SIGNING_DOMAINS[document.contract];
-  if (!domain || !Number.isInteger(document.contract_version)) {
+  const domain = contractSigningDomain(document.contract, document.contract_version);
+  if (!domain) {
     return { valid: false, reason: 'unknown_contract' };
   }
   const { signature: _signature, ...unsigned } = document;
@@ -354,6 +380,10 @@ export const verifySignedContract = (
   const expiresAt = Date.parse(document.expires_at ?? '');
   if (!Number.isFinite(issuedAt) || !Number.isFinite(expiresAt) || expiresAt <= issuedAt) {
     return { valid: false, reason: 'invalid_lifetime' };
+  }
+  const maximumLifetime = CONTRACT_MAX_LIFETIME_MS[document.contract] ?? null;
+  if (maximumLifetime !== null && expiresAt - issuedAt > maximumLifetime) {
+    return { valid: false, reason: 'lifetime_exceeded' };
   }
   const skew = maxClockSkewSeconds * 1000;
   if (issuedAt > now + skew || expiresAt < now - skew) return { valid: false, reason: 'stale_contract' };

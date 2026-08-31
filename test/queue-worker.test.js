@@ -67,6 +67,53 @@ test('QueueWorker drains one leased item at a time and sends tokenized outcomes'
   assert.equal(statuses[1][2], 'lease-queue-2');
 });
 
+test('QueueWorker gives dedicated deliveries a connection-scoped dedupe identity', async () => {
+  const executions = [];
+  let claimed = false;
+  const connectionContext = {
+    applicationId: '123456789012345678',
+    guildId: '223456789012345678',
+    connectionId: '11111111-2222-4333-8444-555555555555',
+    generation: 7,
+    keyId: 'relay-current',
+  };
+  const item = {
+    ...leased('queue-dedicated', 'PRIVATE_NOTIFICATION'),
+    delivery_id: 'delivery-dedicated',
+    dedupe_key: 'logical-delivery',
+  };
+  const apiService = {
+    connectionContext,
+    claimDiscordQueue: async () => {
+      if (claimed) return { data: null };
+      claimed = true;
+      return { data: item };
+    },
+    renewDiscordQueueLease: async () => ({ data: { leased_until: futureLease() } }),
+    updateDiscordQueueStatus: async () => undefined,
+  };
+  const worker = new QueueWorker({
+    apiService,
+    dispatcher: {
+      dispatch: async (_item, execution) => {
+        executions.push(execution);
+        return { success: true };
+      },
+    },
+    logger: createLogger(),
+    pollIntervalMs: 60_000,
+  });
+
+  worker.start();
+  await waitFor(() => executions.length === 1);
+  await worker.stop();
+
+  assert.equal(
+    executions[0].deliveryContext.scopedDedupeKey,
+    '11111111-2222-4333-8444-555555555555:7:logical-delivery',
+  );
+});
+
 test('QueueWorker propagates successful queue action results in completion acknowledgement', async () => {
   const statuses = [];
   let claimed = false;

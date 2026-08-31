@@ -5,8 +5,8 @@ import {
   sign,
 } from 'node:crypto';
 import {
-  CONTRACT_SIGNING_DOMAINS,
   canonicalize,
+  contractSigningDomain,
   normalizePathQuery,
   parseJsonNoDuplicateKeys,
   publicKeyFromBase64Url,
@@ -22,6 +22,18 @@ const COMMAND_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/;
 const ACTION_PATTERN = /^[a-z][a-z0-9._:-]{0,127}$/;
 const SERVICE_ACTION_PATTERN = /^[a-z][a-z0-9._:-]{0,99}$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const MAX_RELAY_PROOF_LIFETIME_MS = 300_000;
+const MAX_CAPABILITY_MANIFEST_LIFETIME_MS = 86_400_000;
+const CAPABILITY_LIMIT_RANGES = Object.freeze({
+  max_batch_items: Object.freeze({ minimum: 1, maximum: 100, default: 100 }),
+  max_delivery_bytes: Object.freeze({ minimum: 1024, maximum: 16_384, default: 16_384 }),
+  max_proof_bytes: Object.freeze({ minimum: 1024, maximum: 65_536, default: 65_536 }),
+  max_receipt_bytes: Object.freeze({ minimum: 1024, maximum: 262_144, default: 262_144 }),
+  max_clock_skew_seconds: Object.freeze({ minimum: 1, maximum: 300, default: 60 }),
+  max_lease_seconds: Object.freeze({ minimum: 1, maximum: 300, default: 300 }),
+  dedupe_window_seconds: Object.freeze({ minimum: 1, maximum: 86_400, default: 86_400 }),
+  max_delivery_attempts: Object.freeze({ minimum: 1, maximum: 8, default: 8 }),
+});
 
 export const RelayHeaders = Object.freeze({
   PAYLOAD: 'X-Nexus-Discord-Relay-Payload',
@@ -70,6 +82,35 @@ const validateAction = (value, pattern, label) => {
   return normalized;
 };
 
+const validateLifetime = (issued, expires, maximumMilliseconds, label) => {
+  if (!Number.isFinite(issued.getTime()) || !Number.isFinite(expires.getTime()) || expires <= issued) {
+    throw new TypeError(`${label} issuedAt/expiresAt must be valid and ordered.`);
+  }
+  if (expires.getTime() - issued.getTime() > maximumMilliseconds) {
+    throw new TypeError(`${label} exceeds its maximum lifetime.`);
+  }
+};
+
+const capabilityLimits = (overrides) => {
+  if (overrides === null || typeof overrides !== 'object' || Array.isArray(overrides)) {
+    throw new TypeError('Capability manifest limits must be an object.');
+  }
+  for (const key of Object.keys(overrides)) {
+    if (!Object.hasOwn(CAPABILITY_LIMIT_RANGES, key)) {
+      throw new TypeError(`Capability manifest limit ${key} is not supported.`);
+    }
+  }
+  return Object.fromEntries(Object.entries(CAPABILITY_LIMIT_RANGES).map(([key, range]) => {
+    const value = overrides[key] ?? range.default;
+    if (!Number.isSafeInteger(value) || value < range.minimum || value > range.maximum) {
+      throw new TypeError(
+        `Capability manifest limit ${key} must be an integer from ${range.minimum} to ${range.maximum}.`,
+      );
+    }
+    return [key, value];
+  }));
+};
+
 const publicKeyString = (privateKey) => {
   const der = createPublicKey(privateKey).export({ format: 'der', type: 'spki' });
   return der.subarray(-32).toString('base64url');
@@ -81,8 +122,10 @@ const unsignedDocument = (document) => {
 };
 
 const signDocument = (document, privateKey) => {
-  const domain = CONTRACT_SIGNING_DOMAINS[document.contract];
-  if (!domain) throw new TypeError(`Unsupported relay contract: ${document.contract}`);
+  const domain = contractSigningDomain(document.contract, document.contract_version);
+  if (!domain) {
+    throw new TypeError(`Unsupported relay contract: ${document.contract} v${document.contract_version}`);
+  }
   const input = `${domain}\n${canonicalize(unsignedDocument(document))}`;
   return {
     ...document,
@@ -196,6 +239,12 @@ export class DiscordRelaySigner {
   } = {}) {
     const issued = issuedAt ? new Date(issuedAt) : new Date(this.clock());
     const expires = expiresAt ? new Date(expiresAt) : new Date(issued.getTime() + 24 * 60 * 60 * 1000);
+    validateLifetime(
+      issued,
+      expires,
+      MAX_CAPABILITY_MANIFEST_LIFETIME_MS,
+      'Capability manifest',
+    );
     const current = this.keys.current;
     const next = this.keys.next;
     const document = {
@@ -214,17 +263,7 @@ export class DiscordRelaySigner {
       expires_at: compactTimestamp(expires),
       supported_queue_actions: [...(supportedQueueActions ?? registeredQueueActions())],
       renderers: [...renderers],
-      limits: {
-        max_batch_items: 100,
-        max_delivery_bytes: 16_384,
-        max_proof_bytes: 65_536,
-        max_receipt_bytes: 262_144,
-        max_clock_skew_seconds: 60,
-        max_lease_seconds: 300,
-        dedupe_window_seconds: 86_400,
-        max_delivery_attempts: 8,
-        ...limits,
-      },
+      limits: capabilityLimits(limits),
       key_set: {
         owner: 'discord-relay',
         scope: this.keyScope,
@@ -251,9 +290,7 @@ export class DiscordRelaySigner {
     const expires = request.expiresAt
       ? new Date(request.expiresAt)
       : new Date(issued.getTime() + 30_000);
-    if (!Number.isFinite(issued.getTime()) || !Number.isFinite(expires.getTime()) || expires <= issued) {
-      throw new TypeError('Relay proof issuedAt/expiresAt must be valid and ordered.');
-    }
+    validateLifetime(issued, expires, MAX_RELAY_PROOF_LIFETIME_MS, 'Relay proof');
 
     const action = validateAction(
       actor?.discordAction ?? actor?.action ?? actor?.discordCommand ?? actor?.command,

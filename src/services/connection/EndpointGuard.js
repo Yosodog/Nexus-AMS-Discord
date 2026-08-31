@@ -10,6 +10,7 @@ const BLOCKED_HOSTNAMES = new Set([
   'instance-data',
   'instance-data.ec2.internal',
 ]);
+const SHARED_HTTPS_PORTS = new Set(['443', '8443']);
 
 const IPV6_BITS = 128n;
 const IPV4_BITS = 32n;
@@ -134,6 +135,9 @@ export const validateNexusEndpoint = (value, { shared = false } = {}) => {
   }
   if (shared && url.protocol !== 'https:') {
     throw new TypeError('Shared Nexus endpoints must use HTTPS.');
+  }
+  if (shared && !SHARED_HTTPS_PORTS.has(url.port || '443')) {
+    throw new TypeError('Shared Nexus endpoint port is not approved.');
   }
   if (shared && !isPublicHost(url.hostname)) {
     throw new TypeError('Shared Nexus endpoint host is not a public host.');

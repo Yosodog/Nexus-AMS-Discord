@@ -1,0 +1,9 @@
+.env
+.env.*
+relay-keys.env
+data
+node_modules
+.git
+coverage
+test-results
+npm-debug.log*

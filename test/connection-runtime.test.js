@@ -162,6 +162,36 @@ test('deficit scheduling gives each active connection a bounded opportunity', ()
   assert.deepEqual(scheduler.next([CONNECTION_B]), CONNECTION_B);
 });
 
+test('a continuously hot connection cannot starve many quiet connections over sustained scheduling', () => {
+  const scheduler = new FairScheduler({ quantum: 1 });
+  const connectionIds = Array.from(
+    { length: 64 },
+    (_, index) => `connection-${String(index).padStart(2, '0')}`,
+  );
+
+  for (const connectionId of connectionIds) scheduler.register(connectionId);
+
+  const selections = Array.from(
+    { length: connectionIds.length * 100 },
+    () => scheduler.next(connectionIds),
+  );
+
+  for (let offset = 0; offset < selections.length; offset += connectionIds.length) {
+    assert.deepEqual(
+      new Set(selections.slice(offset, offset + connectionIds.length)),
+      new Set(connectionIds),
+      `every scheduling round must offer each connection exactly one claim opportunity (round ${offset / connectionIds.length})`,
+    );
+  }
+
+  const selectionCounts = new Map(connectionIds.map((connectionId) => [connectionId, 0]));
+  for (const connectionId of selections) {
+    selectionCounts.set(connectionId, selectionCounts.get(connectionId) + 1);
+  }
+
+  assert.deepEqual([...selectionCounts.values()], Array(connectionIds.length).fill(100));
+});
+
 test('status output contains bot observations but redacts credentials and message content', () => {
   const resolver = new ConnectionResolver({
     mode: CONNECTION_MODES.SHARED,

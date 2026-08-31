@@ -9,6 +9,7 @@ import {
 import { ConnectionPublicationManager } from './services/connection/ConnectionPublicationManager.js';
 import { ConnectionResolver } from './services/connection/ConnectionResolver.js';
 import { FileConnectionPublicationSource } from './services/connection/FileConnectionPublicationSource.js';
+import { publishInitialConnections } from './services/connection/InitialConnectionPublication.js';
 import { FairScheduler } from './services/FairScheduler.js';
 import { loadCommands } from './commands/index.js';
 import { registerInteractionListener } from './listeners/interactionCreate.js';
@@ -195,42 +196,46 @@ export const bootstrap = async () => {
   if (config.discord.deploymentMode === CONNECTION_MODES.DEDICATED) {
     dedicatedConnection = createDedicatedConnection({ config, logger });
   }
-  const sharedConnections = rawSharedConnections().map((raw) => {
-    try {
-      return buildSharedConnection(raw);
-    } catch (error) {
-      logger.error('Rejected shared connection publication during startup', {
-        errorCode: error?.code ?? 'INVALID_CONNECTION',
-      });
-      return null;
-    }
-  }).filter(Boolean);
   const connectionResolver = new ConnectionResolver({
     mode: config.discord.deploymentMode,
     applicationId: config.discord.clientId,
     dedicatedContext: dedicatedConnection,
-    connections: sharedConnections,
     logger,
   });
   const serviceFactory = createConnectionServiceFactory({ logger, config });
   const dispatcherCache = new Map();
   let publicationManager = null;
-  if (config.discord.deploymentMode === CONNECTION_MODES.OFFICIAL_SHARED
-    && config.shared.connectionsFile) {
-    publicationManager = new ConnectionPublicationManager({
-      source: new FileConnectionPublicationSource({ filePath: config.shared.connectionsFile }),
+  if (config.discord.deploymentMode === CONNECTION_MODES.OFFICIAL_SHARED) {
+    const initialPublication = await publishInitialConnections({
+      publication: rawSharedConnections(),
       resolver: connectionResolver,
       applicationId: config.discord.clientId,
       buildConnection: buildSharedConnection,
       validateConnection: serviceFactory.validate,
       logger: new Logger('ConnectionPublication'),
-      refreshIntervalMs: config.shared.refreshIntervalMs,
-      onAccepted: () => {
-        serviceFactory.clear();
-        dispatcherCache.clear();
-      },
     });
-    await publicationManager.start();
+    if (!initialPublication.accepted) {
+      logger.error('Rejected the complete initial shared connection publication', {
+        errorCode: initialPublication.errorCode,
+      });
+    }
+
+    if (config.shared.connectionsFile) {
+      publicationManager = new ConnectionPublicationManager({
+        source: new FileConnectionPublicationSource({ filePath: config.shared.connectionsFile }),
+        resolver: connectionResolver,
+        applicationId: config.discord.clientId,
+        buildConnection: buildSharedConnection,
+        validateConnection: serviceFactory.validate,
+        logger: new Logger('ConnectionPublication'),
+        refreshIntervalMs: config.shared.refreshIntervalMs,
+        onAccepted: () => {
+          serviceFactory.clear();
+          dispatcherCache.clear();
+        },
+      });
+      await publicationManager.start();
+    }
   }
   const baseApiService = dedicatedConnection ? serviceFactory(dedicatedConnection) : null;
 
