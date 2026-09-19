@@ -1,4 +1,13 @@
 import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+} from 'discord.js';
+import {
+  RESOURCE_SHORTFALL_CAPABILITY,
+  resourceShortfallCustomId,
+} from '../../interactions/resourceShortfall.js';
+import {
   buildEmbed,
   escapeMarkdown,
   formatDiscordTime,
@@ -49,6 +58,12 @@ const MILCOM_EVENT_KEYS = Object.freeze([
   'milcom.incident.detected',
   'milcom.raid_policy.violation',
   'milcom.discord_dispatch.failed',
+]);
+
+const RESOURCE_SHORTFALL_EVENT_KEYS = Object.freeze(['nation.resource_shortfall']);
+const TRADE_RESOURCES = new Set([
+  'coal', 'oil', 'uranium', 'iron', 'bauxite', 'lead',
+  'gasoline', 'munitions', 'steel', 'aluminum', 'food',
 ]);
 
 const ASSIGNMENT_EVENT_PATTERN = /(?:^|[._-])(war|spy)[._-]assignment(?:$|[._-])/i;
@@ -137,6 +152,7 @@ const EVENT_LABELS = Object.freeze({
   'member.departed': 'Member departed',
   'discord.destination.unhealthy': 'Discord destination unhealthy',
   'ingestion.record.quarantined': 'Ingestion record quarantined',
+  'nation.resource_shortfall': 'Resource shortfall detected',
 });
 
 const EVENT_TEMPLATE_KEYS = new Map([
@@ -144,6 +160,7 @@ const EVENT_TEMPLATE_KEYS = new Map([
   ...WORKFLOW_EVENT_KEYS.map((eventKey) => [eventKey, 'workflow_status_v1']),
   ...OPERATIONAL_EVENT_KEYS.map((eventKey) => [eventKey, 'operational_alert_v1']),
   ...MILCOM_EVENT_KEYS.map((eventKey) => [eventKey, 'milcom_alert_v1']),
+  ...RESOURCE_SHORTFALL_EVENT_KEYS.map((eventKey) => [eventKey, 'resource_shortfall_v1']),
 ]);
 
 const isSafeScalar = (value) => {
@@ -203,9 +220,50 @@ const validateDigestData = (data) => {
   });
 };
 
-const validateDataForTemplate = (templateKey, data) => templateKey === 'digest.v1'
-  ? validateDigestData(data)
-  : validateScalarFields(data);
+const resourceAmount = (value) => typeof value === 'string'
+  && /^\d{1,16}(?:\.\d{1,2})?$/.test(value);
+
+const validateResourceShortfallData = (data) => {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
+  const allowed = new Set([
+    'action_available',
+    'action_capability',
+    'calculated_at',
+    'nation_id',
+    'nation_name',
+    'resource_snapshot_at',
+    'shortfalls',
+    'target_turns',
+  ]);
+  if (Object.keys(data).some((key) => !allowed.has(key))) return false;
+  if (!Number.isSafeInteger(data.nation_id) || data.nation_id < 1) return false;
+  if (!isSafeScalar(data.nation_name) || data.nation_name.length > 100) return false;
+  if (data.target_turns !== 12) return false;
+  if (typeof data.action_available !== 'boolean') return false;
+  if (data.action_capability !== RESOURCE_SHORTFALL_CAPABILITY) return false;
+  if (!['calculated_at', 'resource_snapshot_at'].every((key) => (
+    typeof data[key] === 'string' && !Number.isNaN(Date.parse(data[key]))
+  ))) return false;
+  if (!Array.isArray(data.shortfalls) || data.shortfalls.length < 1 || data.shortfalls.length > 20) return false;
+  const resources = new Set();
+  return data.shortfalls.every((line) => {
+    if (!line || typeof line !== 'object' || Array.isArray(line)) return false;
+    if (Object.keys(line).some((key) => ![
+      'resource', 'on_hand', 'next_turn_requirement', 'withdrawal_requirement',
+    ].includes(key))) return false;
+    if (!TRADE_RESOURCES.has(line.resource) || resources.has(line.resource)) return false;
+    resources.add(line.resource);
+    return resourceAmount(line.on_hand)
+      && resourceAmount(line.next_turn_requirement)
+      && resourceAmount(line.withdrawal_requirement);
+  });
+};
+
+const validateDataForTemplate = (templateKey, data) => {
+  if (templateKey === 'digest.v1') return validateDigestData(data);
+  if (templateKey === 'resource_shortfall_v1') return validateResourceShortfallData(data);
+  return validateScalarFields(data);
+};
 
 const displayValue = (value) => {
   if (value === null || value === undefined || value === '') return null;
@@ -302,6 +360,49 @@ const renderDigest = ({ data, deepLink, remainingItemsLink, observedAt }) => {
   };
 };
 
+const renderResourceShortfall = ({ data, deepLink, occurredAt, occurrenceId, guildId, destinationType }) => {
+  const timestamp = new Date(occurredAt);
+  const actionEnabled = data.action_available
+    && destinationType === 'dm'
+    && /^\d{1,20}$/.test(`${occurrenceId ?? ''}`)
+    && /^\d{17,20}$/.test(`${guildId ?? ''}`);
+  const message = {
+    embeds: [buildEmbed({
+      title: 'Nexus Resource Shortfall',
+      tone: 'warning',
+      description: [
+        `**${escapeMarkdown(data.nation_name)}** cannot cover at least one resource required for its next turn.`,
+        'The suggested withdrawal covers the remaining net shortfall for the next 12 turns.',
+        deepLink ? markdownLink('Open accounts in Nexus', deepLink) : null,
+      ].filter(Boolean).join('\n'),
+      fields: data.shortfalls.map((line) => ({
+        name: titleCase(line.resource),
+        value: [
+          `**On hand:** ${formatNumber(line.on_hand)}`,
+          `**Next turn requires:** ${formatNumber(line.next_turn_requirement)}`,
+          `**12-turn withdrawal:** ${formatNumber(line.withdrawal_requirement)}`,
+        ].join('\n'),
+        inline: true,
+      })),
+      footer: actionEnabled
+        ? 'Resolve resources uses one Nexus account and revalidates all balances before any transaction.'
+        : 'No single Nexus account currently appears able to fund the complete withdrawal.',
+    })],
+  };
+  if (!Number.isNaN(timestamp.getTime())) message.embeds[0].setTimestamp(timestamp);
+  if (actionEnabled) {
+    message.components = [new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(resourceShortfallCustomId({
+          action: 'open', guildId, occurrenceId,
+        }))
+        .setLabel('Resolve resources')
+        .setStyle(ButtonStyle.Primary),
+    )];
+  }
+  return message;
+};
+
 const deepLinkForPath = (baseLink, path) => {
   if (!baseLink || !isSafeRelativePath(path)) return null;
   try {
@@ -354,12 +455,21 @@ const DEFINITIONS = Object.freeze([
     tone: 'info',
     render: renderDigest,
   },
+  {
+    template_key: 'resource_shortfall_v1',
+    version: 1,
+    event_keys: RESOURCE_SHORTFALL_EVENT_KEYS,
+    title: 'Nexus Resource Shortfall',
+    tone: 'warning',
+    render: renderResourceShortfall,
+  },
 ]);
 
 const RENDERERS = new Map(DEFINITIONS.map((definition) => [definition.template_key, definition]));
 
 export const ALERT_RENDERER_MANIFEST = Object.freeze({
   contract_version: 1,
+  capabilities: Object.freeze({ [RESOURCE_SHORTFALL_CAPABILITY]: true }),
   templates: Object.freeze(DEFINITIONS.map(({ template_key, version, event_keys }) => Object.freeze({
     template_key,
     version,
@@ -402,11 +512,18 @@ export class AlertRendererRegistry {
     if (!manifest || typeof manifest !== 'object' || manifest.contract_version !== 1) {
       return { valid: false, reason: 'invalid_alert_manifest' };
     }
-
     const remoteTemplates = Array.isArray(manifest.templates)
       ? manifest.templates.filter((template) => template?.active !== false)
       : null;
     if (!remoteTemplates) return { valid: false, reason: 'invalid_alert_manifest_templates' };
+
+    const remoteSupportsResourceShortfall = manifest.capabilities?.[RESOURCE_SHORTFALL_CAPABILITY] === true;
+    const hasRemoteResourceShortfallTemplate = remoteTemplates.some(
+      (template) => template?.template_key === 'resource_shortfall_v1',
+    );
+    if (hasRemoteResourceShortfallTemplate && !remoteSupportsResourceShortfall) {
+      return { valid: false, reason: 'resource_shortfall_capability_missing' };
+    }
 
     if (remoteTemplates.some((template) => (template?.event_keys ?? [])
       .some((eventKey) => typeof eventKey === 'string' && ASSIGNMENT_EVENT_PATTERN.test(eventKey)))) {
@@ -444,8 +561,10 @@ export class AlertRendererRegistry {
       return { valid: false, reason: 'alert_manifest_mismatch', missing, mismatched };
     }
 
-    const expected = new Set(ALERT_RENDERER_MANIFEST.templates.map((template) =>
-      `${template.template_key}:${template.version}`));
+    const expected = new Set(ALERT_RENDERER_MANIFEST.templates
+      .filter((template) => remoteSupportsResourceShortfall
+        || template.template_key !== 'resource_shortfall_v1')
+      .map((template) => `${template.template_key}:${template.version}`));
     const actual = new Set(remoteTemplates.map((template) =>
       `${template.template_key}:${template.version}`));
     const missingLocal = [...expected].filter((identity) => !actual.has(identity));
@@ -464,6 +583,7 @@ export const alertEventKeys = Object.freeze([
   ...WORKFLOW_EVENT_KEYS,
   ...OPERATIONAL_EVENT_KEYS,
   ...MILCOM_EVENT_KEYS,
+  ...RESOURCE_SHORTFALL_EVENT_KEYS,
 ]);
 
 export const isSupportedAlertEvent = (eventKey) => EVENT_TEMPLATE_KEYS.has(eventKey);

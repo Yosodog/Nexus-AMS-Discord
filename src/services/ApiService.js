@@ -302,6 +302,41 @@ export class ApiService {
     });
   }
 
+  getResourceShortfallOptions(actor, occurrenceId) {
+    return this.#requestDiscord(
+      `me/resource-shortfall-alerts/${encodeURIComponent(occurrenceId)}/options`,
+      { actor, retryMode: RetryMode.SAFE },
+    );
+  }
+
+  createResourceShortfallDraft(actor, occurrenceId, accountId) {
+    return this.#requestDiscord(
+      `me/resource-shortfall-alerts/${encodeURIComponent(occurrenceId)}/drafts`,
+      { method: 'post', actor, data: { account_id: Number(accountId) } },
+    );
+  }
+
+  getResourceShortfallFulfillment(actor, intentToken) {
+    return this.#requestDiscord(
+      `me/resource-shortfall-fulfillments/${encodeURIComponent(intentToken)}`,
+      { actor, retryMode: RetryMode.SAFE },
+    );
+  }
+
+  confirmResourceShortfallFulfillment(actor, intentToken) {
+    return this.#requestDiscord(
+      `me/resource-shortfall-fulfillments/${encodeURIComponent(intentToken)}/confirm`,
+      { method: 'post', actor, data: {} },
+    );
+  }
+
+  cancelResourceShortfallFulfillment(actor, intentToken) {
+    return this.#requestDiscord(
+      `me/resource-shortfall-fulfillments/${encodeURIComponent(intentToken)}/cancel`,
+      { method: 'post', actor, data: {} },
+    );
+  }
+
   getMyTransactions(actor, params = {}) {
     const account = params.account;
     if (!account) throw new TypeError('An opaque account token is required.');

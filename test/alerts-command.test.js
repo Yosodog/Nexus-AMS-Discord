@@ -68,6 +68,7 @@ const settings = (overrides = {}) => ({
   quiet_hours: { enabled: false, start: null, end: null },
   default_digest: { time: '09:00', weekday: 1 },
   discord_enabled: false,
+  resource_shortfall_alerts_enabled: false,
   uses_legacy_defaults: false,
   ...overrides,
 });
@@ -228,6 +229,7 @@ test('settings reads are immediate while updates merge current state and wait fo
         quiet_hours: { enabled: true, start: payload.quiet_hours_start, end: payload.quiet_hours_end },
         default_digest: { time: payload.default_digest_time, weekday: payload.default_digest_weekday },
         discord_enabled: payload.discord_enabled,
+        resource_shortfall_alerts_enabled: payload.resource_shortfall_alerts_enabled,
       });
     },
   };
@@ -239,6 +241,7 @@ test('settings reads are immediate while updates merge current state and wait fo
 
   const update = commandInteraction('settings', {
     discord: true,
+    resource_shortfalls: true,
     timezone: 'America/Chicago',
     quiet_hours: true,
     quiet_start: '22:00',
@@ -261,6 +264,7 @@ test('settings reads are immediate while updates merge current state and wait fo
     default_digest_time: '08:30',
     default_digest_weekday: 5,
     discord_enabled: true,
+    resource_shortfall_alerts_enabled: true,
   });
   assert.equal(embedJson(button.edits[0]).title, 'Alert Settings Updated');
 });

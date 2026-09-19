@@ -25,7 +25,7 @@ export const actorFromInteraction = (interaction, command = null) => {
   const connection = interaction.nexusConnectionContext;
   return {
     discordUserId: interaction.user.id,
-    discordGuildId: interaction.guildId,
+    discordGuildId: interaction.guildId ?? connection?.guildId,
     discordInteractionId: interaction.id,
     discordCommand: rootCommand,
     discordAction: action,

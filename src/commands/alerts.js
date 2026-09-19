@@ -78,6 +78,7 @@ export const data = new SlashCommandBuilder()
     .setName('settings')
     .setDescription('View or update Discord, time zone, quiet hours, and digest defaults.')
     .addBooleanOption((option) => option.setName('discord').setDescription('Enable private Discord delivery globally'))
+    .addBooleanOption((option) => option.setName('resource_shortfalls').setDescription('Alert when your nation cannot cover its next turn'))
     .addStringOption((option) => option.setName('timezone').setDescription('IANA time zone, such as America/Chicago').setMaxLength(64))
     .addBooleanOption((option) => option.setName('quiet_hours').setDescription('Enable or disable quiet hours'))
     .addStringOption((option) => option.setName('quiet_start').setDescription('Quiet-hours start in 24-hour HH:MM format').setMaxLength(5))
@@ -449,6 +450,7 @@ const timeValue = (value, label) => {
 
 const settingInputs = (interaction) => ({
   discord: interaction.options.getBoolean('discord'),
+  resourceShortfalls: interaction.options.getBoolean('resource_shortfalls'),
   timezone: interaction.options.getString('timezone'),
   quietHours: interaction.options.getBoolean('quiet_hours'),
   quietStart: interaction.options.getString('quiet_start'),
@@ -477,6 +479,9 @@ const settingsPayload = (settings, input) => {
     default_digest_time: timeValue(input.digestTime ?? settings?.default_digest?.time ?? '09:00', 'Digest time'),
     default_digest_weekday: input.digestWeekday ?? settings?.default_digest?.weekday ?? 1,
     discord_enabled: input.discord ?? settings?.discord_enabled ?? false,
+    resource_shortfall_alerts_enabled: input.resourceShortfalls
+      ?? settings?.resource_shortfall_alerts_enabled
+      ?? false,
   };
 };
 
@@ -492,10 +497,12 @@ const settingsProjection = (payload) => ({
     weekday: payload.default_digest_weekday,
   },
   discord_enabled: payload.discord_enabled,
+  resource_shortfall_alerts_enabled: payload.resource_shortfall_alerts_enabled,
 });
 
 const settingsFingerprint = (current) => JSON.stringify(settingsPayload(current, {
   discord: null,
+  resourceShortfalls: null,
   timezone: null,
   quietHours: null,
   quietStart: null,
@@ -510,6 +517,11 @@ const settingsMessage = (settings, { title = 'Alert Delivery Settings', tone = '
   description: 'These defaults apply to your private member alerts. Web activity is always enabled.',
   fields: [
     { name: 'Discord delivery', value: settings?.discord_enabled ? 'Enabled' : 'Disabled', inline: true },
+    {
+      name: 'Resource shortfalls',
+      value: settings?.resource_shortfall_alerts_enabled ? 'Enabled' : 'Disabled',
+      inline: true,
+    },
     { name: 'Time zone', value: escapeMarkdown(settings?.timezone ?? 'UTC'), inline: true },
     {
       name: 'Quiet hours',

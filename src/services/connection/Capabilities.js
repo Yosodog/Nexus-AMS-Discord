@@ -5,6 +5,7 @@ export const PHASE2_CAPABILITIES = Object.freeze({
   QUEUE_LEASES_V1: 'queue.leases.v1',
   QUEUE_CONNECTION_CONTEXT_V1: 'queue.connection-context.v1',
   STATUS_PROVIDER_DIAGNOSTICS_V1: 'status.provider-diagnostics.v1',
+  RESOURCE_SHORTFALL_ACTIONS_V1: 'alerts.resource-shortfall-actions.v1',
 });
 
 export const PHASE2_CAPABILITY_KEYS = Object.freeze(Object.values(PHASE2_CAPABILITIES));

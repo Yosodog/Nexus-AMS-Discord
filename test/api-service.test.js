@@ -103,6 +103,31 @@ const endpointCases = [
     method: 'post', pathname: '/api/v1/discord/me/withdrawals/intent%20%2F%20three/cancel', body: {}, relay: 'actor',
   },
   {
+    name: 'getResourceShortfallOptions',
+    invoke: (service) => service.getResourceShortfallOptions(ACTOR, 91),
+    method: 'get', pathname: '/api/v1/discord/me/resource-shortfall-alerts/91/options', relay: 'actor',
+  },
+  {
+    name: 'createResourceShortfallDraft',
+    invoke: (service) => service.createResourceShortfallDraft(ACTOR, 91, 7),
+    method: 'post', pathname: '/api/v1/discord/me/resource-shortfall-alerts/91/drafts', body: { account_id: 7 }, relay: 'actor',
+  },
+  {
+    name: 'getResourceShortfallFulfillment',
+    invoke: (service) => service.getResourceShortfallFulfillment(ACTOR, 'intent / shortfall'),
+    method: 'get', pathname: '/api/v1/discord/me/resource-shortfall-fulfillments/intent%20%2F%20shortfall', relay: 'actor',
+  },
+  {
+    name: 'confirmResourceShortfallFulfillment',
+    invoke: (service) => service.confirmResourceShortfallFulfillment(ACTOR, 'intent / shortfall'),
+    method: 'post', pathname: '/api/v1/discord/me/resource-shortfall-fulfillments/intent%20%2F%20shortfall/confirm', body: {}, relay: 'actor',
+  },
+  {
+    name: 'cancelResourceShortfallFulfillment',
+    invoke: (service) => service.cancelResourceShortfallFulfillment(ACTOR, 'intent / shortfall'),
+    method: 'post', pathname: '/api/v1/discord/me/resource-shortfall-fulfillments/intent%20%2F%20shortfall/cancel', body: {}, relay: 'actor',
+  },
+  {
     name: 'getMyTransactions',
     invoke: (service) => service.getMyTransactions(ACTOR, {
       account: 'account / primary', type: 'deposit', status: 'complete', page: 3, per_page: 15, scope: 'ignored',

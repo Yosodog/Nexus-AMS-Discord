@@ -1,4 +1,8 @@
 import { Events } from 'discord.js';
+import {
+  handleResourceShortfallInteraction,
+  parseResourceShortfallCustomId,
+} from '../interactions/resourceShortfall.js';
 import { InteractionSessionStore } from '../services/InteractionSessionStore.js';
 import { COLLECTION_PAGE_EVENT, collectionPageMessage } from '../utils/commandSupport.js';
 import { config } from '../utils/config.js';
@@ -56,6 +60,9 @@ export const registerInteractionListener = (
   client.on(Events.InteractionCreate, async (interaction) => {
     const kinds = interactionKinds(interaction);
     if (!Object.values(kinds).some(Boolean)) return;
+    const resourceShortfallControl = kinds.button || kinds.select
+      ? parseResourceShortfallCustomId(interaction.customId)
+      : null;
 
     let connection = null;
     if (resolver) {
@@ -63,15 +70,20 @@ export const registerInteractionListener = (
         const contextCommand = kinds.context
           ? commands.get(interaction.commandName)?.connectionCommandName ?? null
           : null;
-        connection = resolver.resolveInteraction(interaction, {
-          applicationId,
-          commandName: kinds.chat || kinds.autocomplete ? interaction.commandName : contextCommand,
-        });
+        connection = resourceShortfallControl
+          ? resolver.resolve({
+              applicationId,
+              guildId: resourceShortfallControl.guildId,
+            })
+          : resolver.resolveInteraction(interaction, {
+              applicationId,
+              commandName: kinds.chat || kinds.autocomplete ? interaction.commandName : contextCommand,
+            });
       } catch (error) {
         await resolutionFailure(interaction, kinds, logger, error);
         return;
       }
-    } else if (!guildId || interaction.guildId !== guildId) {
+    } else if (!guildId || (interaction.guildId ?? resourceShortfallControl?.guildId) !== guildId) {
       logger.warn('Ignored interaction outside the configured guild', {
         command: interaction.commandName ?? null,
         guildId: interaction.guildId ?? null,
@@ -80,7 +92,7 @@ export const registerInteractionListener = (
       return;
     }
 
-    const effectiveGuildId = connection?.guildId ?? guildId;
+    const effectiveGuildId = connection?.guildId ?? resourceShortfallControl?.guildId ?? guildId;
     const scopedSessions = connection ? sessions.forConnection(connection) : sessions;
     const runtimeContext = connection
       ? {
@@ -108,21 +120,26 @@ export const registerInteractionListener = (
     let commandName = interaction.commandName;
     let handler = kinds.autocomplete ? 'autocomplete' : 'execute';
     if (kinds.button || kinds.select || kinds.modal) {
-      session = connection
-        ? sessions.resolve(interaction.customId, interaction.user?.id, connection)
-        : sessions.resolve(interaction.customId, interaction.user?.id);
-      commandName = session?.commandName;
-      handler = kinds.button ? 'button' : kinds.select ? 'select' : 'modal';
-      if (!session) {
-        await interaction.reply({
-          ...statusMessage({
-            title: 'Control Expired',
-            tone: 'warning',
-            description: 'This control expired or belongs to another Nexus connection. Run the command again to get fresh controls.',
-          }),
-          ephemeral: true,
-        }).catch(() => {});
-        return;
+      if (resourceShortfallControl) {
+        commandName = 'resource-shortfall';
+        handler = 'handle';
+      } else {
+        session = connection
+          ? sessions.resolve(interaction.customId, interaction.user?.id, connection)
+          : sessions.resolve(interaction.customId, interaction.user?.id);
+        commandName = session?.commandName;
+        handler = kinds.button ? 'button' : kinds.select ? 'select' : 'modal';
+        if (!session) {
+          await interaction.reply({
+            ...statusMessage({
+              title: 'Control Expired',
+              tone: 'warning',
+              description: 'This control expired or belongs to another Nexus connection. Run the command again to get fresh controls.',
+            }),
+            ephemeral: true,
+          }).catch(() => {});
+          return;
+        }
       }
     }
 
@@ -151,7 +168,9 @@ export const registerInteractionListener = (
       return;
     }
 
-    const command = commands.get(commandName);
+    const command = resourceShortfallControl
+      ? { handle: handleResourceShortfallInteraction }
+      : commands.get(commandName);
     if (!command || typeof command[handler] !== 'function') {
       logger.warn('Received unsupported interaction', { command: commandName ?? null, handler });
       if (kinds.autocomplete) await interaction.respond?.([]).catch?.(() => {});
@@ -175,6 +194,7 @@ export const registerInteractionListener = (
         guildId: effectiveGuildId,
         sessions: scopedSessions,
         session,
+        resourceShortfallControl,
       });
     } catch (error) {
       logger.error('Unhandled error executing interaction', {

@@ -179,6 +179,56 @@ test('ALERT_DELIVERY_V1 accepts code-owned event payload fields emitted by Nexus
   })), { valid: true });
 });
 
+test('resource_shortfall_v1 validates nested shortage lines and renders one resolve action', async () => {
+  let message;
+  const payload = basePayload({
+    delivery_id: 'delivery-resource-shortfall',
+    occurrence_id: '91',
+    event_key: 'nation.resource_shortfall',
+    template_key: 'resource_shortfall_v1',
+    destination: { type: 'dm', discord_user_id: USER_ID },
+    allowed_role_ids: [],
+    data: {
+      nation_id: 11,
+      nation_name: 'Test Nation',
+      target_turns: 12,
+      calculated_at: '2026-08-08T12:00:00Z',
+      resource_snapshot_at: '2026-08-08T12:00:00Z',
+      shortfalls: [{
+        resource: 'coal',
+        on_hand: '5.00',
+        next_turn_requirement: '10.00',
+        withdrawal_requirement: '115.00',
+      }],
+      action_available: true,
+      action_capability: 'alerts.resource-shortfall-actions.v1',
+    },
+  });
+
+  assert.deepEqual(validate(payload), { valid: true });
+  const result = await execute({ id: 'queue-resource-shortfall', payload }, runtimeFor({
+    sendDirectMessage: async (_target, _command, _step, outgoing) => {
+      message = outgoing;
+      return { id: 'provider-shortfall-dm', guildId: null, channelId: '523456789012345678' };
+    },
+  }));
+
+  assert.equal(result.result.delivery, 'delivered');
+  assert.match(message.embeds[0].toJSON().description, /cannot cover/i);
+  assert.equal(message.embeds[0].toJSON().fields.length, 1);
+  const button = message.components[0].toJSON().components[0];
+  assert.equal(button.label, 'Resolve resources');
+  assert.equal(button.custom_id, `nxs:rsa:o:${GUILD_ID}:91`);
+
+  assert.deepEqual(validate({
+    ...payload,
+    data: {
+      ...payload.data,
+      shortfalls: [{ ...payload.data.shortfalls[0], resource: 'money' }],
+    },
+  }), { valid: false, reason: 'invalid_template_data' });
+});
+
 test('digest.v1 accepts at most 20 items', () => {
   const item = (index) => ({
     title: `Alert ${index}`,
@@ -208,6 +258,24 @@ test('renderer manifest matches the canonical local registry', () => {
     templates: ALERT_RENDERER_MANIFEST.templates.slice(0, -1),
   };
   assert.equal(alertRendererRegistry.verifyManifest(missingTemplate).reason, 'alert_manifest_mismatch');
+
+  const missingCapability = { ...ALERT_RENDERER_MANIFEST, capabilities: {} };
+  assert.equal(
+    alertRendererRegistry.verifyManifest(missingCapability).reason,
+    'resource_shortfall_capability_missing',
+  );
+
+  const legacyManifest = {
+    ...ALERT_RENDERER_MANIFEST,
+    capabilities: {},
+    templates: ALERT_RENDERER_MANIFEST.templates.filter(
+      (template) => template.template_key !== 'resource_shortfall_v1',
+    ),
+  };
+  assert.deepEqual(alertRendererRegistry.verifyManifest(legacyManifest), {
+    valid: true,
+    contract_version: 1,
+  });
 });
 
 test('alert catalog and manifest contain no proactive war or spy assignment events', () => {

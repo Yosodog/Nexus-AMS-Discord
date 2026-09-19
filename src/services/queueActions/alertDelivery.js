@@ -212,6 +212,9 @@ export const execute = async (command, runtime) => {
     deepLink,
     occurredAt: payload.occurred_at,
     observedAt: payload.observed_at,
+    occurrenceId: payload.occurrence_id,
+    guildId: runtime.guildId,
+    destinationType: payload.destination.type,
     baseUrl: runtime.apiService?.baseUrl,
     remainingItemsLink: resolveRelativeNexusLink(
       runtime.apiService?.baseUrl,
