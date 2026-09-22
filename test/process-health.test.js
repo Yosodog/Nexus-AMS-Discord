@@ -70,6 +70,29 @@ test('ProcessHealth publishes a bounded lifecycle without tenant credentials', a
     commit: 'abc123',
     release: 'release-1',
   });
+  assert.deepEqual({
+    contract_version: snapshots[1].contract_version,
+    component_id: snapshots[1].component_id,
+    runtime_state: snapshots[1].runtime_state,
+    health_state: snapshots[1].health_state,
+    reachable: snapshots[1].reachable,
+    installed: snapshots[1].installed,
+    enabled: snapshots[1].enabled,
+    configuration_ready: snapshots[1].configuration_ready,
+    version: snapshots[1].version,
+    release_id: snapshots[1].release_id,
+  }, {
+    contract_version: 1,
+    component_id: 'nexus-discord',
+    runtime_state: 'ready',
+    health_state: 'healthy',
+    reachable: true,
+    installed: true,
+    enabled: true,
+    configuration_ready: true,
+    version: '0.1.0',
+    release_id: 'release-1',
+  });
   assert.deepEqual(snapshots[1].scope, { guild_configured: true });
   assert.deepEqual(snapshots[1].queue, queueReady);
   assert.deepEqual(snapshots.at(-1).shutdown, { signal: 'SIGTERM', drained: true });

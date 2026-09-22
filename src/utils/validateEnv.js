@@ -10,28 +10,34 @@ import { createPrivateKey } from 'node:crypto';
  * Validate presence of required environment variables and exit with a clear message if any are missing.
  * @param {string[]} requiredKeys list of environment variable names that must be present
  * @param {{ error: Function }} [logger] optional logger with an error method; console.error is used otherwise
+ * @param {{ values?: Record<string, unknown> }} [options] optional resolved values, including file-backed secrets
  */
-export const validateEnv = (requiredKeys, logger) => {
-  const missing = requiredKeys.filter((key) => !process.env[key] || process.env[key].trim() === '');
+export const validateEnv = (requiredKeys, logger, options = {}) => {
+  const values = options.values ?? process.env;
+  const valueFor = (key) => values[key] ?? process.env[key];
+  const missing = requiredKeys.filter((key) => {
+    const value = valueFor(key);
+    return typeof value !== 'string' || value.trim() === '';
+  });
   const invalid = [];
 
   for (const key of ['DISCORD_CLIENT_ID', 'DISCORD_GUILD_ID']) {
-    const value = process.env[key];
+    const value = valueFor(key);
     if (value && !isDiscordSnowflake(value)) {
       invalid.push(`${key} must be a Discord snowflake`);
     }
   }
 
-  const nexusUrl = process.env.NEXUS_API_URL;
+  const nexusUrl = valueFor('NEXUS_API_URL');
   if (nexusUrl) {
     if (!isHttpUrl(nexusUrl)) {
       invalid.push('NEXUS_API_URL must be a valid absolute http or https URL');
-    } else if (process.env.NODE_ENV === 'production' && !isHttpUrl(nexusUrl, { httpsOnly: true })) {
+    } else if (valueFor('NODE_ENV') === 'production' && !isHttpUrl(nexusUrl, { httpsOnly: true })) {
       invalid.push('NEXUS_API_URL must use https in production');
     }
   }
 
-  const relayPrivateKey = process.env.NEXUS_DISCORD_RELAY_PRIVATE_KEY;
+  const relayPrivateKey = valueFor('NEXUS_DISCORD_RELAY_PRIVATE_KEY');
   if (relayPrivateKey) {
     try {
       const key = createPrivateKey({
@@ -47,22 +53,22 @@ export const validateEnv = (requiredKeys, logger) => {
     }
   }
 
-  const relayProtocol = process.env.NEXUS_DISCORD_RELAY_PROTOCOL;
+  const relayProtocol = valueFor('NEXUS_DISCORD_RELAY_PROTOCOL');
   if (relayProtocol && relayProtocol.trim() !== '2') {
     invalid.push('NEXUS_DISCORD_RELAY_PROTOCOL must be 2; relay protocol v1 is not supported');
   }
 
-  const connectionId = process.env.NEXUS_DISCORD_CONNECTION_ID;
+  const connectionId = valueFor('NEXUS_DISCORD_CONNECTION_ID');
   if (connectionId && !isUuid(connectionId)) {
     invalid.push('NEXUS_DISCORD_CONNECTION_ID must be a UUID');
   }
 
-  const connectionGeneration = process.env.NEXUS_DISCORD_CONNECTION_GENERATION;
+  const connectionGeneration = valueFor('NEXUS_DISCORD_CONNECTION_GENERATION');
   if (connectionGeneration && toPositiveInteger(connectionGeneration) === null) {
     invalid.push('NEXUS_DISCORD_CONNECTION_GENERATION must be a positive integer');
   }
 
-  const relayKeyId = process.env.NEXUS_DISCORD_RELAY_KEY_ID;
+  const relayKeyId = valueFor('NEXUS_DISCORD_RELAY_KEY_ID');
   if (relayKeyId && !/^[a-z0-9][a-z0-9._-]{0,127}$/.test(relayKeyId.trim().toLowerCase())) {
     invalid.push('NEXUS_DISCORD_RELAY_KEY_ID is invalid');
   }

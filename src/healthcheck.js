@@ -1,7 +1,12 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { HEALTH_SCHEMA_VERSION, SERVICE_NAME } from './processHealthContract.js';
+import {
+  COMPONENT_CONTRACT_VERSION,
+  COMPONENT_ID,
+  HEALTH_SCHEMA_VERSION,
+  SERVICE_NAME,
+} from './processHealthContract.js';
 
 const DEFAULT_STALE_AFTER_MS = 45_000;
 const FUTURE_TOLERANCE_MS = 30_000;
@@ -26,7 +31,14 @@ export function validateHealthSnapshot(snapshot, options = {}) {
     return { healthy: false, reason: 'unsupported_contract' };
   }
 
-  if (snapshot.status !== 'ready') {
+  if (
+    snapshot.contract_version !== undefined
+    && (snapshot.contract_version !== COMPONENT_CONTRACT_VERSION || snapshot.component_id !== COMPONENT_ID)
+  ) {
+    return { healthy: false, reason: 'unsupported_contract' };
+  }
+
+  if (snapshot.status !== 'ready' && snapshot.status !== 'degraded') {
     return { healthy: false, reason: 'not_ready' };
   }
 
@@ -39,12 +51,34 @@ export function validateHealthSnapshot(snapshot, options = {}) {
   }
 
   if (
+    snapshot.contract_version !== undefined
+    && (typeof snapshot.version !== 'string'
+      || typeof snapshot.release_id !== 'string'
+      || typeof snapshot.runtime_state !== 'string'
+      || typeof snapshot.health_state !== 'string'
+      || typeof snapshot.reachable !== 'boolean'
+      || typeof snapshot.installed !== 'boolean'
+      || typeof snapshot.enabled !== 'boolean'
+      || typeof snapshot.configuration_ready !== 'boolean')
+  ) {
+    return { healthy: false, reason: 'missing_component_metadata' };
+  }
+
+  if (snapshot.configuration_ready === false) {
+    return { healthy: false, reason: 'configuration_not_ready' };
+  }
+
+  if (
     snapshot.scope?.guild_configured !== true
     || snapshot.queue?.started !== true
     || snapshot.queue?.stopped !== false
     || snapshot.queue?.lease_healthy === false
   ) {
     return { healthy: false, reason: 'runtime_not_ready' };
+  }
+
+  if (snapshot.status !== 'ready') {
+    return { healthy: false, reason: 'not_ready' };
   }
 
   const heartbeatAt = Date.parse(snapshot.heartbeat_at);

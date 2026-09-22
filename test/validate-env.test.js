@@ -94,3 +94,42 @@ test('validateEnv permits development HTTP but requires production HTTPS and val
     }
   }
 });
+
+test('validateEnv accepts resolved file-backed secrets without requiring secret environment values', () => {
+  const originalExit = process.exit;
+  const exits = [];
+  process.exit = (code) => { exits.push(code); };
+
+  try {
+    const { privateKey } = generateKeyPairSync('ed25519');
+    const values = {
+      ...process.env,
+      NODE_ENV: 'production',
+      DISCORD_BOT_TOKEN: 'file-backed-token',
+      DISCORD_CLIENT_ID: '123456789012345678',
+      DISCORD_GUILD_ID: '223456789012345678',
+      NEXUS_API_URL: 'https://nexus.example',
+      NEXUS_API_KEY: 'file-backed-api-key',
+      NEXUS_DISCORD_CONNECTION_ID: '11111111-2222-4333-8444-555555555555',
+      NEXUS_DISCORD_CONNECTION_GENERATION: '1',
+      NEXUS_DISCORD_RELAY_PRIVATE_KEY: privateKey.export({ format: 'der', type: 'pkcs8' }).toString('base64'),
+      NEXUS_DISCORD_RELAY_KEY_ID: 'relay-current',
+      NEXUS_DISCORD_RELAY_PROTOCOL: '2',
+    };
+
+    assert.equal(validateEnv([
+      'DISCORD_BOT_TOKEN',
+      'DISCORD_CLIENT_ID',
+      'DISCORD_GUILD_ID',
+      'NEXUS_API_URL',
+      'NEXUS_API_KEY',
+      'NEXUS_DISCORD_CONNECTION_ID',
+      'NEXUS_DISCORD_CONNECTION_GENERATION',
+      'NEXUS_DISCORD_RELAY_PRIVATE_KEY',
+      'NEXUS_DISCORD_RELAY_KEY_ID',
+    ], createLogger(), { values }), true);
+    assert.deepEqual(exits, []);
+  } finally {
+    process.exit = originalExit;
+  }
+});

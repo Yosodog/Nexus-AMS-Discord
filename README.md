@@ -4,7 +4,10 @@ Discord integration for Nexus AMS. The bot provides account verification, applic
 
 ## Beta status
 
-Nexus AMS Discord is part of the Nexus AMS beta. Run a bot beta that is compatible with your Nexus AMS release. Nexus remains the source of permissions and workflow state, so mismatched versions can cause commands or queue actions to be rejected.
+Nexus AMS Discord is part of the Nexus AMS beta. Managed installations use the
+same stable release tag for Setup, Core, Subs, and Discord. Nexus remains the
+source of permissions and workflow state, so mismatched manual versions can
+cause commands or queue actions to be rejected.
 
 Dedicated self-hosting is available in the beta. Public onboarding for the Nexus hosted bot is not ready yet. Hosted connections and `official-shared` mode are limited to operator-managed development and Cloud pilots.
 
@@ -18,6 +21,17 @@ Dedicated self-hosting is available in the beta. Public onboarding for the Nexus
 - Graceful process shutdown and fail-closed command loading/registration.
 
 ## Setup guides
+
+For a supported local managed installation, first install Nexus through
+[Nexus Setup](https://github.com/Yosodog/Nexus-Setup), then use
+`nexus component install discord` or **Admin → Settings → Software**. Supply
+only the bot token, application ID, and guild ID. Setup generates the internal
+API credential and relay key, stores secret values in protected credential
+files, starts the unprivileged service, and registers the guild slash commands.
+You still have to create and invite the Discord application in the Developer
+Portal. `nexus update` updates all installed local components together; the
+GUI cannot manage an unpaired remote bot host. The guides below also cover
+manual or container-based deployments.
 
 Start with the guide for your deployment:
 
@@ -63,11 +77,15 @@ Configure:
 - `LOG_LEVEL`: optional `DEBUG`, `INFO`, `WARN`, or `ERROR` threshold.
 - `BOT_DEPLOYMENT_MODE`: `dedicated` by default, or `official-shared` for one bot serving explicit connection publications.
 - `DISCORD_BOT_TOKEN`: bot token.
+- `DISCORD_BOT_TOKEN_FILE`: root-owned credential file containing the bot token; takes precedence over `DISCORD_BOT_TOKEN`.
 - `DISCORD_CLIENT_ID`: Discord application snowflake.
 - `DISCORD_GUILD_ID`: the only accepted guild in dedicated mode.
 - `NEXUS_API_URL`: Nexus base URL. Development may use HTTP; production startup requires HTTPS.
 - `NEXUS_API_KEY`: shared bot credential issued by Nexus.
+- `NEXUS_API_KEY_FILE`: root-owned credential file containing the Nexus credential; takes precedence over `NEXUS_API_KEY`.
 - `NEXUS_DISCORD_RELAY_PRIVATE_KEY`: base64 PKCS#8 Ed25519 private key used to sign the actual Gateway interaction identity and command sent to Nexus.
+- `NEXUS_DISCORD_RELAY_PRIVATE_KEY_FILE`: root-owned credential file containing the relay private key; takes precedence over the environment value.
+- `NEXUS_DISCORD_RELAY_NEXT_PRIVATE_KEY_FILE`: optional root-owned credential file for the next relay key during rotation.
 - `NEXUS_DISCORD_CONNECTION_ID`: relay-v2 connection UUID configured in Nexus.
 - `NEXUS_DISCORD_CONNECTION_GENERATION`: positive generation configured for that connection in Nexus.
 - `NEXUS_DISCORD_RELAY_KEY_ID`: current relay-v2 key ID accepted by Nexus.
@@ -212,6 +230,11 @@ Nexus URLs, Discord/Nexus credentials, relay keys, command payloads, and API
 responses. Place `PROCESS_HEALTH_FILE` on the writable runtime mount used by the
 bot and run the probe as the same non-root user.
 
+The heartbeat also implements the first-party component health contract. It
+includes `component_id` (`nexus-discord`), contract version, package version,
+release ID, runtime and health states, reachability, enabled state, and
+configuration readiness. Nexus Setup uses these fields for component inventory.
+
 ## Shutdown behavior
 
 `SIGTERM` or `SIGINT` stops new queue claims and stops scheduling lease
@@ -221,6 +244,24 @@ use. The Discord client stays available during that bounded drain. A second
 signal forces immediate termination. Process managers should allow at least
 310 seconds before sending `SIGKILL`; most shutdowns finish immediately when
 no item is active.
+
+## Managed systemd deployment
+
+The fixed unit template at [`deploy/systemd/nexus-discord.service`](deploy/systemd/nexus-discord.service)
+runs the bot as the dedicated `nexus-discord` account from an immutable release
+directory. Nexus Setup supplies the account, writable state directory, and
+root-owned credential files. Its root-owned environment file contains only
+paths to credentials consumed through the `*_FILE` settings; secret values
+never appear in command-line arguments or the service environment. Do not
+modify the unit from the Admin GUI.
+
+Release automation builds a deterministic production tarball with
+`npm ci --omit=dev --ignore-scripts`, records the component contract and
+release identity, and publishes the fixed `nexus-discord.tar.gz` asset directly
+to the official GitHub Release. Nexus Setup trusts that official release and
+verifies the identity embedded in the extracted artifact; deployment
+signatures, checksum sidecars, attestations, and TUF metadata are intentionally
+not part of this updater. Runtime relay signatures remain unchanged.
 
 ## Development and CI
 

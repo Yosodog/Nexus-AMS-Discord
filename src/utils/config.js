@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { readSecret } from './secretFile.js';
 
 const positiveInteger = (value, fallback) => {
   const parsed = Number(value);
@@ -51,7 +52,7 @@ const deploymentMode = parseMode(
  */
 export const config = {
   discord: {
-    token: process.env.DISCORD_BOT_TOKEN ?? '',
+    token: readSecret('DISCORD_BOT_TOKEN') ?? '',
     clientId: process.env.DISCORD_CLIENT_ID ?? '',
     guildId: process.env.DISCORD_GUILD_ID ?? '',
     deploymentMode,
@@ -64,15 +65,15 @@ export const config = {
   },
   nexusApi: {
     baseUrl: process.env.NEXUS_API_URL ?? '',
-    apiKey: process.env.NEXUS_API_KEY ?? '',
-    discordRelayPrivateKey: process.env.NEXUS_DISCORD_RELAY_PRIVATE_KEY ?? '',
+    apiKey: readSecret('NEXUS_API_KEY') ?? '',
+    discordRelayPrivateKey: readSecret('NEXUS_DISCORD_RELAY_PRIVATE_KEY') ?? '',
     connectionId: process.env.NEXUS_DISCORD_CONNECTION_ID ?? '',
     connectionGeneration: process.env.NEXUS_DISCORD_CONNECTION_GENERATION ?? '1',
     relayProtocolVersion: process.env.NEXUS_DISCORD_RELAY_PROTOCOL ?? '2',
     relayKeyId: process.env.NEXUS_DISCORD_RELAY_KEY_ID ?? '',
     relayCurrentKeyId: process.env.NEXUS_DISCORD_RELAY_CURRENT_KEY_ID ?? '',
     relayNextKeyId: process.env.NEXUS_DISCORD_RELAY_NEXT_KEY_ID ?? '',
-    relayNextPrivateKey: process.env.NEXUS_DISCORD_RELAY_NEXT_PRIVATE_KEY ?? '',
+    relayNextPrivateKey: readSecret('NEXUS_DISCORD_RELAY_NEXT_PRIVATE_KEY') ?? '',
     capabilities: parseJsonObject(process.env.NEXUS_DISCORD_CAPABILITIES_JSON),
   },
   shared: {
@@ -89,5 +90,11 @@ export const config = {
   build: {
     commit: safeIdentifier(process.env.BUILD_COMMIT),
     release: safeIdentifier(process.env.NEXUS_RELEASE_ID),
+  },
+  component: {
+    id: 'nexus-discord',
+    contractVersion: 1,
+    configurationReady: true,
+    enabled: process.env.NEXUS_COMPONENT_ENABLED !== 'false',
   },
 };

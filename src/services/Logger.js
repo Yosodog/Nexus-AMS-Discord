@@ -1,4 +1,5 @@
 import util from 'util';
+import fs from 'node:fs';
 
 const LEVELS = Object.freeze({ DEBUG: 10, INFO: 20, WARN: 30, ERROR: 40 });
 const SENSITIVE_KEY = /token|secret|password|authorization|cookie|credential|api.?key|lease/i;
@@ -93,11 +94,25 @@ export class Logger {
       'DISCORD_BOT_TOKEN',
       'NEXUS_API_KEY',
       'NEXUS_DISCORD_RELAY_PRIVATE_KEY',
+      'NEXUS_DISCORD_RELAY_NEXT_PRIVATE_KEY',
     ];
 
-    return secretKeys
+    const values = secretKeys
       .map((key) => process.env[key])
       .filter((value) => Boolean(value))
       .map((value) => String(value));
+
+    secretKeys.forEach((key) => {
+      const filePath = process.env[`${key}_FILE`];
+      if (!filePath) return;
+      try {
+        const value = fs.readFileSync(filePath, 'utf8').trim();
+        if (value) values.push(value);
+      } catch {
+        // Configuration validation reports missing credentials generically.
+      }
+    });
+
+    return values;
   }
 }

@@ -1,0 +1,46 @@
+[Unit]
+Description=Nexus AMS Discord
+Documentation=https://github.com/Yosodog/Nexus-AMS-Discord
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nexus-discord
+Group=nexus-discord
+WorkingDirectory=/opt/nexus/nexus-discord/current
+EnvironmentFile=/etc/nexus/nexus-discord/environment
+Environment=NODE_ENV=production
+Environment=NODE_OPTIONS=
+Environment=PATH=/usr/bin:/bin
+Environment=PROCESS_HEALTH_FILE=/var/lib/nexus/nexus-discord/process-health.json
+ExecStart=/usr/bin/node /opt/nexus/nexus-discord/current/src/bot.js
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=320s
+KillSignal=SIGTERM
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+ReadWritePaths=/var/lib/nexus/nexus-discord
+LimitNOFILE=8192
+MemoryMax=768M
+TasksMax=256
+
+[Install]
+WantedBy=multi-user.target

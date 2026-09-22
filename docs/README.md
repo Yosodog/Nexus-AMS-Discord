@@ -2,6 +2,13 @@
 
 Choose the guide that matches what you are trying to do.
 
+On a supported local Nexus Setup installation, the shortest path is to create
+and invite a dedicated Discord application, then run
+`nexus component install discord` or use **Admin → Settings → Software**. Setup
+handles protected credentials, the service account, the matching release, and
+guild command registration. Use the manual self-hosting guide below for a
+separately operated bot or a container deployment.
+
 | What you want to do | Guide |
 | --- | --- |
 | Add the Nexus hosted bot to an alliance server | [Invite the hosted bot](invite-hosted-bot.md) |

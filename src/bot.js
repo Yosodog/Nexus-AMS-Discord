@@ -40,7 +40,15 @@ if (config.discord.deploymentMode === CONNECTION_MODES.DEDICATED) {
 }
 
 // Validate critical configuration before bootstrapping.
-validateEnv(requiredEnv);
+validateEnv(requiredEnv, undefined, {
+  values: {
+    ...process.env,
+    DISCORD_BOT_TOKEN: config.discord.token,
+    NEXUS_API_KEY: config.nexusApi.apiKey,
+    NEXUS_DISCORD_RELAY_PRIVATE_KEY: config.nexusApi.discordRelayPrivateKey,
+    NEXUS_DISCORD_RELAY_NEXT_PRIVATE_KEY: config.nexusApi.relayNextPrivateKey,
+  },
+});
 
 const logger = new Logger('Bot');
 
@@ -346,6 +354,8 @@ export const bootstrap = async () => {
         : {}),
     }),
     logger: new Logger('ProcessHealth'),
+    configurationReady: config.component.configurationReady,
+    enabled: config.component.enabled,
   });
 
   await processHealth.start();

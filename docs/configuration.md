@@ -1,5 +1,11 @@
 # Configuration reference
 
+For a local installation managed by Nexus Setup, supply the bot token,
+application ID, and guild ID through `nexus component install discord` or the
+Admin Software page. Setup generates the internal API credential and relay
+identity and stores secret values in protected credential files. Do not edit
+the managed environment file to follow the manual examples below.
+
 The bot and Nexus use different variable names for the same connection. Keep both `.env` files open while you configure them, and check every matching value before starting the bot.
 
 Never commit either `.env` file. The repository ignores it by default.
@@ -150,6 +156,22 @@ See [Operate the shared bot](shared-hosting.md) before using these settings.
 | `PROCESS_HEALTH_STALE_AFTER_MS` | `45000` | Maximum heartbeat age accepted by the health command. |
 | `BUILD_COMMIT` | `unknown` | Commit or image revision written to health metadata. |
 | `NEXUS_RELEASE_ID` | `unknown` | Matching Nexus release identifier written to health metadata. |
+
+Secrets may be supplied through root-owned credential files instead of the
+environment. A configured file is authoritative and takes precedence over its
+environment counterpart:
+
+| File setting | Secret |
+| --- | --- |
+| `DISCORD_BOT_TOKEN_FILE` | Discord bot token. |
+| `NEXUS_API_KEY_FILE` | Nexus API key. |
+| `NEXUS_DISCORD_RELAY_PRIVATE_KEY_FILE` | Current relay-v2 Ed25519 private key. |
+| `NEXUS_DISCORD_RELAY_NEXT_PRIVATE_KEY_FILE` | Optional next relay-v2 private key. |
+
+The managed systemd unit loads these files as systemd credentials and exposes
+only their paths to Node. Keep the files root-owned/readable by
+`nexus-discord`; never put secret values in unit arguments, release metadata,
+health snapshots, or logs.
 
 ## Settings that must match
 

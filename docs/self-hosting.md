@@ -4,6 +4,15 @@ Use this guide when you want to run your own Discord application for one Nexus i
 
 You do not need Nexus Cloud for this setup.
 
+If Nexus Setup manages Core and Discord on the same host, use the simpler
+managed path: create the Discord application and invite it using steps 2–5
+below, then run `nexus component install discord` or open
+**Admin → Settings → Software**. The managed installer prompts only for the bot
+token, application ID, and guild ID; it creates the internal credential and
+relay key, installs a dedicated service, and registers guild slash commands.
+Do not also run the manual `.env`/`npm start` instructions on that host. The
+remaining steps describe independent/manual and container deployments.
+
 ## Before you start
 
 You need:
@@ -227,6 +236,13 @@ docker compose down --timeout 320
 Do not add a `ports` mapping. The bot needs outbound Discord and Nexus access but accepts no inbound traffic.
 
 ## Updating the bot
+
+For a Nexus Setup-managed bot, run `nexus update` or start the update from the
+Admin Software page. The updater applies every intermediate stable Nexus tag
+and updates all installed local components together. It registers the guild
+commands after a successful Discord activation, and code rollback re-registers
+the previous command set. It does not create a database backup or reverse
+migrations. The manual sequence below is for deployments outside Nexus Setup.
 
 Before an update:
 

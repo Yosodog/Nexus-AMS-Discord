@@ -2,7 +2,12 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { HEALTH_SCHEMA_VERSION, SERVICE_NAME } from '../processHealthContract.js';
+import {
+  COMPONENT_CONTRACT_VERSION,
+  COMPONENT_ID,
+  HEALTH_SCHEMA_VERSION,
+  SERVICE_NAME,
+} from '../processHealthContract.js';
 
 const require = createRequire(import.meta.url);
 const packageMetadata = require('../../package.json');
@@ -33,6 +38,8 @@ export class ProcessHealth {
     queueStatus,
     scopeStatus,
     logger,
+    configurationReady = true,
+    enabled = true,
     now = () => new Date(),
     writeSnapshot = writeHealthSnapshot,
     setIntervalFn = setInterval,
@@ -45,6 +52,8 @@ export class ProcessHealth {
     this.queueStatus = queueStatus;
     this.scopeStatus = scopeStatus;
     this.logger = logger;
+    this.configurationReady = configurationReady;
+    this.enabled = enabled;
     this.now = now;
     this.writeSnapshot = writeSnapshot;
     this.setIntervalFn = setIntervalFn;
@@ -94,10 +103,25 @@ export class ProcessHealth {
   }
 
   #snapshot() {
+    const queue = this.queueStatus();
+    const queueDegraded = queue?.started === false
+      || queue?.stopped === true
+      || queue?.lease_healthy === false;
+    const status = this.state === 'ready' && queueDegraded ? 'degraded' : this.state;
+    const healthState = status === 'ready' ? 'healthy' : status;
+
     return {
       schema_version: HEALTH_SCHEMA_VERSION,
+      contract_version: COMPONENT_CONTRACT_VERSION,
+      component_id: COMPONENT_ID,
       service: SERVICE_NAME,
-      status: this.state,
+      status,
+      runtime_state: this.state,
+      health_state: healthState,
+      reachable: !['stopped', 'failed'].includes(this.state),
+      installed: true,
+      enabled: this.enabled,
+      configuration_ready: this.configurationReady,
       pid: process.pid,
       started_at: this.startedAt,
       heartbeat_at: this.now().toISOString(),
@@ -107,8 +131,10 @@ export class ProcessHealth {
         commit: this.build.commit,
         release: this.build.release,
       },
+      version: packageMetadata.version,
+      release_id: this.build.release,
       scope: this.scopeStatus(),
-      queue: this.queueStatus(),
+      queue,
       ...(this.shutdown ? { shutdown: this.shutdown } : {}),
     };
   }
