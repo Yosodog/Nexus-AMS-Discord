@@ -248,6 +248,9 @@ test('digest.v1 accepts at most 20 items', () => {
 });
 
 test('renderer manifest matches the canonical local registry', () => {
+  const digest = ALERT_RENDERER_MANIFEST.templates.find((template) => template.template_key === 'digest.v1');
+  assert.deepEqual(new Set(digest.event_keys), new Set(alertEventKeys));
+
   assert.deepEqual(alertRendererRegistry.verifyManifest(ALERT_RENDERER_MANIFEST), {
     valid: true,
     contract_version: 1,

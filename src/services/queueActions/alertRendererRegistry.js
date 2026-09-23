@@ -450,7 +450,7 @@ const DEFINITIONS = Object.freeze([
   {
     template_key: 'digest.v1',
     version: 1,
-    event_keys: [...MEMBER_EVENT_KEYS, ...WORKFLOW_EVENT_KEYS, ...OPERATIONAL_EVENT_KEYS, ...MILCOM_EVENT_KEYS],
+    event_keys: [...MEMBER_EVENT_KEYS, ...WORKFLOW_EVENT_KEYS, ...OPERATIONAL_EVENT_KEYS, ...MILCOM_EVENT_KEYS, ...RESOURCE_SHORTFALL_EVENT_KEYS],
     title: 'Nexus Alert Digest',
     tone: 'info',
     render: renderDigest,
