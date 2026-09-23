@@ -1103,6 +1103,20 @@ export class ApiService {
     return this.request(options, RetryMode.IDEMPOTENT);
   }
 
+  async reportApplicationMemberDeparture(discordUserId) {
+    const endpointUrl = new URL('/api/v1/discord/applications/member-departed', this.baseUrl).toString();
+    const data = { discord_user_id: discordUserId };
+    const options = {
+      method: 'post',
+      url: endpointUrl,
+      data,
+      headers: this.#serviceRelayHeaders('applications.member-departed', {
+        method: 'post', url: endpointUrl, data,
+      }),
+    };
+    return this.request(options, RetryMode.IDEMPOTENT);
+  }
+
   /**
    * Submit an intel report captured from Discord to Nexus.
    * @param {{ report: string, source?: string }} payload intel payload containing the raw in-game text

@@ -13,6 +13,7 @@ import { publishInitialConnections } from './services/connection/InitialConnecti
 import { FairScheduler } from './services/FairScheduler.js';
 import { loadCommands } from './commands/index.js';
 import { registerInteractionListener } from './listeners/interactionCreate.js';
+import { registerGuildMemberRemoveListener } from './listeners/guildMemberRemove.js';
 import { registerMessageListener } from './listeners/messageCreate.js';
 import { ApiService } from './services/ApiService.js';
 import { DiscordRelaySigner } from './services/DiscordRelaySigner.js';
@@ -326,6 +327,11 @@ export const bootstrap = async () => {
     statusService,
   };
   registerInteractionListener(client, client.commands, logger, runtimeContext, config.discord.guildId);
+  registerGuildMemberRemoveListener(client, new Logger('GuildMemberRemove'), {
+    connectionResolver,
+    applicationId: config.discord.clientId,
+    connectionServiceFactory: serviceFactory,
+  });
   registerMessageListener(
     client,
     baseApiService,

@@ -664,12 +664,13 @@ const syncRoles = async (command, runtime, guild, payload, accumulated) => {
   try {
     member = await guild.members.fetch(payload.application.discord_user_id.trim());
   } catch (error) {
+    if (Number(errorCode(error)) === 10007 && desiredAdds.length === 0) return null;
     const classified = classifyError(error, 'member_unavailable');
     return failure(classified.reason === 'missing_discord_permission' ? classified.reason : 'member_unavailable', {
       retryable: classified.retryable,
     });
   }
-  if (!member) return failure('member_unavailable', { retryable: true });
+  if (!member) return desiredAdds.length === 0 ? null : failure('member_unavailable', { retryable: true });
   if (member.id !== undefined && `${member.id}`.trim() !== payload.application.discord_user_id.trim()) {
     return failure('wrong_member');
   }

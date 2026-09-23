@@ -23,6 +23,7 @@ export const V2_SERVICE_PROOF_ACTIONS = Object.freeze([
   'milcom.objectives.show',
   'milcom.objectives.attach-room',
   'applications.message',
+  'applications.member-departed',
   'intel.report',
 ]);
 

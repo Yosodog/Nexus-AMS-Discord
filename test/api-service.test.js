@@ -650,6 +650,12 @@ const endpointCases = [
     body: { discord_message_id: '789' }, relay: 'service', explicitBearer: true,
   },
   {
+    name: 'reportApplicationMemberDeparture',
+    invoke: (service) => service.reportApplicationMemberDeparture('423456789012345678'),
+    method: 'post', pathname: '/api/v1/discord/applications/member-departed',
+    body: { discord_user_id: '423456789012345678' }, relay: 'service',
+  },
+  {
     name: 'sendIntelReport',
     invoke: (service) => service.sendIntelReport({ report: 'intel' }),
     method: 'post', pathname: '/api/v1/discord/intel', body: { report: 'intel' }, relay: 'service', explicitBearer: true,

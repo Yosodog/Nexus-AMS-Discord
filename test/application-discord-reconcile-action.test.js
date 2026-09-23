@@ -453,6 +453,29 @@ test('rejects a channel whose guild metadata is missing', async () => {
   assert.equal(result.reason, 'wrong_guild_channel');
 });
 
+test('denied application reconciliation completes after the applicant leaves the guild', async () => {
+  let deleted = false;
+  const channel = makeChannel(CHANNEL_ID, { delete: async () => { deleted = true; } });
+  const runtimeData = makeRuntime({ channels: [channel] });
+  runtimeData.guild.members.fetch = async () => {
+    const error = new Error('Unknown Member');
+    error.code = 10007;
+    throw error;
+  };
+  const input = payload({
+    application: { state: 'denied' },
+    desired: {
+      channel: { mode: 'absent', channel_id: CHANNEL_ID, intro_messages: [] },
+      roles: { add: [], remove: [REMOVE_ROLE_ID] },
+    },
+  });
+
+  const result = await execute(commandFor(input), runtimeData.runtime);
+
+  assert.equal(result.success, true);
+  assert.equal(deleted, true);
+});
+
 test('rejects unknown and legacy-shaped durable checkpoints', async () => {
   const input = payload({ desired: { channel: { mode: 'unchanged', intro_messages: [] } } });
   const checkpoints = [
