@@ -128,6 +128,77 @@ test('PRIVATE_NOTIFICATION renders useful audit counts, details, tone, timestamp
   assert.equal(embed.footer, undefined);
 });
 
+test('PRIVATE_NOTIFICATION renders maxed war maps with escaped opponent details and delivery outcomes', async () => {
+  const action = queueActions.PRIVATE_NOTIFICATION;
+  const opponentName = 'Enemy *Bombers*';
+  const payload = {
+    contract_version: 1,
+    recipient_discord_id: USER_ID,
+    event_type: 'war_map_maxed',
+    notification_id: 'war-map-42-maxed',
+    subject: { type: 'war', id: 42, label: opponentName },
+    occurred_at: '2026-07-10T12:00:00Z',
+    deep_link_path: '/defense/war-stats',
+    summary: {
+      nation_id: 7,
+      opponent_name: opponentName,
+      current_maps: 12,
+      maximum_maps: 12,
+      notification_sequence: 1,
+    },
+  };
+  assert.deepEqual(action.validate(payload), { valid: true });
+  assert.deepEqual(action.validate({
+    ...payload,
+    subject: { ...payload.subject, type: 'nation' },
+  }), { valid: false, reason: 'invalid_notification_subject' });
+  assert.deepEqual(action.validate({
+    ...payload,
+    summary: { ...payload.summary, current_maps: '12' },
+  }), { valid: false, reason: 'invalid_notification_summary' });
+
+  let message;
+  const runtime = {
+    apiService: { baseUrl: 'https://nexus.example' },
+    logger: createLogger(),
+    canContinue: () => true,
+    resolveUser: async (id) => ({ id }),
+    sendDirectMessage: async (_user, _command, _step, outgoing) => {
+      message = outgoing;
+      return { id: 'dm-war-map' };
+    },
+  };
+  assert.deepEqual(await action.execute({ id: 'queue-war-map', payload }, runtime), {
+    success: true,
+    result: { delivery: 'delivered', discord_message_id: 'dm-war-map' },
+  });
+
+  const embed = message.embeds[0].toJSON();
+  assert.equal(embed.title, 'Military Action Points Maxed');
+  assert.equal(embed.color, 0xe67e22);
+  assert.ok(embed.description.includes('You have 12/12 military action points in your war against **Enemy \\*Bombers\\***.'));
+  assert.match(embed.description, /\*\*War ID:\*\* 42/);
+  assert.match(embed.description, /\[View member wars in Nexus\]\(https:\/\/nexus\.example\/defense\/war-stats\)/);
+  assert.equal(embed.url, 'https://nexus.example/defense/war-stats');
+  assert.equal(embed.timestamp, '2026-07-10T12:00:00.000Z');
+  assert.deepEqual(message.allowedMentions, { parse: [], repliedUser: false });
+
+  runtime.resolveUser = async () => null;
+  assert.deepEqual(await action.execute({ id: 'queue-war-map-unavailable', payload }, runtime), {
+    success: true,
+    result: { delivery: 'undeliverable', reason: 'user_unavailable' },
+  });
+
+  runtime.resolveUser = async (id) => ({ id });
+  runtime.sendDirectMessage = async () => {
+    throw Object.assign(new Error('DMs disabled'), { code: 50007 });
+  };
+  assert.deepEqual(await action.execute({ id: 'queue-war-map-failed', payload }, runtime), {
+    success: true,
+    result: { delivery: 'undeliverable', reason: 'dm_failed' },
+  });
+});
+
 test('channel alert action validators distinguish absent, malformed, and valid targets', () => {
   for (const name of ['WAR_ALERT', 'ALLIANCE_DEPARTURE', 'INACTIVITY_ALERT']) {
     assert.deepEqual(queueActions[name].validate(null), { valid: false, reason: 'invalid_payload' });

@@ -21,11 +21,39 @@ const EVENT_TEMPLATES = Object.freeze([
   { prefix: 'audit_', title: 'Audit Findings Need Attention', label: 'audit findings', tone: 'warning' },
   { prefix: 'watchlist_', title: 'Watchlist Alert', label: 'watchlist', tone: 'warning' },
   { prefix: 'blockade_relief_', title: 'Blockade Relief', label: 'blockade relief request', tone: 'military' },
+  { prefix: 'war_map_', title: 'Military Action Points Maxed', label: 'war', tone: 'military' },
 ]);
 
 const safeScalar = (value) => ['string', 'number', 'boolean'].includes(typeof value)
   && `${value}`.length <= 200 && !/[\r\n]/.test(`${value}`);
 const templateFor = (eventType) => EVENT_TEMPLATES.find(({ prefix }) => eventType.startsWith(prefix));
+const isWarMapEvent = (eventType) => eventType.startsWith('war_map_');
+const isPositiveInteger = (value) => Number.isSafeInteger(value) && value > 0;
+const isNonNegativeInteger = (value) => Number.isSafeInteger(value) && value >= 0;
+
+const validateWarMapPayload = (payload) => {
+  if (payload.subject.type !== 'war'
+    || !isPositiveInteger(payload.subject.id)
+    || typeof payload.subject.label !== 'string'
+    || !safeScalar(payload.subject.label)
+    || payload.subject.label.trim() === '') {
+    return { valid: false, reason: 'invalid_notification_subject' };
+  }
+
+  const { summary } = payload;
+  if (!isPositiveInteger(summary.nation_id)
+    || typeof summary.opponent_name !== 'string'
+    || !safeScalar(summary.opponent_name)
+    || summary.opponent_name.trim() === ''
+    || !isPositiveInteger(summary.current_maps)
+    || !isPositiveInteger(summary.maximum_maps)
+    || summary.current_maps !== summary.maximum_maps
+    || !isNonNegativeInteger(summary.notification_sequence)) {
+    return { valid: false, reason: 'invalid_notification_summary' };
+  }
+
+  return { valid: true };
+};
 
 const summaryValue = (key, value) => {
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
@@ -93,8 +121,15 @@ export const validate = (payload) => {
     || Object.values(payload.summary).some((value) => value !== null && !safeScalar(value))) {
     return { valid: false, reason: 'invalid_notification_summary' };
   }
+  if (isWarMapEvent(payload.event_type)) return validateWarMapPayload(payload);
   return { valid: true };
 };
+
+const warMapDescription = (payload, deepLink) => [
+  `You have ${formatNumber(payload.summary.current_maps, { maximumFractionDigits: 0 })}/${formatNumber(payload.summary.maximum_maps, { maximumFractionDigits: 0 })} military action points in your war against **${escapeMarkdown(payload.summary.opponent_name)}**.`,
+  `**War ID:** ${escapeMarkdown(payload.subject.id)}`,
+  deepLink ? markdownLink('View member wars in Nexus', deepLink) : null,
+].filter(Boolean).join('\n');
 
 export const execute = async (command, runtime) => {
   if (!runtime.canContinue()) return { success: false, reason: 'lease_lost' };
@@ -105,6 +140,7 @@ export const execute = async (command, runtime) => {
   }
   const template = templateFor(payload.event_type);
   const isAudit = payload.event_type.startsWith('audit_');
+  const isWarMap = isWarMapEvent(payload.event_type);
   const status = typeof payload.summary.status === 'string' ? payload.summary.status : 'updated';
   const label = typeof payload.subject?.label === 'string' && payload.subject.label.length <= 80
     ? payload.subject.label
@@ -113,7 +149,7 @@ export const execute = async (command, runtime) => {
     || payload.event_type.startsWith('blockade_relief_');
   const event = showsEvent && typeof payload.summary.event === 'string' ? payload.summary.event : null;
   const deepLink = resolveDeepLink(runtime.apiService?.baseUrl, payload.deep_link_path);
-  const description = isAudit ? auditDescription(payload, label, deepLink) : [
+  const description = isWarMap ? warMapDescription(payload, deepLink) : isAudit ? auditDescription(payload, label, deepLink) : [
     `**${escapeMarkdown(label)}**`,
     statusLabel(status) ?? '• Updated',
     event ? escapeMarkdown(event) : null,
@@ -124,7 +160,7 @@ export const execute = async (command, runtime) => {
   const embed = buildEmbed({
     title: template.title,
     description,
-    tone: statusTone(status, template.tone),
+    tone: isWarMap ? template.tone : statusTone(status, template.tone),
     url: deepLink,
   });
   if (!Number.isNaN(occurredAt.getTime())) embed.setTimestamp(occurredAt);
