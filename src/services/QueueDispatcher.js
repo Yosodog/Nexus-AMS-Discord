@@ -10,6 +10,10 @@ export class QueueDispatcher {
     this.runtime = new QueueActionRuntime({ client, logger, guildId, apiService });
   }
 
+  enableAlertLane() {
+    this.alertLaneEnabled = true;
+  }
+
   /**
    * Validate and execute one queue action.
    * @param {any} command queue item returned by Nexus

@@ -77,6 +77,18 @@ export class QueueWorker {
     this.#scheduleNextPoll(0);
   }
 
+  /**
+   * Enables a lane that was disabled at construction. If the worker was
+   * already started in its disabled state, polling begins immediately.
+   */
+  enable() {
+    if (this.enabled || this.stopped) return;
+    this.enabled = true;
+    if (!this.started) return;
+    this.started = false;
+    this.start();
+  }
+
   getHealthSnapshot() {
     return {
       started: this.started,

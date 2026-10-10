@@ -15,13 +15,14 @@ import { loadCommands } from './commands/index.js';
 import { registerInteractionListener } from './listeners/interactionCreate.js';
 import { registerGuildMemberRemoveListener } from './listeners/guildMemberRemove.js';
 import { registerMessageListener } from './listeners/messageCreate.js';
+import { AlertManifestMonitor } from './services/AlertManifestMonitor.js';
 import { ApiService } from './services/ApiService.js';
 import { DiscordRelaySigner } from './services/DiscordRelaySigner.js';
 import { Logger } from './services/Logger.js';
 import { ProcessHealth } from './services/ProcessHealth.js';
 import { QueueDispatcher } from './services/QueueDispatcher.js';
 import { QueueWorker } from './services/QueueWorker.js';
-import { buildQueueWorkerDefinitions } from './services/QueueWorkerDefinitions.js';
+import { QUEUE_LANES, buildQueueWorkerDefinitions } from './services/QueueWorkerDefinitions.js';
 import { DiscordStatusService } from './services/status/DiscordStatusService.js';
 import { alertRendererRegistry } from './services/queueActions/alertRendererRegistry.js';
 import { config } from './utils/config.js';
@@ -248,34 +249,14 @@ export const bootstrap = async () => {
   }
   const baseApiService = dedicatedConnection ? serviceFactory(dedicatedConnection) : null;
 
-  let alertManifestResponse = null;
-  let alertManifestStatus = config.discord.deploymentMode === CONNECTION_MODES.OFFICIAL_SHARED
-    ? { valid: false, reason: 'per_connection_manifest_required' }
-    : { valid: false, reason: 'alert_manifest_unverified' };
-  if (baseApiService) {
-    try {
-      alertManifestResponse = await baseApiService.getAlertRendererManifest();
-      alertManifestStatus = alertRendererRegistry.verifyManifest(alertManifestResponse);
-      if (!alertManifestStatus.valid) {
-        logger.error('Alert lane disabled because the renderer manifest did not verify', alertManifestStatus);
-      } else {
-        logger.info('Alert renderer manifest verified', {
-          contractVersion: alertManifestStatus.contract_version,
-        });
-      }
-    } catch (error) {
-      logger.error('Alert lane disabled because the renderer manifest could not be fetched', {
-        status: error?.response?.status ?? null,
-        errorCode: error?.code ?? null,
-      });
-    }
-  }
+  const alertManifestMonitor = baseApiService
+    ? new AlertManifestMonitor({
+      apiService: baseApiService,
+      registry: alertRendererRegistry,
+      logger,
+    })
+    : null;
 
-  const manifestCapabilities = alertManifestResponse?.capabilities
-    ?? alertManifestResponse?.data?.capabilities
-    ?? alertManifestResponse?.manifest?.capabilities
-    ?? alertManifestResponse?.data?.manifest?.capabilities
-    ?? {};
   const dispatcherFactory = (connection = dedicatedConnection) => {
     if (!connection) return null;
     const key = runtimeConnectionKey(connection);
@@ -283,7 +264,7 @@ export const bootstrap = async () => {
     const connectionApi = serviceFactory(connection);
     const connectionAlertEnabled = connection.mode === CONNECTION_MODES.OFFICIAL_SHARED
       ? (connection.capabilities?.supported_queue_actions ?? []).includes('ALERT_DELIVERY_V1')
-      : alertManifestStatus.valid;
+      : Boolean(alertManifestMonitor?.status.valid);
     const dispatcher = new QueueDispatcher({
       client,
       logger: new Logger(`QueueDispatcher:${connection.guildId}`),
@@ -294,10 +275,10 @@ export const bootstrap = async () => {
     dispatcherCache.set(key, dispatcher);
     return dispatcher;
   };
-  const baseDispatcher = dispatcherFactory(dedicatedConnection);
 
   const alertLanesEnabled = config.discord.deploymentMode === CONNECTION_MODES.OFFICIAL_SHARED
-    || (alertManifestStatus.valid && manifestCapabilities.queue_lanes === true);
+    || Boolean(await alertManifestMonitor?.start());
+  const baseDispatcher = dispatcherFactory(dedicatedConnection);
   const workerDefinitions = buildQueueWorkerDefinitions({ alertLanesEnabled });
   const queueWorkers = workerDefinitions.map(({ lane, enabled }) => new QueueWorker({
     apiService: baseApiService,
@@ -312,6 +293,14 @@ export const bootstrap = async () => {
     apiServiceFactory: serviceFactory,
     dispatcherFactory,
   }));
+  if (alertManifestMonitor) {
+    alertManifestMonitor.onReady = () => {
+      baseDispatcher?.enableAlertLane();
+      queueWorkers
+        .filter(({ lane }) => lane !== QUEUE_LANES.SIDE_EFFECTS)
+        .forEach((worker) => worker.enable());
+    };
+  }
   const statusService = new DiscordStatusService({
     client,
     connectionResolver,
@@ -376,6 +365,7 @@ export const bootstrap = async () => {
     shutdownSignal = signal;
     logger.info('Graceful shutdown started', { signal });
     await publicationManager?.stop();
+    await alertManifestMonitor?.stop();
     let healthWritten = true;
     try {
       await processHealth.markStopping(signal);
