@@ -123,7 +123,7 @@ test('PRIVATE_NOTIFICATION renders useful audit counts, details, tone, timestamp
   assert.match(embed.description, /3 active audit findings need attention/);
   assert.match(embed.description, /Warchest below requirement/);
   assert.match(embed.description, /Overdue:\*\* 1/);
-  assert.match(embed.description, /Review audit findings in Nexus/);
+  assert.match(embed.description, /\[Review audit findings\]\(/);
   assert.equal(embed.timestamp, '2026-07-10T12:00:00.000Z');
   assert.equal(embed.footer, undefined);
 });
@@ -178,7 +178,7 @@ test('PRIVATE_NOTIFICATION renders maxed war maps with escaped opponent details 
   assert.equal(embed.color, 0xe67e22);
   assert.ok(embed.description.includes('You have 12/12 military action points in your war against **Enemy \\*Bombers\\***.'));
   assert.match(embed.description, /\*\*War ID:\*\* 42/);
-  assert.match(embed.description, /\[View member wars in Nexus\]\(https:\/\/nexus\.example\/defense\/war-stats\)/);
+  assert.match(embed.description, /\[View member wars\]\(https:\/\/nexus\.example\/defense\/war-stats\)/);
   assert.equal(embed.url, 'https://nexus.example/defense/war-stats');
   assert.equal(embed.timestamp, '2026-07-10T12:00:00.000Z');
   assert.deepEqual(message.allowedMentions, { parse: [], repliedUser: false });

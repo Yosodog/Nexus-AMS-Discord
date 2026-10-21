@@ -5,7 +5,7 @@ import { replyError } from '../utils/commandSupport.js';
 /** Permanent compatibility alias for the canonical /applications denial flow. */
 export const data = new SlashCommandBuilder()
   .setName('deny')
-  .setDescription('Deny an applicant through the Nexus application workflow.')
+  .setDescription('Deny an applicant through the application workflow.')
   .addUserOption((option) => option
     .setName('user')
     .setDescription('Applicant to deny')

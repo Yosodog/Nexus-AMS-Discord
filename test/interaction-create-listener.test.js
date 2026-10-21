@@ -55,7 +55,7 @@ test('interaction listener dispatches a user context command through its Nexus c
   };
   registerInteractionListener(
     client,
-    new Map([['View Nexus identity', {
+    new Map([['View member identity', {
       connectionCommandName: 'who',
       execute: async () => { executed = true; },
     }]]),
@@ -72,7 +72,7 @@ test('interaction listener dispatches a user context command through its Nexus c
     },
   );
   await client.handlers.get(Events.InteractionCreate)({
-    commandName: 'View Nexus identity',
+    commandName: 'View member identity',
     guildId: connection.guildId,
     user: { id: '223456789012345678' },
     isChatInputCommand: () => false,

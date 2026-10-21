@@ -4,7 +4,7 @@ import { nationMessage, shareButton } from '../utils/directoryUi.js';
 
 export const data = new SlashCommandBuilder()
   .setName('nation')
-  .setDescription('View a public-safe nation summary from Nexus.')
+  .setDescription('View a public-safe nation summary.')
   .addStringOption((option) => option
     .setName('nation')
     .setDescription('Nation name, leader, or ID.')
@@ -64,7 +64,7 @@ export const button = async (interaction, context) => {
       actorFromInteraction(interaction, 'nation'),
       nationId,
     );
-    if (nation.shareable !== true) throw new TypeError('Nexus did not authorize this public projection.');
+    if (nation.shareable !== true) throw new TypeError('This projection is not authorized for public sharing.');
     await interaction.followUp({ ...nationMessage(nation), ephemeral: false });
     await interaction.editReply({ components: [] });
   } catch (error) {

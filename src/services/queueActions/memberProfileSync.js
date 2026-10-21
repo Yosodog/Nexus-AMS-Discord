@@ -393,7 +393,7 @@ export const execute = async (command, runtime) => {
     if (typeof member.setNickname !== 'function') return failure('nickname_update_unavailable');
     const failed = await mutate(
       runtime,
-      () => member.setNickname(payload.desired.nickname, 'Nexus AMS member profile synchronization'),
+      () => member.setNickname(payload.desired.nickname, 'Member profile synchronization'),
       'update MEMBER_PROFILE_SYNC nickname',
       'nickname_update_failed',
     );
@@ -424,7 +424,7 @@ export const execute = async (command, runtime) => {
     }
     const failed = await mutate(
       runtime,
-      () => member.roles.add(pendingAdds, 'Nexus AMS member profile synchronization'),
+      () => member.roles.add(pendingAdds, 'Member profile synchronization'),
       'add MEMBER_PROFILE_SYNC roles',
       'role_add_failed',
     );
@@ -453,7 +453,7 @@ export const execute = async (command, runtime) => {
     }
     const failed = await mutate(
       runtime,
-      () => member.roles.remove(pendingRemoves, 'Nexus AMS member profile synchronization'),
+      () => member.roles.remove(pendingRemoves, 'Member profile synchronization'),
       'remove MEMBER_PROFILE_SYNC roles',
       'role_remove_failed',
     );

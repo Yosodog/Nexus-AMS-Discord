@@ -102,7 +102,7 @@ test('/work queue renders partial Nexus Operations data and forwards supported f
     type: 'loans', priority: 'p1', urgency: 'urgent', freshness: 'fresh', blocked: true, page: 2, per_page: 10,
   });
   const embed = embedJson(subject.edits[0]);
-  assert.equal(embed.title, 'Nexus Staff Work Queue');
+  assert.equal(embed.title, 'Staff Work Queue');
   assert.match(embed.description, /Applications could not be refreshed/);
   assert.match(embed.fields[0].value, /Awaiting verified documents/);
   assert.match(embed.fields[0].value, /https:\/\/nexus\.example\/admin\/loans\/42/);

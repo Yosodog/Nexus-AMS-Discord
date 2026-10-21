@@ -13,6 +13,7 @@ import {
 } from '../src/utils/commandSupport.js';
 import {
   allianceUrl,
+  appNameFrom,
   buildEmbed,
   buildPlainMessages,
   cleanText,
@@ -23,6 +24,7 @@ import {
   formatNumber,
   formatPercent,
   formatResources,
+  inAppLabel,
   markdownLink,
   nationUrl,
   pluralize,
@@ -207,7 +209,7 @@ test('embed collection links are placed in field values instead of unsupported f
   const embed = embedJson(payload);
 
   assert.doesNotMatch(embed.fields[0].name, /\]\(/);
-  assert.match(embed.fields[0].value, /\[Open request in Nexus\]\(https:\/\/nexus\.example\/requests\/7\)/);
+  assert.match(embed.fields[0].value, /\[Open request\]\(https:\/\/nexus\.example\/requests\/7\)/);
 });
 
 test('shared formatters produce readable values and reject unsafe links', () => {
@@ -339,6 +341,68 @@ test('collection support handles API envelopes, remote pages, empty states, and 
     editReply: async (payload) => { edited = payload; },
   }, { code: 'FEATURE_DISABLED' }, 'Feature Unavailable');
   assert.equal(embedJson(edited).title, 'Feature Unavailable');
+});
+
+test('app name helpers read Core meta and fall back to name-free labels', () => {
+  assert.equal(appNameFrom({ appName: ' Rose Command ' }), 'Rose Command');
+  assert.equal(appNameFrom({ app_name: 'Lily Ops' }), 'Lily Ops');
+  assert.equal(appNameFrom({ meta: { app_name: 'Iris' } }), 'Iris');
+  assert.equal(appNameFrom('Tulip'), 'Tulip');
+  for (const missing of [null, undefined, {}, { appName: '   ' }, { app_name: 42 }, '']) {
+    assert.equal(appNameFrom(missing), null);
+  }
+  assert.equal(appNameFrom('x'.repeat(150)).length, 100);
+  assert.equal(inAppLabel('Open request', 'Rose Command'), 'Open request in Rose Command');
+  assert.equal(inAppLabel('Open request', null), 'Open request');
+
+  const payload = collectionMessage({
+    title: 'Your Requests',
+    collection: normalizeCollection([{ id: 7, type: 'war_aid', status: 'pending', deep_link_path: '/requests/7' }]),
+    commandName: 'requests',
+    userId: '123456789012345678',
+    variant: 'request',
+    baseUrl: 'https://nexus.example',
+    appName: 'Rose_Command',
+  });
+  assert.match(
+    embedJson(payload).fields[0].value,
+    /\[Open request in Rose\\_Command\]\(https:\/\/nexus\.example\/requests\/7\)/,
+  );
+});
+
+test('error copy names the deployment when Core reports it and stays name-free otherwise', async () => {
+  assert.equal(
+    errorMessage({ code: 'DISCORD_ACCOUNT_NOT_LINKED', appName: 'Rose Command' }),
+    'Link your Discord account in Rose Command before using this command.',
+  );
+  assert.equal(
+    errorMessage({ code: 'DISCORD_ACCOUNT_NOT_LINKED' }),
+    'Link your Discord account with /verify before using this command.',
+  );
+  assert.equal(
+    errorMessage({ message: 'x'.repeat(301), appName: 'Rose Command' }),
+    'Rose Command is unavailable right now. Please try again later.',
+  );
+  assert.equal(
+    errorMessage({ message: 'x'.repeat(301) }),
+    'The service is unavailable right now. Please try again later.',
+  );
+
+  let replied = null;
+  await replyError({
+    deferred: false,
+    replied: false,
+    reply: async (payload) => { replied = payload; },
+  }, { code: 'DUPLICATE_REQUEST', appName: 'Rose Command' });
+  assert.equal(embedJson(replied).footer.text, 'Open your existing request in Rose Command before starting another one.');
+
+  await replyError({
+    deferred: false,
+    replied: false,
+    reply: async (payload) => { replied = payload; },
+  }, { code: 'FORBIDDEN' });
+  assert.equal(embedJson(replied).footer.text, 'If you believe you should have access, contact an administrator.');
+  assert.doesNotMatch(JSON.stringify(embedJson(replied)), /Nexus/);
 });
 
 test('interaction sessions evict the oldest controls when the store reaches its bound', () => {

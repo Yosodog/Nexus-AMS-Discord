@@ -4,7 +4,7 @@ import {
   collectAmounts, handleResourceButton, handleWithdrawalDecision, resourcePickerPayload, showAmountModal,
 } from '../utils/resourceRequestUi.js';
 
-export const data = new SlashCommandBuilder().setName('withdraw').setDescription('Create and confirm a Nexus withdrawal.')
+export const data = new SlashCommandBuilder().setName('withdraw').setDescription('Create and confirm a bank withdrawal.')
   .addStringOption((option) => option.setName('account').setDescription('Source account').setRequired(true).setAutocomplete(true))
   .setDMPermission(false);
 

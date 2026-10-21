@@ -7,10 +7,12 @@ import {
 import { isDiscordSnowflake } from '../utils/boundaryValidators.js';
 import { actorFromInteraction, deferEphemeral, replyError } from '../utils/commandSupport.js';
 import {
+  appNameFrom,
   buildEmbed,
   cleanText,
   escapeMarkdown,
   formatDiscordTime,
+  inAppLabel,
   markdownLink,
   resolveDeepLink,
   safeUrl,
@@ -31,15 +33,15 @@ const STATES = Object.freeze({
 
 // This is a presentation allowlist, not an authorization list. Nexus remains authoritative.
 const LINK_LABELS = Object.freeze({
-  account: 'Open Nexus account',
+  account: 'Open account',
   alliance: 'Open alliance profile',
   application: 'Open application',
   audit: 'Open audit center',
-  help: 'Open Nexus help',
-  me: 'Open Nexus profile',
+  help: 'Open help',
+  me: 'Open profile',
   nation: 'Open nation profile',
-  profile: 'Open Nexus profile',
-  settings: 'Open Nexus settings',
+  profile: 'Open profile',
+  settings: 'Open settings',
   verification: 'Open verification',
   work: 'Open open work',
 });
@@ -52,7 +54,7 @@ const isNonNegativeInteger = (value) => Number.isInteger(value) && value >= 0;
 const isPositiveInteger = (value) => Number.isInteger(value) && value > 0;
 
 const invalidSummaryError = () => Object.assign(
-  new Error('Nexus returned an invalid account summary.'),
+  new Error('The API returned an invalid account summary.'),
   { code: 'VALIDATION_ERROR' },
 );
 
@@ -206,19 +208,19 @@ const renderLink = (baseUrl, label, value) => {
   return url ? markdownLink(label, url) : 'Link unavailable';
 };
 
-const renderIdentity = (baseUrl, identity) => [
+const renderIdentity = (baseUrl, identity, appName) => [
   `**Name:** ${safeText(identity.display_name)}`,
   `**Discord:** ${safeText(identity.discord_username)}`,
   `**Link state:** ${safeText(identity.link_state)}`,
   `**Linked:** ${formatDiscordTime(identity.linked_at)}`,
-  renderLink(baseUrl, 'Open profile in Nexus', identity.deep_link_path),
+  renderLink(baseUrl, inAppLabel('Open profile', appName), identity.deep_link_path),
 ].join('\n');
 
-const renderEntity = (baseUrl, entity, kind) => {
+const renderEntity = (baseUrl, entity, kind, appName) => {
   if (entity === null && kind === 'alliance') return 'No alliance';
   const lines = [`**#${entity.id} · ${safeText(entity.name)}**`];
   if (kind === 'nation') lines.push(`Leader: ${safeText(entity.leader_name)}`);
-  lines.push(renderLink(baseUrl, `Open ${kind} profile in Nexus`, entity.deep_link_path));
+  lines.push(renderLink(baseUrl, inAppLabel(`Open ${kind} profile`, appName), entity.deep_link_path));
   return lines.join('\n');
 };
 
@@ -255,17 +257,17 @@ const renderFreshness = (freshness) => [
   `Source updated: ${formatDiscordTime(freshness.source_updated_at)}`,
 ].join('\n');
 
-const renderLinks = (baseUrl, links) => Object.entries(links)
-  .map(([key, value]) => markdownLink(LINK_LABELS[key], sameOriginLink(baseUrl, value)))
+const renderLinks = (baseUrl, links, appName) => Object.entries(links)
+  .map(([key, value]) => markdownLink(inAppLabel(LINK_LABELS[key], appName), sameOriginLink(baseUrl, value)))
   .join('\n');
 
-const linkButtons = (baseUrl, links) => {
+const linkButtons = (baseUrl, links, appName) => {
   const buttons = Object.entries(links)
     .map(([key, value]) => {
       const url = sameOriginLink(baseUrl, value);
       if (!url || !hasOwn(LINK_LABELS, key)) return null;
       return new ButtonBuilder()
-        .setLabel(truncate(LINK_LABELS[key], 80))
+        .setLabel(truncate(inAppLabel(LINK_LABELS[key], appName), 80))
         .setStyle(ButtonStyle.Link)
         .setURL(url);
     })
@@ -302,14 +304,16 @@ const userActionButtons = (baseUrl, action) => {
   )];
 };
 
-const nonReadyMessage = (payload, state, baseUrl) => {
+const accountTitle = (appName) => `${appName ?? 'Your'} Account`;
+
+const nonReadyMessage = (payload, state, baseUrl, appName) => {
   const fields = [{ name: 'Status', value: safeText(STATES[state]) }];
   if (payload.user_action) {
     fields.push({
       name: 'Next step',
       value: `${safeText(payload.user_action.label)}\n${renderLink(
         baseUrl,
-        'Continue in Nexus',
+        inAppLabel('Continue', appName),
         payload.user_action.deep_link_path,
       )}`,
     });
@@ -317,7 +321,7 @@ const nonReadyMessage = (payload, state, baseUrl) => {
   const actions = userActionButtons(baseUrl, payload.user_action);
   return {
     embeds: [buildEmbed({
-      title: `Nexus Account · ${STATES[state]}`,
+      title: `${accountTitle(appName)} · ${STATES[state]}`,
       description: safeText(payload.message, 1_000),
       tone: state === 'disabled' ? 'danger' : 'warning',
       fields,
@@ -327,32 +331,32 @@ const nonReadyMessage = (payload, state, baseUrl) => {
   };
 };
 
-const readyMessage = (payload, baseUrl, interaction, sessions) => ({
+const readyMessage = (payload, baseUrl, interaction, sessions, appName) => ({
   embeds: [buildEmbed({
-    title: 'Nexus Account',
+    title: accountTitle(appName),
     description: safeText(payload.message, 1_000),
     tone: 'success',
     fields: [
-      { name: 'Identity', value: renderIdentity(baseUrl, payload.identity) },
-      { name: 'Nation', value: renderEntity(baseUrl, payload.nation, 'nation') },
-      { name: 'Alliance', value: renderEntity(baseUrl, payload.alliance, 'alliance') },
+      { name: 'Identity', value: renderIdentity(baseUrl, payload.identity, appName) },
+      { name: 'Nation', value: renderEntity(baseUrl, payload.nation, 'nation', appName) },
+      { name: 'Alliance', value: renderEntity(baseUrl, payload.alliance, 'alliance', appName) },
       { name: 'Capabilities', value: renderCapabilities(payload.capabilities) },
       { name: 'Open work', value: renderOpenWork(payload.open_work) },
       { name: 'Profile sync', value: renderProfileSync(payload.profile_sync) },
       { name: 'Freshness', value: renderFreshness(payload.freshness) },
-      { name: 'Nexus links', value: renderLinks(baseUrl, payload.links) },
+      { name: 'Links', value: renderLinks(baseUrl, payload.links, appName) },
     ],
   })],
   components: [
     ...profileSyncButton(payload.profile_sync, interaction, sessions),
-    ...linkButtons(baseUrl, payload.links),
+    ...linkButtons(baseUrl, payload.links, appName),
   ],
   allowedMentions: { parse: [] },
 });
 
 export const data = new SlashCommandBuilder()
   .setName('me')
-  .setDescription('View your Nexus account and link status.')
+  .setDescription('View your account and link status.')
   .setDMPermission(false);
 
 export const help = Object.freeze({
@@ -367,9 +371,10 @@ export const execute = async (interaction, context) => {
   try {
     const response = await context.apiService.getMySummary(actorFromInteraction(interaction, 'me'));
     const { payload, state } = validatePayload(response, context.apiService.baseUrl);
+    const appName = appNameFrom(context.apiService);
     await interaction.editReply(state === 'ready'
-      ? readyMessage(payload, context.apiService.baseUrl, interaction, context.sessions)
-      : nonReadyMessage(payload, state, context.apiService.baseUrl));
+      ? readyMessage(payload, context.apiService.baseUrl, interaction, context.sessions, appName)
+      : nonReadyMessage(payload, state, context.apiService.baseUrl, appName));
   } catch (error) {
     await replyError(interaction, error);
   }
@@ -417,7 +422,7 @@ const previewProfileSync = async (interaction, context) => {
   );
   const intentId = `${preview?.intent?.id ?? ''}`;
   if (!/^[a-zA-Z0-9]{64}$/.test(intentId)) {
-    throw new TypeError('Nexus returned an invalid profile synchronization confirmation token.');
+    throw new TypeError('The API returned an invalid profile synchronization confirmation token.');
   }
   const confirmId = context.sessions.create({
     commandName: 'me',
@@ -444,7 +449,7 @@ const previewProfileSync = async (interaction, context) => {
       title: 'Review Discord Profile Sync',
       tone: 'warning',
       description: truncate(
-        summary.description ?? 'Nexus calculated the Discord profile changes. Confirm to apply them.',
+        summary.description ?? 'The Discord profile changes were calculated. Confirm to apply them.',
         1_200,
       ),
       fields: [
@@ -462,10 +467,10 @@ const previewProfileSync = async (interaction, context) => {
           ? { name: 'Confirmation expires', value: formatDiscordTime(preview.intent.expires_at), inline: true }
           : null,
         warnings.length > 0
-          ? { name: 'Nexus guidance', value: safeText(warnings.join('\n'), 1_000), inline: false }
+          ? { name: 'Guidance', value: safeText(warnings.join('\n'), 1_000), inline: false }
           : null,
       ],
-      footer: 'Nexus will revalidate your membership, policy, installation, and permissions when you confirm.',
+      footer: 'Your membership, policy, installation, and permissions will be revalidated when you confirm.',
     })],
     components: [new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(confirmId).setLabel('Confirm profile sync').setStyle(ButtonStyle.Success),
@@ -479,7 +484,7 @@ export const button = async (interaction, context) => {
   await interaction.deferUpdate();
   try {
     if (!context.apiService || !context.sessions) {
-      throw new TypeError('The Nexus profile synchronization service is unavailable.');
+      throw new TypeError('The profile synchronization service is unavailable.');
     }
     if (context.session?.event === 'profile-sync-preview') {
       await previewProfileSync(interaction, context);
@@ -505,12 +510,12 @@ export const button = async (interaction, context) => {
       { intent_id: intentId },
     );
     if (result?.queued !== true || !result?.queue?.id || result?.profile_sync?.state !== 'pending') {
-      throw new TypeError('Nexus returned an invalid profile synchronization result.');
+      throw new TypeError('The API returned an invalid profile synchronization result.');
     }
     await interaction.editReply(statusMessage({
       title: 'Profile Sync Queued',
       tone: 'success',
-      description: 'Nexus queued the exact nickname and managed-role changes. Run /me again to check the result.',
+      description: 'The exact nickname and managed-role changes were queued. Run /me again to check the result.',
       fields: [
         result.queue.created_at
           ? { name: 'Queued', value: formatDiscordTime(result.queue.created_at), inline: true }

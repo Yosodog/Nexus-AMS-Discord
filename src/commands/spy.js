@@ -1,5 +1,6 @@
 import { SlashCommandBuilder } from 'discord.js';
 import { actorFromInteraction, collectionMessage, deferEphemeral, normalizeCollection, replyError } from '../utils/commandSupport.js';
+import { appNameFrom } from '../utils/discordUi.js';
 
 export const data = new SlashCommandBuilder()
   .setName('spy').setDescription('View spy operations.')
@@ -27,6 +28,7 @@ export const execute = async (interaction, context) => {
       variant: 'spy',
       description: 'Current intelligence assignments for your linked nation.',
       baseUrl: context.apiService.baseUrl,
+      appName: appNameFrom(context.apiService),
       pageSize: 3,
     }));
   } catch (error) { await replyError(interaction, error); }

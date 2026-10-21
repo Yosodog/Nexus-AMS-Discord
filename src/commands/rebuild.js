@@ -4,6 +4,7 @@ import {
   normalizeCollection, replyError,
 } from '../utils/commandSupport.js';
 import {
+  appNameFrom,
   buildEmbed, formatDiscordTime, formatMoney, resolveDeepLink, statusLabel, statusMessage, truncate,
 } from '../utils/discordUi.js';
 
@@ -31,7 +32,7 @@ export const execute = async (interaction, context) => {
       await interaction.editReply(collectionMessage({
         title: 'Your Rebuilding Requests', collection: normalizeCollection(result),
         empty: 'No rebuilding requests found.', commandName: 'rebuild', userId: interaction.user.id,
-        sessions: context.sessions, variant: 'request', baseUrl: context.apiService.baseUrl,
+        sessions: context.sessions, variant: 'request', baseUrl: context.apiService.baseUrl, appName: appNameFrom(context.apiService),
         description: 'Rebuilding support requests submitted by your nation, newest first.',
       }));
       return;
@@ -56,7 +57,7 @@ export const execute = async (interaction, context) => {
         title: 'Review Rebuilding Request',
         tone: 'warning',
         description: truncate(
-          preview?.summary ?? 'Nexus calculated an eligible rebuilding estimate. Review the destination before submitting.',
+          preview?.summary ?? 'An eligible rebuilding estimate was calculated. Review the destination before submitting.',
           1200,
         ),
         fields: [
@@ -76,7 +77,7 @@ export const execute = async (interaction, context) => {
             : null,
           payload.note ? { name: 'Note', value: truncate(payload.note, 500) } : null,
         ],
-        footer: 'The estimate is calculated by Nexus and will be revalidated when submitted.',
+        footer: 'The estimate will be revalidated when submitted.',
       })],
       components: [new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(confirmId).setLabel('Submit request').setStyle(ButtonStyle.Success),
@@ -107,7 +108,7 @@ export const button = async (interaction, context) => {
     await interaction.editReply(statusMessage({
       title: 'Rebuilding Request Submitted',
       tone: 'success',
-      description: truncate(result?.message ?? 'Nexus accepted the rebuilding request for staff review.', 1200),
+      description: truncate(result?.message ?? 'The rebuilding request was accepted for staff review.', 1200),
       fields: [
         result?.id !== undefined ? { name: 'Request', value: `#${result.id}`, inline: true } : null,
         { name: 'Destination account', value: accountLabel, inline: true },

@@ -1,4 +1,5 @@
 import { isDiscordSnowflake } from '../../utils/boundaryValidators.js';
+import { appNameFrom } from '../../utils/discordUi.js';
 import {
   alertErrorReceipt,
   isRetryableAlertClassification,
@@ -216,6 +217,7 @@ export const execute = async (command, runtime) => {
     guildId: runtime.guildId,
     destinationType: payload.destination.type,
     baseUrl: runtime.apiService?.baseUrl,
+    appName: appNameFrom(runtime.apiService),
     remainingItemsLink: resolveRelativeNexusLink(
       runtime.apiService?.baseUrl,
       payload.data?.remaining_items_path ?? payload.deep_link_path,

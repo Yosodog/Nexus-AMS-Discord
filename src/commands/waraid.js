@@ -6,6 +6,7 @@ import {
 import {
   collectAmounts, handleResourceButton, handleWarAidDecision, resourcePickerPayload, showAmountModal,
 } from '../utils/resourceRequestUi.js';
+import { appNameFrom } from '../utils/discordUi.js';
 
 export const data = new SlashCommandBuilder().setName('waraid').setDescription('Request or review war aid.')
   .addSubcommand((sub) => sub.setName('apply').setDescription('Apply for war aid.')
@@ -44,6 +45,7 @@ export const execute = async (interaction, context) => {
       variant: 'request',
       description: 'War aid requests submitted by your linked nation.',
       baseUrl: context.apiService.baseUrl,
+      appName: appNameFrom(context.apiService),
       pageSize: 4,
     }));
   } catch (error) { await replyError(interaction, error); }

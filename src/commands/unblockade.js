@@ -5,7 +5,7 @@ import {
   actorFromInteraction, collectionMessage, deferEphemeral, normalizeCollection, replyError,
 } from '../utils/commandSupport.js';
 import {
-  escapeMarkdown, formatDiscordTime, formatNumber, statusMessage, titleCase,
+  appNameFrom, escapeMarkdown, formatDiscordTime, formatNumber, statusMessage, titleCase,
 } from '../utils/discordUi.js';
 
 export const data = new SlashCommandBuilder()
@@ -78,7 +78,7 @@ const confirmationMessage = (action, state, confirmId, cancelId) => {
     tone: 'warning',
     description: copy.description,
     fields,
-    footer: 'Nexus will revalidate the live war, request state, identity, and permissions when you confirm.',
+    footer: 'The live war, request state, identity, and permissions will be revalidated when you confirm.',
     components: [new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(confirmId).setLabel(copy.label).setStyle(copy.style),
       new ButtonBuilder().setCustomId(cancelId).setLabel('Go back').setStyle(ButtonStyle.Secondary),
@@ -101,7 +101,7 @@ const mutationResultMessage = (action, result) => {
     title: action === 'claim' ? 'Relief Request Claimed' : 'Relief Request Cancelled',
     tone: action === 'claim' ? 'success' : 'warning',
     description: `Request **#${formatNumber(result?.id, { maximumFractionDigits: 0 })}** is now **${status}**.`,
-    footer: 'Recheck the live war state in Nexus before acting.',
+    footer: 'Recheck the live war state before acting.',
   });
 };
 
@@ -161,6 +161,7 @@ export const execute = async (interaction, context) => {
         ? 'Open relief requests your linked nation can currently claim.'
         : 'Blockade relief requests opened by your linked nation.',
       baseUrl: context.apiService.baseUrl,
+      appName: appNameFrom(context.apiService),
       pageSize: 3,
     }));
   } catch (error) {

@@ -63,6 +63,6 @@ test('/archivecounter never falls back to the current thread when Nexus has no c
   await executeArchivecounter(interaction, { logger: createLogger(), apiService, guildId: GUILD_ID });
 
   const description = embedJson(interaction.edits[0]).description;
-  assert.match(description, /archived in Nexus/i);
+  assert.match(description, /Counter \*\*#42\*\* archived\./);
   assert.match(description, /could not be completed automatically/i);
 });

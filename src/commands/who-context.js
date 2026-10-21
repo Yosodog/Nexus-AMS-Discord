@@ -3,7 +3,7 @@ import { actorFromInteraction, deferEphemeral, replyError } from '../utils/comma
 import { identityMessage } from '../utils/directoryUi.js';
 
 export const data = new ContextMenuCommandBuilder()
-  .setName('View Nexus identity')
+  .setName('View member identity')
   .setType(ApplicationCommandType.User)
   .setDMPermission(false);
 

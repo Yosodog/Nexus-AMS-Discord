@@ -161,7 +161,7 @@ test('/apply previews then confirms through Nexus without touching Discord guild
   assert.equal(calls[1].actor.discordUserId, USER_ID);
   assert.equal(calls[1].actor.discordInteractionId, buttonInteraction.id);
   assert.equal(embedJson(buttonInteraction.edits[0]).title, 'Application Submitted');
-  assert.match(embedJson(buttonInteraction.edits[0]).description, /preparing/i);
+  assert.match(embedJson(buttonInteraction.edits[0]).description, /being prepared/i);
   assert.deepEqual(buttonInteraction.edits[0].components, []);
 });
 

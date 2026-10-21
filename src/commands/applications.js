@@ -8,6 +8,7 @@ import {
 } from '../utils/commandSupport.js';
 import { isDiscordSnowflake } from '../utils/boundaryValidators.js';
 import {
+  appNameFrom,
   buildEmbed,
   escapeMarkdown,
   formatDiscordTime,
@@ -19,7 +20,7 @@ import {
   truncate,
 } from '../utils/discordUi.js';
 
-export const data = new SlashCommandBuilder().setName('applications').setDescription('View and manage Nexus applications.')
+export const data = new SlashCommandBuilder().setName('applications').setDescription('View and manage alliance applications.')
   .addSubcommand((sub) => sub.setName('status').setDescription('View your application status.'))
   .addSubcommand((sub) => sub.setName('queue').setDescription('View the staff application queue.')
     .addStringOption((option) => option.setName('filter').setDescription('Queue filter').addChoices(
@@ -127,7 +128,7 @@ const applicationStatusValue = (application, baseUrl) => {
     lines.push(markdownLink(truncate(nextAction.label, 100), nextUrl));
   } else {
     const fallbackUrl = sameOriginApplicationUrl(baseUrl, application?.deep_link_path);
-    if (fallbackUrl) lines.push(markdownLink('Open application in Nexus', fallbackUrl));
+    if (fallbackUrl) lines.push(markdownLink('Open application', fallbackUrl));
   }
   if (application?.updated_at) lines.push(`Updated: ${formatDiscordTime(application.updated_at)}`);
 
@@ -160,7 +161,7 @@ const applicationStatusMessage = (result, baseUrl) => {
       title: 'Your Applications',
       tone: 'info',
       description: applications.length
-        ? 'Nexus-calculated application progress, Discord follow-up, and next steps.'
+        ? 'Application progress, Discord follow-up, and next steps.'
         : 'No applications are linked to your Discord account yet.',
       fields: applications.map((application, index) => ({
         name: `Application #${application?.id ?? index + 1}${
@@ -197,8 +198,8 @@ export const approvalConfirmation = (interaction, context, selection) => {
   return statusMessage({
     title: 'Confirm Application Approval',
     tone: 'warning',
-    description: `You are about to approve ${reference}. Nexus will revalidate your permissions and the application state when you confirm.`,
-    footer: 'The decision will be recorded in Nexus.',
+    description: `You are about to approve ${reference}. Your permissions and the application state will be revalidated when you confirm.`,
+    footer: 'The decision will be recorded on the application.',
     components: [new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(context.sessions.create({ commandName: 'applications', userId: interaction.user.id,
         event: 'approve-confirm', state, oneShot: true }))
@@ -256,7 +257,7 @@ const applicationReviewEmbed = (application, baseUrl, summary) => {
     tone: 'info',
     description: summary
       ? truncate(summary, 2_000)
-      : 'Review the application details below before choosing an action. Nexus revalidates permissions and application state before recording a decision.',
+      : 'Review the application details below before choosing an action. Permissions and application state are revalidated before a decision is recorded.',
     fields,
     url: resolveDeepLink(baseUrl, application?.deep_link_path ?? application?.url),
     footer: 'Use the controls below to continue the review.',
@@ -314,12 +315,13 @@ export const execute = async (interaction, context) => {
         title: 'Your Applications',
         collection: normalizeCollection(result),
         empty: 'No applications are linked to your Discord account yet.',
-        description: 'Applications linked to your Discord account and their current Nexus status.',
+        description: 'Applications linked to your Discord account and their current status.',
         commandName: 'applications',
         userId: interaction.user.id,
         variant: 'application',
         sessions: context.sessions,
         baseUrl: context.apiService.baseUrl,
+        appName: appNameFrom(context.apiService),
       }));
       return;
     }
@@ -342,6 +344,7 @@ export const execute = async (interaction, context) => {
         variant: 'application',
         sessions: context.sessions,
         baseUrl: context.apiService.baseUrl,
+        appName: appNameFrom(context.apiService),
       }));
       return;
     }
@@ -382,9 +385,9 @@ export const modal = async (interaction, context) => {
     ...statusMessage({
       title: 'Confirm Application Denial',
       tone: 'warning',
-      description: `You are about to deny ${reference}. Nexus will revalidate your permissions and the application state when you confirm.`,
+      description: `You are about to deny ${reference}. Your permissions and the application state will be revalidated when you confirm.`,
       fields: [{ name: 'Denial Reason', value: escapeMarkdown(truncate(reason, 500)) }],
-      footer: 'The application and denial reason will be recorded in Nexus.',
+      footer: 'The application and denial reason will be recorded.',
       components: [new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(confirmId).setLabel('Deny application').setStyle(ButtonStyle.Danger),
       )],
@@ -446,7 +449,7 @@ export const button = async (interaction, context) => {
     }
     const identifier = applicationIdentifier(application);
     if (!identifier) {
-      throw Object.assign(new Error('Nexus did not return a usable application reference.'), {
+      throw Object.assign(new Error('The API did not return a usable application reference.'), {
         code: 'VALIDATION_ERROR',
       });
     }
@@ -468,7 +471,7 @@ export const button = async (interaction, context) => {
         tone: decision === 'approve' ? 'success' : 'danger',
         description: result?.message
           ? truncate(result.message, 4_096)
-          : `${reference} was ${outcome} in Nexus.`,
+          : `${reference} was ${outcome}.`,
         fields: [
           decision === 'deny' && context.session.state.reason
             ? { name: 'Denial Reason', value: escapeMarkdown(truncate(context.session.state.reason, 500)) }

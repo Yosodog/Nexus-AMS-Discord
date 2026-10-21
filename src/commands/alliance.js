@@ -4,7 +4,7 @@ import { allianceMessage, shareButton } from '../utils/directoryUi.js';
 
 export const data = new SlashCommandBuilder()
   .setName('alliance')
-  .setDescription('View a public-safe alliance summary from Nexus.')
+  .setDescription('View a public-safe alliance summary.')
   .addStringOption((option) => option
     .setName('alliance')
     .setDescription('Alliance name, acronym, or ID.')
@@ -64,7 +64,7 @@ export const button = async (interaction, context) => {
       actorFromInteraction(interaction, 'alliance'),
       allianceId,
     );
-    if (alliance.shareable !== true) throw new TypeError('Nexus did not authorize this public projection.');
+    if (alliance.shareable !== true) throw new TypeError('This projection is not authorized for public sharing.');
     await interaction.followUp({ ...allianceMessage(alliance), ephemeral: false });
     await interaction.editReply({ components: [] });
   } catch (error) {

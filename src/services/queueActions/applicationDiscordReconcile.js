@@ -305,7 +305,7 @@ const checkpoint = async (command, runtime, accumulated, { afterMutation = false
       { application_reconcile: copyCheckpoint(accumulated) },
     );
     if (response === false || response?.success === false) {
-      throw new Error('Nexus rejected the Discord reconciliation checkpoint.');
+      throw new Error('The API rejected the Discord reconciliation checkpoint.');
     }
     return null;
   } catch (error) {
@@ -599,7 +599,7 @@ const ensureChannel = async (command, runtime, guild, payload, accumulated) => {
     topic,
     type: ChannelType.GuildText,
     permissionOverwrites: createPermissionOverwrites(guild, payload),
-    reason: 'Nexus AMS application Discord reconciliation',
+    reason: 'Application Discord reconciliation',
   };
   if (desiredChannel.category_id) options.parent = desiredChannel.category_id.trim();
 
@@ -719,7 +719,7 @@ const syncRoles = async (command, runtime, guild, payload, accumulated) => {
     try {
       await withDiscordRetry(
         runtime,
-        () => member.roles.add(roleId, 'Nexus AMS application Discord reconciliation'),
+        () => member.roles.add(roleId, 'Application Discord reconciliation'),
         `add application role ${roleId}`,
       );
     } catch (error) {
@@ -752,7 +752,7 @@ const syncRoles = async (command, runtime, guild, payload, accumulated) => {
     try {
       await withDiscordRetry(
         runtime,
-        () => member.roles.remove(roleId, 'Nexus AMS application Discord reconciliation'),
+        () => member.roles.remove(roleId, 'Application Discord reconciliation'),
         `remove application role ${roleId}`,
       );
     } catch (error) {
@@ -923,7 +923,7 @@ const deleteAuthoritativeChannel = async (command, runtime, guild, payload, accu
     if (!canContinue(runtime)) return failure('lease_lost', { retryable: true, checkpoint: accumulated });
     if (!checkpointAvailable(command, runtime)) return failure('checkpoint_unavailable', { checkpoint: accumulated });
     try {
-      await withDiscordRetry(runtime, () => recovered.delete('Nexus AMS application Discord reconciliation'), 'delete application interview channel');
+      await withDiscordRetry(runtime, () => recovered.delete('Application Discord reconciliation'), 'delete application interview channel');
     } catch (error) {
       if (isUnknownChannel(error)) {
         markChannelDeleted(accumulated);
@@ -958,7 +958,7 @@ const deleteAuthoritativeChannel = async (command, runtime, guild, payload, accu
   if (!checkpointAvailable(command, runtime)) return failure('checkpoint_unavailable', { checkpoint: accumulated });
 
   try {
-    await withDiscordRetry(runtime, () => resolved.channel.delete('Nexus AMS application Discord reconciliation'), 'delete application interview channel');
+    await withDiscordRetry(runtime, () => resolved.channel.delete('Application Discord reconciliation'), 'delete application interview channel');
   } catch (error) {
     if (isUnknownChannel(error)) {
       markChannelDeleted(accumulated);
