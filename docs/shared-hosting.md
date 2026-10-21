@@ -2,7 +2,7 @@
 
 This guide is for the team that runs the Nexus hosted Discord application. Alliance administrators should read [Invite the hosted bot](invite-hosted-bot.md) instead.
 
-> Shared mode has a working runtime but no public onboarding service. Use it only for operator-managed pilots until the Cloud connection lifecycle is implemented and approved.
+> Shared mode works, but there is no public onboarding service yet. Each connection is set up by the bot operator.
 
 ## How shared mode works
 
@@ -138,7 +138,7 @@ DISCORD_CAPABILITIES=relay.proof.v2,queue.leases.v1,queue.connection-context.v1,
 DISCORD_SUPPORTED_QUEUE_ACTIONS=APPLICATION_DISCORD_RECONCILE,PRIVATE_NOTIFICATION
 ```
 
-Use the public-key conversion command in [Dedicated relay v2](configuration.md#dedicated-relay-v2). The Application ID, server ID, connection ID, generation, relay key ID, API credential, public key, commands, and queue actions must match the publication entry.
+Copy the `DISCORD_RELAY_CURRENT_PUBLIC_KEY` value printed by `npm run keygen:relay` as-is; it is already in the format Nexus expects. The Application ID, server ID, connection ID, generation, relay key ID, API credential, public key, commands, and queue actions must match the publication entry.
 
 Nexus installations with active records in the `discord_connections` table use those records instead of the environment fallback. Update the active connection record through the owning Nexus provider rather than creating a competing environment connection.
 

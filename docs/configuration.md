@@ -1,10 +1,8 @@
 # Configuration reference
 
-For a local installation managed by Nexus Setup, supply the bot token,
-application ID, and guild ID through `nexus component install discord` or the
-Admin Software page. Setup generates the internal API credential and relay
-identity and stores secret values in protected credential files. Do not edit
-the managed environment file to follow the manual examples below.
+> **Using Nexus Setup?** You do not need this page. Setup asks for the bot
+> token, application ID, and server ID and generates everything else. Do not
+> edit its managed environment files to follow the manual examples below.
 
 The bot and Nexus use different variable names for the same connection. Keep both `.env` files open while you configure them, and check every matching value before starting the bot.
 
@@ -70,6 +68,9 @@ NEXUS_DISCORD_RELAY_CURRENT_KEY_ID=relay-k1
 Add the matching values to the Nexus `.env`:
 
 ```env
+DISCORD_BOT_KEY=the-shared-api-credential
+DISCORD_APPLICATION_ID=your-application-id
+DISCORD_GUILD_ID=your-server-id
 DISCORD_CONNECTION_MODE=dedicated
 DISCORD_CONNECTION_ID=11111111-2222-4333-8444-555555555555
 DISCORD_CONNECTION_GENERATION=1
@@ -79,20 +80,20 @@ DISCORD_RELAY_CURRENT_PUBLIC_KEY=replace-with-the-base64url-public-key
 DISCORD_RELAY_V1_READER_ENABLED=false
 ```
 
-The connection ID, generation, key ID, application ID, and server ID must match on both sides. Nexus rejects a request when any one of them differs.
+The connection ID, generation, key ID, application ID, and server ID must match on both sides. Nexus rejects a request when any one of them differs. If Nexus caches its configuration, run `php artisan config:cache` again after changing these values.
 
 ## Nexus capability settings
 
-Nexus uses its connection capability list to decide which work it may send to the bot.
+Nexus uses its connection capability list to decide which work it may send to the bot. The defaults in the Nexus `.env.example` match the current bot, so you normally do not change them.
 
-Current transport capabilities:
+Transport capabilities:
 
 ```env
 DISCORD_CAPABILITY_VERSION=1
 DISCORD_CAPABILITIES=relay.proof.v2,queue.leases.v1,queue.connection-context.v1,status.provider-diagnostics.v1
 ```
 
-Current queue actions:
+Queue actions:
 
 ```env
 DISCORD_SUPPORTED_QUEUE_ACTIONS=ALERT_DELIVERY_V1,APPLICATION_DISCORD_RECONCILE,WAR_ALERT,ALLIANCE_DEPARTURE,INACTIVITY_ALERT,MEMBER_PROFILE_SYNC,ALLIANCE_ROLE_REMOVAL,BEIGE_ALERT,CITY_TIER_SYNC,WAR_ROOM_CREATE,WAR_ROOM_ARCHIVE,PRIVATE_NOTIFICATION
