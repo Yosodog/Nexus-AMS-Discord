@@ -1,288 +1,120 @@
 # Nexus AMS Discord Bot
 
-Discord integration for Nexus AMS. The bot provides account verification, application workflows, moderation and finance commands, and leased delivery of Nexus-generated Discord actions.
+The Discord bot for [Nexus AMS](https://github.com/Yosodog/Nexus-AMS). It lets
+members use Nexus from Discord and lets Nexus act in your server: account
+verification, banking and request commands, application interviews, alerts,
+private notifications, role sync, and war rooms.
 
-## Beta status
-
-Nexus AMS Discord is part of the Nexus AMS beta. Managed installations use the
-same stable release tag for Setup, Core, Subs, and Discord. Nexus remains the
-source of permissions and workflow state, so mismatched manual versions can
-cause commands or queue actions to be rejected.
-
-Dedicated self-hosting is available in the beta. Public onboarding for the Nexus hosted bot is not ready yet. Hosted connections and `official-shared` mode are limited to operator-managed development and Cloud pilots.
+Nexus stays the source of truth. The bot forwards each command to Nexus, and
+Nexus decides who is allowed to do what. Discord roles never grant Nexus
+permissions.
 
 ## Features
 
-- Guild-scoped, ephemeral slash commands for accounts, deposits, withdrawals, transactions, requests, grants, loans, war aid, rebuilding, raids, wars, spy assignments, and applications, plus the existing operational commands.
-- Nexus-backed authorization for sensitive commands; Nexus remains the permission authority.
-- Application interview channels with recoverable Nexus metadata and text-only transcript forwarding.
-- Leased queue delivery for alerts, private workflow DMs, member departures, role removal, and war-room creation/archive.
-- Structured logging, bounded API retries, durable war-room checkpoints, and Discord nonce deduplication.
-- Graceful process shutdown and fail-closed command loading/registration.
+- Slash commands for accounts, deposits, withdrawals, transactions, requests,
+  grants, loans, war aid, rebuilding, builds, raids, wars, spy assignments, and
+  applications. Responses are private to the user who ran them.
+- Account linking with `/verify`.
+- Application interview channels with text-only transcript forwarding to
+  Nexus.
+- Delivery of Nexus alerts, opt-in private DMs, member departures, role
+  removal, city-tier roles, and war-room creation and archival.
+- Automatic capture of pasted in-game intelligence reports.
 
-## Setup guides
+## Install
 
-For a supported local managed installation, first install Nexus through
-[Nexus Setup](https://github.com/Yosodog/Nexus-Setup), then use
-`nexus component install discord` or **Admin → Settings → Software**. Supply
-only the bot token, application ID, and guild ID. Setup generates the internal
-API credential and relay key, stores secret values in protected credential
-files, starts the unprivileged service, and registers the guild slash commands.
-You still have to create and invite the Discord application in the Developer
-Portal. `nexus update` updates all installed local components together; the
-GUI cannot manage an unpaired remote bot host. The guides below also cover
-manual or container-based deployments.
+Choose the path that matches your deployment:
 
-Start with the guide for your deployment:
-
-| Setup | Guide |
+| Deployment | Guide |
 | --- | --- |
-| Read about hosted bot pilots | [Hosted bot status](docs/invite-hosted-bot.md) |
-| Run one bot for one Nexus installation | [Self-host the bot](docs/self-hosting.md) |
-| Configure bot and Nexus environment variables | [Configuration reference](docs/configuration.md) |
-| Operate the multi-alliance shared bot | [Shared hosting](docs/shared-hosting.md) |
-| Diagnose a setup or delivery problem | [Troubleshooting](docs/troubleshooting.md) |
+| Nexus installed with [Nexus Setup](https://github.com/Yosodog/Nexus-Setup) (recommended) | Create and invite a Discord application ([steps 2–5](docs/self-hosting.md#2-create-the-discord-application)), then run `sudo nexus component install discord` or use **Admin → Settings → Software** |
+| Run the bot yourself on a separate host or in a container | [Self-host the bot](docs/self-hosting.md) |
+| Every bot and Nexus setting | [Configuration reference](docs/configuration.md) |
+| Something is not working | [Troubleshooting](docs/troubleshooting.md) |
 
-The [documentation index](docs/README.md) explains which deployment modes are available in the beta. Inviting the hosted Discord application does not create a Nexus connection by itself.
+With Nexus Setup you only enter the bot token, application ID, and server
+(guild) ID. Setup generates the internal credentials, runs the bot as its own
+service, registers the slash commands, and keeps the bot updated with
+`nexus update`.
 
-## Project structure
+Each bot process serves **one Discord server and one Nexus installation**
+(dedicated mode). A shared multi-server mode exists for the Nexus hosted bot,
+but public onboarding for it is not available yet; see
+[the hosted bot](docs/invite-hosted-bot.md).
 
-- `src/bot.js`: boots Discord, services, listeners, and graceful shutdown handling.
-- `src/commands/`: slash command modules.
-- `src/listeners/`: Discord interaction and message listeners.
-- `src/services/`: Nexus API transport, leased queue worker, stable dispatcher, and logging.
-- `src/healthcheck.js`: validates the local process heartbeat without contacting Discord or Nexus.
-- `src/services/queueActions/`: validated action modules; each exports `validate(payload)` and `execute(command, context)`.
-- `src/utils/`: configuration, boundary validation, and channel identity helpers.
-- `src/registerCommands.js`: publishes the command set globally for official-shared mode or to the configured guild for dedicated mode.
-
-## Requirements and configuration
+## Requirements
 
 - Node.js 22 or newer.
-- A Discord application and bot user. Dedicated mode also configures one guild.
-- A compatible Nexus AMS beta deployment with the leased Discord queue APIs and migrations.
+- A Discord application with a bot user, installed in your server.
+- A Nexus AMS release that meets this bot's `nexus-core` requirement in
+  [`nexus-release.requires.json`](nexus-release.requires.json). Nexus Setup
+  checks this for you.
 
-For a first installation, follow [Self-host the bot](docs/self-hosting.md). The complete list of settings is in the [configuration reference](docs/configuration.md).
+## Commands
 
-Create the local environment file:
+| Area | Commands |
+| --- | --- |
+| Getting started | `/verify`, `/me`, `/help`, `/ping` |
+| Banking | `/accounts`, `/deposit`, `/withdraw`, `/transactions` |
+| Requests and programs | `/requests`, `/grant`, `/loan`, `/waraid`, `/rebuild` |
+| Nation and audits | `/build`, `/audit`, `/alerts`, `/nation`, `/alliance`, `/who` |
+| Military | `/war`, `/raid`, `/spy`, `/unblockade`, `/archivecounter` |
+| Applications | `/apply`, `/applications`, `/approve`, `/deny` |
+| Staff and administration | `/work`, `/sweepbank`, `/nexus status` |
+
+Everyone sees the same command list, but Nexus decides what each user may do
+with it: staff actions only work for users whose Nexus permissions allow them.
+Run `/help` in Discord for details on any command.
+
+## Documentation
+
+- [Self-host the bot](docs/self-hosting.md)
+- [Configuration reference](docs/configuration.md)
+- [How the bot works](docs/how-it-works.md) — queue delivery, shutdown,
+  health checks, transcripts, and release artifacts
+- [Troubleshooting](docs/troubleshooting.md)
+- [The hosted bot](docs/invite-hosted-bot.md) and
+  [operating the shared bot](docs/shared-hosting.md)
+- [Relay contracts](contracts/discord/README.md)
+
+## Development
 
 ```bash
 cp .env.example .env
 npm ci
-```
-
-Configure:
-
-- `NODE_ENV`: use `production` on the production host.
-- `LOG_LEVEL`: optional `DEBUG`, `INFO`, `WARN`, or `ERROR` threshold.
-- `BOT_DEPLOYMENT_MODE`: `dedicated` by default, or `official-shared` for one bot serving explicit connection publications.
-- `DISCORD_BOT_TOKEN`: bot token.
-- `DISCORD_BOT_TOKEN_FILE`: root-owned credential file containing the bot token; takes precedence over `DISCORD_BOT_TOKEN`.
-- `DISCORD_CLIENT_ID`: Discord application snowflake.
-- `DISCORD_GUILD_ID`: the only accepted guild in dedicated mode.
-- `NEXUS_API_URL`: Nexus base URL. Development may use HTTP; production startup requires HTTPS.
-- `NEXUS_API_KEY`: shared bot credential issued by Nexus.
-- `NEXUS_API_KEY_FILE`: root-owned credential file containing the Nexus credential; takes precedence over `NEXUS_API_KEY`.
-- `NEXUS_DISCORD_RELAY_PRIVATE_KEY`: base64 PKCS#8 Ed25519 private key used to sign the actual Gateway interaction identity and command sent to Nexus.
-- `NEXUS_DISCORD_RELAY_PRIVATE_KEY_FILE`: root-owned credential file containing the relay private key; takes precedence over the environment value.
-- `NEXUS_DISCORD_RELAY_NEXT_PRIVATE_KEY_FILE`: optional root-owned credential file for the next relay key during rotation.
-- `NEXUS_DISCORD_CONNECTION_ID`: relay-v2 connection UUID configured in Nexus.
-- `NEXUS_DISCORD_CONNECTION_GENERATION`: positive generation configured for that connection in Nexus.
-- `NEXUS_DISCORD_RELAY_KEY_ID`: current relay-v2 key ID accepted by Nexus.
-- `PROCESS_HEALTH_FILE`: local atomic readiness file; defaults to `data/process-health.json`.
-- `PROCESS_HEALTH_INTERVAL_MS`: heartbeat interval; defaults to 15 seconds.
-- `PROCESS_HEALTH_STALE_AFTER_MS`: maximum accepted heartbeat age; defaults to 45 seconds.
-- `BUILD_COMMIT`: immutable source/image revision exposed in local build metadata.
-- `NEXUS_RELEASE_ID`: server-assigned release identifier exposed in local build metadata.
-
-Official-shared mode also supports:
-
-- `DISCORD_CONNECTIONS_FILE`: preferred path to a complete JSON connection snapshot. A valid changed snapshot is activated without restarting the bot.
-- `DISCORD_CONNECTION_REFRESH_MS`: snapshot refresh interval; defaults to 30 seconds.
-- `DISCORD_CONNECTIONS_JSON`: static startup fallback using the same array shape. It remains supported for compatibility but is not refreshed.
-
-Official-shared mode is an operator interface for managed pilots, not a public onboarding flow. Nexus Cloud will use this path once its onboarding and connection management are ready. Read [Operate the shared bot](docs/shared-hosting.md) before enabling it.
-
-### Official-shared connection snapshots
-
-The publication file is a complete array, not a patch stream. Each entry binds one Discord application/guild to one Nexus endpoint, connection generation, relay key, capability set, expiry, and secret-backed service options:
-
-```json
-[
-  {
-    "applicationId": "123456789012345678",
-    "guildId": "223456789012345678",
-    "connectionId": "11111111-2222-4333-8444-555555555555",
-    "generation": 8,
-    "protocolVersion": 2,
-    "keyId": "relay-k2",
-    "endpointOrigin": "https://nexus.example",
-    "expiresAt": "2026-08-08T19:00:00.000Z",
-    "capabilities": {
-      "commands": {
-        "nexus": 1
-      }
-    },
-    "serviceOptions": {
-      "apiKey": "secret-store-value",
-      "relayPrivateKey": "secret-store-value",
-      "relayCurrentKeyId": "relay-k2"
-    }
-  }
-]
-```
-
-Write a temporary file with restrictive permissions and atomically rename it over the configured path. Never expose the file through a web root or log its contents. Invalid JSON, duplicate keys, another Discord application, duplicate active guild routes, generation rollback, and same-generation identity replacement are rejected as a unit. The prior accepted snapshot remains usable only until each connection's `expiresAt`, so an unreadable control-plane source cannot extend routing indefinitely.
-
-Removing a route fences its accepted generation. An explicit `[]` revokes all routes immediately; reactivation requires a higher generation. Updating credentials or the relay key for the same application/guild/connection/generation is accepted and clears cached clients without restarting. The bot's publication high-water mark is process-local; Nexus's accepted connection generation remains the authoritative cross-restart fence. Dedicated mode and static `DISCORD_CONNECTIONS_JSON` do not depend on this file or on Nexus Cloud.
-
-Generate the asymmetric relay key pair once:
-
-```bash
-npm run keygen:relay
-```
-
-Store `NEXUS_DISCORD_RELAY_PRIVATE_KEY` only in the bot environment. Put the generated `DISCORD_RELAY_CURRENT_PUBLIC_KEY` in the Nexus environment. Do not reuse the Discord bot token or Discord application public key for this purpose.
-
-Discord.js receives interactions through the Gateway, which does not include Discord's HTTP interaction signature headers. The relay proof is therefore generated from the Gateway interaction object inside the bot and signed with this dedicated private key. Nexus verifies the signature, guild, actor, interaction ID, freshness, and action before resolving permissions.
-
-Startup rejects malformed URLs and Discord snowflakes. Dedicated traffic is constrained to `DISCORD_GUILD_ID`; official-shared traffic is constrained to the one current application/guild/connection/generation resolved from the accepted snapshot.
-
-## Running and commands
-
-The expanded user-facing commands are `/accounts`, `/deposit`, `/withdraw`, `/transactions`, `/requests`, `/grant`, `/loan`, `/build`, `/waraid`, `/rebuild`, `/raid`, `/war`, `/spy`, and `/applications`. They are registered as normal top-level Discord commands; domain commands use subcommands where appropriate. Nexus resolves the linked actor and remains authoritative for ownership, permissions, balances, eligibility, limits, and all state changes.
-
-Register the validated command set after adding or changing commands:
-
-```bash
-npm run register
-```
-
-Start the bot:
-
-```bash
+npm run check          # syntax-check, then run tests
+npm run test:coverage  # tests with coverage gates (80% lines/functions, 65% branches)
+npm run register       # register slash commands for the configured server
 npm start
 ```
 
-For a containerized dedicated deployment, the repository also ships a digest-pinned,
-non-root image and a hardened Compose service. Follow the
-[container instructions](docs/self-hosting.md#container-option) rather than adding
-ports or copying `.env` into the image.
+### Adding a command
 
-Probe the already-running process without making a Discord or Nexus request:
+Create a `.js` file in `src/commands/` that exports:
 
-```bash
-npm run healthcheck
-```
+- `data`: a `SlashCommandBuilder` definition.
+- `execute(interaction, context)`: the handler.
 
-Command loading is atomic. An import failure, malformed command export, serialization error, or duplicate command name aborts startup/registration; the registration script never replaces Discord commands with a partial set.
+Command names must be unique. Loading is all-or-nothing: an import error,
+malformed export, or duplicate name stops startup and registration, so Discord
+never receives a partial command set.
 
-## Application transcripts
+Do not add Discord role checks for Nexus operations; let Nexus authorize them.
+Logging redacts configured secrets, but do not log credentials, raw API
+responses, or sensitive payloads.
 
-Application channels are identified by Nexus application/nation metadata, with exact legacy channel-name support during migration. Only messages from the interaction's resolved guild and verified application channels are forwarded.
+### Project layout
 
-Transcripts are intentionally text-only:
+- `src/bot.js` — starts Discord, services, listeners, and shutdown handling.
+- `src/commands/` — slash commands.
+- `src/listeners/` — interaction and message listeners.
+- `src/services/` — Nexus API client, leased queue worker, and logging.
+- `src/services/queueActions/` — queue actions; each exports
+  `validate(payload)` and `execute(command, context)`.
+- `src/utils/` — configuration and validation helpers.
+- `src/registerCommands.js` — publishes the command set.
+- `src/healthcheck.js` — checks the local process heartbeat.
 
-- Attachment-only and embed-only messages are ignored.
-- Attachments are not uploaded or persisted by the bot.
-- The bot sends message and author identifiers; Nexus derives staff status and deduplicates Discord message IDs.
+## License
 
-## Queue delivery and recovery
-
-The bot claims one queue item at a time through the leased Nexus queue API. Nexus issues a five-minute lease, and the bot renews active leases every 60 seconds. The worker does not claim another item until the current Discord work and completion/failure acknowledgement are resolved or the lease is no longer safe to use.
-
-War-room creation checkpoints the Discord thread ID in Nexus before follow-up messages. Stable Discord nonces reduce duplicate messages when an acknowledged request is replayed. Delivery remains at-least-once: operators should investigate reconciliation logs after crashes or ambiguous Discord/API failures.
-
-Nexus reaps expired leases every minute on one scheduler instance. Failed attempts retry after one and two minutes; the third failed/expired attempt becomes terminal. Keep the Nexus scheduler running in production.
-
-This bot only claims explicit relay-v2 queue lanes. Retire or migrate any pre-cutover Nexus queue rows before deploying it; unbound or legacy-lane rows are intentionally not claimed.
-
-Private workflow notifications use the structured `PRIVATE_NOTIFICATION` queue action and are delivered only by DM. The bot accepts local allowlisted event templates, never arbitrary Nexus message text or URLs, and never falls back to a public channel. Nexus ships the alliance-wide notification master switch disabled; an administrator must enable it after both deployments are healthy. Linked users default to disabled and must opt in by category in Nexus.
-
-Recommended rollout order:
-
-1. Back up Nexus and deploy its code and migrations.
-2. In dedicated mode, set matching `DISCORD_BOT_KEY`/`NEXUS_API_KEY` values and the same `DISCORD_GUILD_ID` in both services. In official-shared mode, prepare the complete connection snapshot after Nexus accepts the binding.
-3. Generate each relay key pair, keep its private key with the bot connection secret, and put only its public key in the corresponding Nexus installation.
-4. Keep the Nexus private-notification master switch disabled.
-5. Deploy the bot, run `npm run register`, and restart the bot service. The leased queue workers run inside this process.
-6. Smoke-test account reads, a deposit code, a within-limit withdrawal, an above-limit review case, and DM failure handling.
-7. Enable private Discord notifications in Nexus when delivery results are healthy.
-
-## Readiness and build metadata
-
-The bot writes an atomic JSON heartbeat with mode `0600`. Process readiness is
-reported only after Discord emits `ClientReady` and the leased queue worker has
-started. Dedicated mode also requires its configured guild in the client cache.
-
-The current `npm run healthcheck` contract is intended for dedicated mode. It
-expects a configured dedicated guild and therefore must not be the only
-readiness probe for an official-shared pilot. Shared operators should monitor
-the heartbeat, publication refresh state, Discord gateway connection, and
-active connection count as described in the [shared hosting guide](docs/shared-hosting.md).
-
-The heartbeat contains the package version, sanitized build/release identifiers,
-booleans and counters for the worker, active connection counts, and dedicated
-guild availability. File-backed shared mode also reports bounded publication
-refresh health without route or credential identifiers. It deliberately omits
-guild IDs, worker IDs, queue IDs, lease tokens,
-Nexus URLs, Discord/Nexus credentials, relay keys, command payloads, and API
-responses. Place `PROCESS_HEALTH_FILE` on the writable runtime mount used by the
-bot and run the probe as the same non-root user.
-
-The heartbeat also implements the first-party component health contract. It
-includes `component_id` (`nexus-discord`), contract version, package version,
-release ID, runtime and health states, reachability, enabled state, and
-configuration readiness. Nexus Setup uses these fields for component inventory.
-
-## Shutdown behavior
-
-`SIGTERM` or `SIGINT` stops new queue claims and stops scheduling lease
-renewals, then lets an active item (or a claim already in flight) finish and
-acknowledge only while its last confirmed five-minute lease remains safe to
-use. The Discord client stays available during that bounded drain. A second
-signal forces immediate termination. Process managers should allow at least
-310 seconds before sending `SIGKILL`; most shutdowns finish immediately when
-no item is active.
-
-## Managed systemd deployment
-
-The fixed unit template at [`deploy/systemd/nexus-discord.service`](deploy/systemd/nexus-discord.service)
-runs the bot as the dedicated `nexus-discord` account from an immutable release
-directory. Nexus Setup supplies the account, writable state directory, and
-root-owned credential files. Its root-owned environment file contains only
-paths to credentials consumed through the `*_FILE` settings; secret values
-never appear in command-line arguments or the service environment. Do not
-modify the unit from the Admin GUI.
-
-Release automation builds a deterministic production tarball with
-`npm ci --omit=dev --ignore-scripts`, records the component contract and
-release identity, and publishes the fixed `nexus-discord.tar.gz` asset directly
-to the official GitHub Release. Nexus Setup trusts that official release and
-verifies the identity embedded in the extracted artifact; deployment
-signatures, checksum sidecars, attestations, and TUF metadata are intentionally
-not part of this updater. Runtime relay signatures remain unchanged.
-
-## Development and CI
-
-```bash
-npm run lint          # syntax-check src/ and test/
-npm test              # run the Node test suite
-npm run check         # lint, then run tests
-npm run healthcheck   # validate the local running-process heartbeat
-npm run test:coverage # full src/**/*.js coverage with enforced gates
-npm audit --omit=dev --audit-level=high
-```
-
-Coverage gates are 80% lines, 65% branches, and 80% functions. GitHub Actions runs Node 22 with `npm ci`, lint, tests, coverage, and the high-severity production dependency audit on pushes to `main` and pull requests.
-
-## Adding commands
-
-Create a `.js` file in `src/commands/` exporting:
-
-- `data`: a serializable `SlashCommandBuilder` definition.
-- `execute(interaction, context)`: the command handler.
-
-Command names must be unique. Do not add Discord role allowlists for Nexus-authorized operations; keep Nexus as the authoritative permission boundary.
-
-Logging redacts configured secrets, but code must still avoid logging credentials, raw API response bodies, or sensitive payloads.
+GNU GPL v3. See [LICENSE](LICENSE).

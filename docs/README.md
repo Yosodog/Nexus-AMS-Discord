@@ -1,35 +1,36 @@
-# Setup and operations
-
-Choose the guide that matches what you are trying to do.
-
-On a supported local Nexus Setup installation, the shortest path is to create
-and invite a dedicated Discord application, then run
-`nexus component install discord` or use **Admin → Settings → Software**. Setup
-handles protected credentials, the service account, the matching release, and
-guild command registration. Use the manual self-hosting guide below for a
-separately operated bot or a container deployment.
+# Discord bot documentation
 
 | What you want to do | Guide |
 | --- | --- |
-| Add the Nexus hosted bot to an alliance server | [Invite the hosted bot](invite-hosted-bot.md) |
-| Run your own bot for one Nexus installation | [Self-host the bot](self-hosting.md) |
-| Fill in the bot and Nexus settings | [Configuration reference](configuration.md) |
-| Run one bot application for several Nexus installations | [Operate the shared bot](shared-hosting.md) |
+| Add the bot to a Nexus Setup installation | Create and invite a Discord application ([steps 2–5](self-hosting.md#2-create-the-discord-application)), then run `sudo nexus component install discord` or use **Admin → Settings → Software** |
+| Run your own bot on a separate host or in a container | [Self-host the bot](self-hosting.md) |
+| Look up a bot or Nexus setting | [Configuration reference](configuration.md) |
+| Understand queue delivery, shutdown, and health checks | [How the bot works](how-it-works.md) |
 | Fix a setup or connection problem | [Troubleshooting](troubleshooting.md) |
+| Learn about the Nexus hosted bot | [The hosted bot](invite-hosted-bot.md) |
+| Run one bot application for several Nexus installations | [Operate the shared bot](shared-hosting.md) |
 
-## What works today
+## Deployment modes
 
-The dedicated setup is ready to use. In this setup, you run your own Discord application and connect it to one Nexus installation and one Discord server.
+- **Dedicated** (the normal setup): you run your own Discord application, and
+  one bot process connects one Discord server to one Nexus installation.
+  Nexus Setup installs this mode.
+- **Shared**: one Discord application serves several servers, each connected
+  to its own Nexus installation. It is used by the Nexus hosted bot. Public
+  onboarding for the hosted bot is not available yet, so shared connections
+  are set up by the bot operator.
 
-The shared runtime is also present. It lets the Nexus bot operator run one Discord application for several servers. Connections are loaded from a protected publication file.
+Nexus is responsible for user links, permissions, workflow rules, and private
+alliance data in both modes.
 
-Public onboarding for the Nexus hosted bot is not ready yet. Inviting the bot does not create a Nexus connection on its own. The OAuth setup, proof that the installer controls the Nexus installation, and the Cloud connection screen still need to be built. Until then, hosted-bot connections are limited to operator-managed pilots.
+## Terms
 
-## A few terms used in these guides
-
-- Discord application: The application created in the Discord Developer Portal. It owns the bot user, token, and install link.
-- Dedicated bot: A bot process connected to one Discord server and one Nexus installation.
-- Shared bot: A bot process that serves several Discord servers. Every server has a separate Nexus endpoint, credential, relay key, and connection generation.
-- Connection publication: The protected JSON file that tells a shared bot which Discord server belongs to which Nexus installation.
-
-Nexus remains responsible for user links, permissions, workflow rules, and private alliance data in every setup.
+- **Discord application:** the application created in the Discord Developer
+  Portal. It owns the bot user, token, and install link.
+- **Relay key:** an Ed25519 key pair. The bot signs requests with the private
+  key; Nexus verifies them with the public key.
+- **Connection ID and generation:** values shared by the bot and Nexus that
+  identify one connection. Raising the generation retires the previous
+  connection.
+- **Connection publication:** the protected JSON file that tells a shared bot
+  which Discord server belongs to which Nexus installation.

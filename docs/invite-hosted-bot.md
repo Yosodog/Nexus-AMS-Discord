@@ -1,10 +1,8 @@
 # Invite the Nexus hosted bot
 
-> Public setup is not available in the current release.
+> Public self-service setup for the hosted bot is not available yet. Most alliances should [self-host the bot](self-hosting.md), or install it with Nexus Setup.
 
 The bot can be installed in more than one Discord server, but the public connection screen has not been built yet. Inviting the bot only adds the Discord application to your server. It does not tell the bot which Nexus installation belongs to that server.
-
-If you are not part of an approved pilot, use the [self-hosting guide](self-hosting.md) for now.
 
 ## What you will need
 
@@ -55,7 +53,7 @@ Do not reuse a revoked API credential or relay key.
 
 The finished onboarding flow is expected to ask a Nexus administrator to sign in, install the Discord app through OAuth, choose one Nexus installation, and confirm the connection. The control plane will publish routing details to the bot, while the selected Nexus installation will continue to authorize every command.
 
-That flow is a product plan, not a feature in this release.
+That flow is planned and not available yet.
 
 ## Discord references
 
