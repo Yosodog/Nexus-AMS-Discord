@@ -4,14 +4,14 @@ import { statusMessage } from '../utils/discordUi.js';
 
 export const data = new SlashCommandBuilder()
   .setName('nexus')
-  .setDescription('Inspect the bot connection to Nexus.')
+  .setDescription('Inspect this server’s bot connection.')
   .addSubcommand((subcommand) => subcommand
     .setName('status')
-    .setDescription('Show safe Discord, gateway, and Nexus route diagnostics.'))
+    .setDescription('Show safe Discord, gateway, and API route diagnostics.'))
   .setDMPermission(false);
 
 export const help = Object.freeze({
-  audience: 'Nexus diagnostic staff and Discord server managers',
+  audience: 'Diagnostic staff and Discord server managers',
   topic: Object.freeze(['getting-started']),
   examples: Object.freeze(['/nexus status']),
   related: Object.freeze(['ping', 'help']),
@@ -33,7 +33,7 @@ const renderStatus = (status) => {
     `Guild diagnostics: **${discord.observed ? 'observed' : 'not observed'}**`,
     `Bot permissions: ${permissions.length > 0 ? permissions.join(', ') : 'none observed'}`,
     ...(provider ? [
-      `Nexus provider: **${provider.available ? 'available' : 'unavailable'}**${provider.version ? ` · ${provider.version}` : ''}`,
+      `Status provider: **${provider.available ? 'available' : 'unavailable'}**${provider.version ? ` · ${provider.version}` : ''}`,
     ] : []),
   ].join('\n');
 };
@@ -44,7 +44,7 @@ const renderSetupStatus = (status) => {
   const discord = status?.discord ?? {};
   const permissions = discord.permissions?.granted ?? [];
   return [
-    'Nexus is not connected to this Discord server. Limited setup diagnostics:',
+    'No installation is connected to this Discord server. Limited setup diagnostics:',
     `Gateway: **${gateway.ready ? 'ready' : 'not ready'}** (status ${value(gateway.status)})`,
     `Route mode: **${value(routing.mode)}**`,
     `Guild diagnostics: **${discord.observed ? 'observed' : 'not observed'}**`,
@@ -71,7 +71,7 @@ const providerDiagnostics = (response) => {
 export const execute = async (interaction, { statusService, apiService, logger } = {}) => {
   if (interaction.options?.getSubcommand?.() !== 'status') {
     await interaction.reply({
-      ...statusMessage({ title: 'Nexus', tone: 'warning', description: 'Use `/nexus status`.' }),
+      ...statusMessage({ title: 'Bot Connection', tone: 'warning', description: 'Use `/nexus status`.' }),
       ephemeral: true,
     });
     return;
@@ -80,9 +80,9 @@ export const execute = async (interaction, { statusService, apiService, logger }
   if (!status) {
     await interaction.reply({
       ...statusMessage({
-        title: 'Nexus Status',
+        title: 'Connection Status',
         tone: 'warning',
-        description: 'Nexus diagnostics are unavailable. No local routing details were shown.',
+        description: 'Connection diagnostics are unavailable. No local routing details were shown.',
       }),
       ephemeral: true,
     });
@@ -93,7 +93,7 @@ export const execute = async (interaction, { statusService, apiService, logger }
     if (!hasSetupPermission(interaction)) {
       await interaction.reply({
         ...statusMessage({
-          title: 'Nexus Setup Status',
+          title: 'Setup Status',
           tone: 'warning',
           description: 'Limited setup diagnostics require Discord Administrator or Manage Server permission.',
         }),
@@ -103,17 +103,17 @@ export const execute = async (interaction, { statusService, apiService, logger }
     }
 
     await interaction.reply({
-      ...statusMessage({ title: 'Nexus Setup Status', tone: 'info', description: renderSetupStatus(status) }),
+      ...statusMessage({ title: 'Setup Status', tone: 'info', description: renderSetupStatus(status) }),
       ephemeral: true,
     });
     return;
   }
 
   try {
-    if (typeof apiService?.getNexusStatus !== 'function') throw new Error('Nexus status provider is unavailable.');
+    if (typeof apiService?.getNexusStatus !== 'function') throw new Error('The status provider is unavailable.');
     const providerResponse = await apiService.getNexusStatus(actorFromInteraction(interaction));
     const provider = providerDiagnostics(providerResponse);
-    if (!provider) throw new Error('Nexus status provider returned an invalid authorization result.');
+    if (!provider) throw new Error('The status provider returned an invalid authorization result.');
     status.provider = provider;
   } catch (error) {
     logger?.debug?.('Nexus provider status denied or unavailable', {
@@ -121,16 +121,16 @@ export const execute = async (interaction, { statusService, apiService, logger }
     });
     await interaction.reply({
       ...statusMessage({
-        title: 'Nexus Status',
+        title: 'Connection Status',
         tone: 'warning',
-        description: 'Nexus did not authorize diagnostic access or is unavailable. No local routing details were shown.',
+        description: 'Diagnostic access was not authorized or the API is unavailable. No local routing details were shown.',
       }),
       ephemeral: true,
     });
     return;
   }
   await interaction.reply({
-    ...statusMessage({ title: 'Nexus Status', tone: 'info', description: renderStatus(status) }),
+    ...statusMessage({ title: 'Connection Status', tone: 'info', description: renderStatus(status) }),
     ephemeral: true,
   });
 };

@@ -10,6 +10,7 @@ import {
   replyError,
 } from '../utils/commandSupport.js';
 import {
+  appNameFrom,
   buildEmbed,
   escapeMarkdown,
   formatDiscordTime,
@@ -19,13 +20,19 @@ import {
 
 const VERIFICATION_CODE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+/** Markdown-safe " in <app name>" suffix, or an empty string when the deployment name is unknown. */
+const inAppSuffix = (apiService) => {
+  const appName = appNameFrom(apiService);
+  return appName ? ` in ${escapeMarkdown(appName)}` : '';
+};
+
 export const data = new SlashCommandBuilder()
   .setName('verify')
-  .setDescription('Link this Discord account to Nexus with a verification code.')
+  .setDescription('Link this Discord account with a verification code.')
   .addStringOption((option) =>
     option
       .setName('code')
-      .setDescription('Verification code from your Nexus account settings.')
+      .setDescription('Verification code from your account settings.')
       .setMinLength(36)
       .setMaxLength(36)
       .setRequired(true),
@@ -46,7 +53,7 @@ export const execute = async (interaction, { logger, apiService, sessions }) => 
       ...statusMessage({
         title: 'Verification Issue',
         tone: 'danger',
-        description: 'Copy the complete verification code from your Nexus account settings.',
+        description: `Copy the complete verification code from your account settings${inAppSuffix(apiService)}.`,
       }),
       ephemeral: true,
     });
@@ -56,7 +63,7 @@ export const execute = async (interaction, { logger, apiService, sessions }) => 
   await deferEphemeral(interaction);
   try {
     if (!apiService || !sessions) {
-      throw new TypeError('The Nexus verification service is unavailable.');
+      throw new TypeError('The verification service is unavailable.');
     }
     const preview = await apiService.previewAccountLink(
       actorFromInteraction(interaction, 'verify'),
@@ -69,7 +76,7 @@ export const execute = async (interaction, { logger, apiService, sessions }) => 
     );
     const intentId = `${preview?.intent?.id ?? ''}`;
     if (!/^[a-zA-Z0-9]{64}$/.test(intentId)) {
-      throw new TypeError('Nexus returned an invalid account-link confirmation token.');
+      throw new TypeError('The API returned an invalid account-link confirmation token.');
     }
 
     const confirmId = sessions.create({
@@ -86,11 +93,11 @@ export const execute = async (interaction, { logger, apiService, sessions }) => 
 
     await interaction.editReply({
       embeds: [buildEmbed({
-        title: 'Review Nexus Account Link',
+        title: 'Review Account Link',
         tone: 'warning',
         description: truncate(
           preview?.summary?.description
-            ?? 'Confirm to link this Discord account to Nexus.',
+            ?? `Confirm to link this Discord account to your account${inAppSuffix(apiService)}.`,
           1_200,
         ),
         fields: [
@@ -108,7 +115,7 @@ export const execute = async (interaction, { logger, apiService, sessions }) => 
             ? { name: 'Warning', value: truncate(warnings.join('\n'), 1_000), inline: false }
             : null,
         ],
-        footer: 'The code is one-time. Nexus will revalidate it when you confirm.',
+        footer: 'The code is one-time and will be revalidated when you confirm.',
       })],
       components: [new ActionRowBuilder().addComponents(
         new ButtonBuilder()
@@ -145,15 +152,15 @@ export const button = async (interaction, context) => {
       { intent_id: intentId },
     );
     if (result?.linked !== true || !result?.discord_user_id) {
-      throw new TypeError('Nexus returned an invalid account-link result.');
+      throw new TypeError('The API returned an invalid account-link result.');
     }
 
     await interaction.editReply(statusMessage({
-      title: 'Nexus Account Linked',
+      title: 'Account Linked',
       tone: 'success',
       description: result?.nation?.id
-        ? `This Discord account is now linked to Nexus nation #${result.nation.id}.`
-        : 'This Discord account is now linked to Nexus.',
+        ? `This Discord account is now linked to nation #${result.nation.id}${inAppSuffix(context.apiService)}.`
+        : `This Discord account is now linked to your account${inAppSuffix(context.apiService)}.`,
       fields: [
         result?.nation?.name
           ? { name: 'Nation', value: escapeMarkdown(truncate(result.nation.name, 100)), inline: true }
@@ -165,7 +172,7 @@ export const button = async (interaction, context) => {
           ? { name: 'Linked', value: formatDiscordTime(result.linked_at), inline: true }
           : null,
       ],
-      footer: 'Run /me to review your Nexus identity and profile-sync status.',
+      footer: 'Run /me to review your identity and profile-sync status.',
       timestamp: true,
     }));
   } catch (error) {

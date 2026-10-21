@@ -191,7 +191,7 @@ test('WAR_ROOM_CREATE delivers a fully rendered Milcom counter after checkpoint 
   assert.match(embed.fields[0].value, /War type:\*\* Ordinary/);
   assert.match(embed.fields[1].value, /Coalition @everyone Dawn \(#45\)/);
   assert.match(embed.fields[1].value, /Immediate response.*Critical.*98/s);
-  assert.match(embed.fields.at(-1).value, /Nexus objective.*Operation/s);
+  assert.match(embed.fields.at(-1).value, /Milcom objective.*Operation/s);
 
   const defensePing = sentMessages.find((message) => message.content?.includes(`<@&${ROLE_ID}>`));
   const participantPing = sentMessages.find((message) => /Participant Notifications/.test(message.content));

@@ -94,8 +94,8 @@ const auditDescription = (payload, label, deepLink) => {
     ...summaryLines(payload.summary, ['status', 'event', 'finding_count', 'finding_name', 'finding', 'description']),
     specificFinding || payload.summary.description
       ? null
-      : 'Open Nexus to review what was detected, why it matters, and how to clear it.',
-    deepLink ? markdownLink('Review audit findings in Nexus', deepLink) : null,
+      : 'Review your audit findings to see what was detected, why it matters, and how to clear it.',
+    deepLink ? markdownLink('Review audit findings', deepLink) : null,
   ].filter(Boolean).join('\n');
 };
 
@@ -128,7 +128,7 @@ export const validate = (payload) => {
 const warMapDescription = (payload, deepLink) => [
   `You have ${formatNumber(payload.summary.current_maps, { maximumFractionDigits: 0 })}/${formatNumber(payload.summary.maximum_maps, { maximumFractionDigits: 0 })} military action points in your war against **${escapeMarkdown(payload.summary.opponent_name)}**.`,
   `**War ID:** ${escapeMarkdown(payload.subject.id)}`,
-  deepLink ? markdownLink('View member wars in Nexus', deepLink) : null,
+  deepLink ? markdownLink('View member wars', deepLink) : null,
 ].filter(Boolean).join('\n');
 
 export const execute = async (command, runtime) => {
@@ -154,7 +154,7 @@ export const execute = async (command, runtime) => {
     statusLabel(status) ?? '• Updated',
     event ? escapeMarkdown(event) : null,
     ...summaryLines(payload.summary, ['status', 'event']),
-    deepLink ? markdownLink('View details in Nexus', deepLink) : null,
+    deepLink ? markdownLink('View details', deepLink) : null,
   ].filter(Boolean).join('\n');
   const occurredAt = new Date(payload.occurred_at);
   const embed = buildEmbed({

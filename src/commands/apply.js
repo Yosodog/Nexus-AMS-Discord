@@ -22,7 +22,7 @@ import {
 
 export const data = new SlashCommandBuilder()
   .setName('apply')
-  .setDescription('Submit or continue a Nexus application.')
+  .setDescription('Submit or continue an alliance application.')
   .addIntegerOption((option) =>
     option
       .setName('nationid')
@@ -53,7 +53,7 @@ export const execute = async (
       ...statusMessage({
         title: 'Application Unavailable',
         tone: 'warning',
-        description: 'Use this command inside a Discord server connected to Nexus.',
+        description: 'Use this command inside a connected Discord server.',
       }),
       ephemeral: true,
     });
@@ -63,7 +63,7 @@ export const execute = async (
   await deferEphemeral(interaction);
   try {
     if (!apiService || !sessions) {
-      throw new TypeError('The Nexus application service is unavailable.');
+      throw new TypeError('The application service is unavailable.');
     }
     if (!Number.isSafeInteger(nationId) || nationId <= 0) {
       throw new TypeError('Provide a valid positive nation ID.');
@@ -78,7 +78,7 @@ export const execute = async (
     });
     const intentId = `${preview?.intent?.id ?? ''}`;
     if (!/^[a-zA-Z0-9]{64}$/.test(intentId)) {
-      throw new TypeError('Nexus returned an invalid application confirmation token.');
+      throw new TypeError('The API returned an invalid application confirmation token.');
     }
 
     const confirmId = sessions.create({
@@ -100,7 +100,7 @@ export const execute = async (
         tone: 'warning',
         description: truncate(
           preview?.summary?.description
-            ?? 'Nexus validated this application. Confirm to submit it.',
+            ?? 'This application was validated. Confirm to submit it.',
           1_200,
         ),
         fields: [
@@ -122,11 +122,11 @@ export const execute = async (
             ? { name: 'Confirmation expires', value: formatDiscordTime(preview.intent.expires_at), inline: true }
             : null,
           warnings.length > 0
-            ? { name: 'Nexus guidance', value: truncate(warnings.join('\n'), 1_000), inline: false }
+            ? { name: 'Guidance', value: truncate(warnings.join('\n'), 1_000), inline: false }
             : null,
         ],
         url: resolveDeepLink(apiService.baseUrl, preview?.deep_link_path),
-        footer: 'Nexus will revalidate eligibility and installation capabilities when you confirm.',
+        footer: 'Eligibility and installation capabilities will be revalidated when you confirm.',
       })],
       components: [new ActionRowBuilder().addComponents(
         new ButtonBuilder()
@@ -165,7 +165,7 @@ export const button = async (interaction, context) => {
     );
     const application = result?.application;
     if (!application?.id || !application?.nation_id || !application?.status) {
-      throw new TypeError('Nexus returned an invalid application result.');
+      throw new TypeError('The API returned an invalid application result.');
     }
 
     const reconciliation = result?.reconciliation ?? {};
@@ -183,10 +183,10 @@ export const button = async (interaction, context) => {
     const description = channelId
       ? `Your private interview channel is ready: <#${channelId}>.`
       : needsAttention
-        ? 'Your application is saved in Nexus, but Discord follow-up needs staff attention.'
+        ? 'Your application is saved, but Discord follow-up needs staff attention.'
         : setupPending
-          ? 'Your application is saved. Nexus is preparing the private Discord follow-up.'
-          : 'Your application is saved in Nexus. Use the link below to continue.';
+          ? 'Your application is saved. The private Discord follow-up is being prepared.'
+          : 'Your application is saved. Use the link below to continue.';
 
     await interaction.editReply(statusMessage({
       title: needsAttention ? `${title} — Setup Needs Attention` : title,
@@ -205,7 +205,7 @@ export const button = async (interaction, context) => {
       ],
       url: resolveDeepLink(context.apiService.baseUrl, result?.deep_link_path),
       footer: needsAttention
-        ? 'Nexus recorded the issue so application staff can repair the Discord setup.'
+        ? 'The issue was recorded so application staff can repair the Discord setup.'
         : null,
       timestamp: true,
     }));

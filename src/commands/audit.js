@@ -3,13 +3,13 @@ import {
   actorFromInteraction, collectionMessage, deferEphemeral, normalizeCollection, replyError,
 } from '../utils/commandSupport.js';
 import {
-  escapeMarkdown, formatDiscordTime, markdownLink, resolveDeepLink, statusLabel,
-  statusMessage, statusTone, truncate,
+  appNameFrom, escapeMarkdown, formatDiscordTime, inAppLabel, markdownLink, resolveDeepLink,
+  statusLabel, statusMessage, statusTone, truncate,
 } from '../utils/discordUi.js';
 
 export const data = new SlashCommandBuilder()
   .setName('audit')
-  .setDescription('Review and manage your active Nexus audit findings.')
+  .setDescription('Review and manage your active audit findings.')
   .addSubcommand((subcommand) => subcommand.setName('status').setDescription('View your active audit findings.'))
   .addSubcommand((subcommand) => subcommand.setName('explain').setDescription('Explain an audit finding and how to correct it.')
     .addStringOption((option) => option.setName('finding').setDescription('Audit finding').setRequired(true).setAutocomplete(true)))
@@ -119,7 +119,7 @@ const confirmationMessage = (action, finding, state, confirmId, cancelId) => {
   return statusMessage({
     title: isSnooze ? 'Confirm Audit Snooze' : 'Confirm Audit Acknowledgement',
     tone: 'warning',
-    description: `You are about to ${isSnooze ? 'snooze reminders for' : 'acknowledge'} ${escapeMarkdown(findingReference(finding))}. Nexus will revalidate the finding when you confirm.`,
+    description: `You are about to ${isSnooze ? 'snooze reminders for' : 'acknowledge'} ${escapeMarkdown(findingReference(finding))}. The finding will be revalidated when you confirm.`,
     fields: [
       { name: 'Finding', value: escapeMarkdown(findingReference(finding)) },
       isSnooze ? { name: 'Duration', value: `${state.hours} hours`, inline: true } : null,
@@ -127,7 +127,7 @@ const confirmationMessage = (action, finding, state, confirmId, cancelId) => {
     ],
     footer: isSnooze
       ? 'The finding remains active while reminders are snoozed.'
-      : 'The acknowledgement is recorded in Nexus.',
+      : 'The acknowledgement is recorded.',
     components: [new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(confirmId)
@@ -145,7 +145,7 @@ const findingDetailMessage = (finding, baseUrl) => statusMessage({
     ? escapeMarkdown(finding.plain_language_summary)
     : finding?.description
       ? escapeMarkdown(finding.description)
-      : 'Nexus did not provide a summary for this finding.',
+      : 'No summary was provided for this finding.',
   fields: [
     finding?.remediation_guidance
       ? { name: 'How to correct', value: escapeMarkdown(finding.remediation_guidance) }
@@ -243,9 +243,10 @@ export const execute = async (interaction, context) => {
       variant: 'audit',
       description: [
         'Active findings, deadlines, and reminder status for your linked nation.',
-        markdownLink('Open the audit center in Nexus', resolveDeepLink(context.apiService.baseUrl, '/audit')),
+        markdownLink(inAppLabel('Open the audit center', appNameFrom(context.apiService)), resolveDeepLink(context.apiService.baseUrl, '/audit')),
       ].filter(Boolean).join('\n'),
       baseUrl: context.apiService.baseUrl,
+      appName: appNameFrom(context.apiService),
       pageSize: 3,
     }));
   } catch (error) {
@@ -279,7 +280,7 @@ export const button = async (interaction, context) => {
         1000,
       )),
       footer: acknowledged
-        ? 'Acknowledgement saved in Nexus.'
+        ? 'Acknowledgement saved.'
         : 'The finding remains active until it is resolved.',
     }));
   } catch (error) { await replyError(interaction, error); }

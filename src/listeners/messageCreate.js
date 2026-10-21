@@ -140,7 +140,7 @@ async function handleIntelReport(message, content, apiService, logger, connectio
       ...statusMessage({
         title: 'Intel Report Not Saved',
         tone: 'danger',
-        description: 'Nexus could not save that report. Try posting it again in a moment.',
+        description: 'That report could not be saved. Try posting it again in a moment.',
       }),
       allowedMentions: { parse: [], repliedUser: false },
     }).catch(() => {});

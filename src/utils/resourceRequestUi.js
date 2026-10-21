@@ -38,8 +38,8 @@ export const resourcePickerPayload = ({ commandName, interaction, sessions, acco
     title: `${requestLabel(kind)} Resource Draft`,
     tone: 'info',
     description: kind === 'war-aid'
-      ? 'Choose up to five resources, then enter positive whole-number amounts. Nexus validates eligibility before submission.'
-      : 'Choose up to five resources, then enter positive amounts with up to two decimal places. Nexus validates balances and limits.',
+      ? 'Choose up to five resources, then enter positive whole-number amounts. Eligibility is validated before submission.'
+      : 'Choose up to five resources, then enter positive amounts with up to two decimal places. Balances and limits are validated before submission.',
     fields: [
       { name: kind === 'withdrawal' ? 'Source account' : 'Destination account', value: accountLabel(account), inline: true },
       note ? { name: 'Note', value: truncate(note, 500) } : null,
@@ -88,7 +88,7 @@ const reviewPayload = ({ interaction, context, state }) => {
     embeds: [buildEmbed({
       title: `Review ${requestLabel(state.kind)} Draft`,
       tone: 'warning',
-      description: 'Check the account and amounts before asking Nexus to validate the draft.',
+      description: 'Check the account and amounts before the draft is validated.',
       fields: [
         {
           name: state.kind === 'withdrawal' ? 'Source account' : 'Destination account',
@@ -98,7 +98,7 @@ const reviewPayload = ({ interaction, context, state }) => {
         state.note ? { name: 'Note', value: truncate(state.note, 500) } : null,
         { name: 'Resources', value: formatResources(state.amounts) },
       ],
-      footer: 'Amounts remain decimal strings in the API payload; Nexus performs all calculations.',
+      footer: 'Amounts remain decimal strings in the API payload; all calculations happen server-side.',
     })],
     components: [new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(editId).setLabel('Add or change resources').setStyle(ButtonStyle.Secondary),
@@ -141,7 +141,7 @@ export const handleResourceButton = async (interaction, context) => {
     await interaction.update(statusMessage({
       title: `${requestLabel(state.kind)} Draft Cancelled`,
       tone: 'neutral',
-      description: 'No request was submitted to Nexus.',
+      description: 'No request was submitted.',
     }));
     return;
   }
@@ -174,7 +174,7 @@ export const handleResourceButton = async (interaction, context) => {
           title: 'Confirm War Aid Request',
           tone: 'warning',
           description: truncate(
-            review?.summary ?? 'Nexus validated the request. Confirm to submit it for review.',
+            review?.summary ?? 'The request was validated. Confirm to submit it for review.',
             1200,
           ),
           fields: [
@@ -185,7 +185,7 @@ export const handleResourceButton = async (interaction, context) => {
               ? { name: 'Review expires', value: formatDiscordTime(review.intent.expires_at), inline: true }
               : null,
           ],
-          footer: 'These amounts came from the Nexus review response.',
+          footer: 'These amounts came from the validated review.',
         })],
         components: [new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId(confirmId).setLabel('Confirm request').setStyle(ButtonStyle.Success),
@@ -210,8 +210,8 @@ export const handleResourceButton = async (interaction, context) => {
         title: 'Confirm Withdrawal',
         tone: 'warning',
         description: draft?.review?.requires_approval
-          ? 'Nexus validated this withdrawal. It exceeds an automatic withdrawal limit and will enter staff review after confirmation.'
-          : 'Nexus validated this withdrawal for automatic sending. Confirm or cancel.',
+          ? 'This withdrawal was validated. It exceeds an automatic withdrawal limit and will enter staff review after confirmation.'
+          : 'This withdrawal was validated for automatic sending. Confirm or cancel.',
         fields: [
           { name: 'Source account', value: accountLabel(authoritativeAccount), inline: true },
           draft?.withdrawal?.status
@@ -225,7 +225,7 @@ export const handleResourceButton = async (interaction, context) => {
             ? { name: 'Draft expires', value: formatDiscordTime(draft.withdrawal.expires_at), inline: true }
             : null,
         ],
-        footer: 'These normalized amounts came from the Nexus withdrawal draft.',
+        footer: 'These normalized amounts came from the validated withdrawal draft.',
       })],
       components: [new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(confirmId).setLabel('Confirm').setStyle(ButtonStyle.Success),
@@ -245,7 +245,7 @@ export const handleWarAidDecision = async (interaction, context) => {
     await interaction.editReply(statusMessage({
       title: 'War Aid Request Submitted',
       tone: 'success',
-      description: truncate(result?.message ?? 'Nexus accepted the war aid request for staff review.', 1200),
+      description: truncate(result?.message ?? 'The war aid request was accepted for staff review.', 1200),
       fields: [
         result?.id !== undefined ? { name: 'Request', value: `#${result.id}`, inline: true } : null,
         context.session.state.account !== undefined
@@ -288,7 +288,7 @@ export const handleWithdrawalDecision = async (interaction, context) => {
       tone: confirmed ? 'success' : 'neutral',
       description: truncate(
         result?.message ?? (confirmed
-          ? 'Nexus accepted the withdrawal for processing.'
+          ? 'The withdrawal was accepted for processing.'
           : 'The withdrawal draft was cancelled before funds were sent.'),
         1200,
       ),

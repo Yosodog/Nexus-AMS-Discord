@@ -108,7 +108,7 @@ test('/help defaults to a categorized ephemeral overview', async () => {
   await execute(interaction, {});
 
   const embed = embedJson(interaction.replies[0]);
-  assert.equal(embed.title, 'Nexus Discord Help');
+  assert.equal(embed.title, 'Discord Command Help');
   assert.match(embed.fields.find(({ name }) => name === 'Member tools').value, /\/accounts/);
   assert.match(embed.fields.find(({ name }) => name === 'Getting started').value, /\/ping/);
 });

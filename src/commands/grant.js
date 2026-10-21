@@ -4,12 +4,13 @@ import {
   normalizeCollection, replyError,
 } from '../utils/commandSupport.js';
 import {
+  appNameFrom,
   buildEmbed, formatDiscordTime, formatMoney, resolveDeepLink, statusLabel, statusMessage, truncate,
 } from '../utils/discordUi.js';
 
-export const data = new SlashCommandBuilder().setName('grant').setDescription('Browse and apply for Nexus grants.')
+export const data = new SlashCommandBuilder().setName('grant').setDescription('Browse and apply for alliance grants.')
   .addSubcommand((sub) => sub.setName('browse').setDescription('Browse grant programs.')
-    .addBooleanOption((option) => option.setName('eligible_only').setDescription('Only show programs Nexus says you are eligible for.')))
+    .addBooleanOption((option) => option.setName('eligible_only').setDescription('Only show programs you are eligible for.')))
   .addSubcommand((sub) => sub.setName('apply').setDescription('Apply for a grant.')
     .addStringOption((option) => option.setName('grant').setDescription('Grant program').setRequired(true).setAutocomplete(true))
     .addStringOption((option) => option.setName('account').setDescription('Destination account').setRequired(true).setAutocomplete(true)))
@@ -52,9 +53,9 @@ export const execute = async (interaction, context) => {
       await interaction.editReply(collectionMessage({
         title: 'Grant Programs', collection: normalizeCollection(result), empty: 'No matching grant programs.',
         commandName: 'grant', userId: interaction.user.id, sessions: context.sessions,
-        variant: 'grant-program', baseUrl: context.apiService.baseUrl,
+        variant: 'grant-program', baseUrl: context.apiService.baseUrl, appName: appNameFrom(context.apiService),
         description: eligibleOnly
-          ? 'Programs Nexus currently marks your nation eligible to request.'
+          ? 'Programs your nation is currently eligible to request.'
           : 'Enabled grant programs, including current eligibility guidance.',
       }));
       return;
@@ -64,7 +65,7 @@ export const execute = async (interaction, context) => {
       await interaction.editReply(collectionMessage({
         title: 'Your Grant Requests', collection: normalizeCollection(result), empty: 'No grant requests found.',
         commandName: 'grant', userId: interaction.user.id, sessions: context.sessions,
-        variant: 'request', baseUrl: context.apiService.baseUrl,
+        variant: 'request', baseUrl: context.apiService.baseUrl, appName: appNameFrom(context.apiService),
         description: 'Grant requests submitted by your nation, newest first.',
       }));
       return;
@@ -95,7 +96,7 @@ export const execute = async (interaction, context) => {
         title: 'Review Grant Request',
         tone: 'warning',
         description: truncate(
-          preview?.summary ?? 'Nexus validated this grant request. Confirm to submit it.',
+          preview?.summary ?? 'This grant request was validated. Confirm to submit it.',
           1200,
         ),
         fields: [
@@ -112,7 +113,7 @@ export const execute = async (interaction, context) => {
             ? { name: 'Preview expires', value: formatDiscordTime(preview.intent.expires_at), inline: true }
             : null,
         ],
-        footer: 'Nexus will revalidate eligibility when you confirm.',
+        footer: 'Eligibility will be revalidated when you confirm.',
       })],
       components: [new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(confirmId).setLabel('Confirm request').setStyle(ButtonStyle.Success),
@@ -132,7 +133,7 @@ export const button = async (interaction, context) => {
     await interaction.editReply(statusMessage({
       title: type === 'city' ? 'City Grant Request Submitted' : 'Grant Request Submitted',
       tone: 'success',
-      description: truncate(result?.message ?? 'Nexus accepted the request for processing.', 1200),
+      description: truncate(result?.message ?? 'The request was accepted for processing.', 1200),
       fields: [
         result?.id !== undefined ? { name: 'Request', value: `#${result.id}`, inline: true } : null,
         context.session.state.accountId !== undefined

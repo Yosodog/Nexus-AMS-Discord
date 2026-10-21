@@ -913,6 +913,42 @@ test('ApiService preserves Nexus metadata for the Operations projection', async 
   });
 });
 
+test('ApiService remembers the deployment app name reported in response meta', async () => {
+  const service = createApiService();
+  assert.equal(service.appName, null);
+
+  service.http.request = async () => ({
+    data: { data: { accounts: [] }, meta: { contract_version: 1, app_name: '  Rose Command  ' } },
+  });
+  await service.getMyAccounts(ACTOR);
+  assert.equal(service.appName, 'Rose Command');
+
+  service.http.request = async () => ({
+    data: { data: { accounts: [] }, meta: { contract_version: 1 } },
+  });
+  await service.getMyAccounts(ACTOR);
+  assert.equal(service.appName, 'Rose Command', 'a response without app_name keeps the last known name');
+
+  service.http.request = async () => {
+    const error = new Error('Forbidden');
+    error.response = {
+      status: 403,
+      data: {
+        error: { code: 'FORBIDDEN', message: 'You do not have permission.' },
+        meta: { contract_version: 1, app_name: 'Lily Ops' },
+      },
+    };
+    throw error;
+  };
+  await assert.rejects(
+    () => service.getMyAccounts(ACTOR),
+    (error) => error instanceof ApiContractError
+      && error.code === 'FORBIDDEN'
+      && error.appName === 'Lily Ops',
+  );
+  assert.equal(service.appName, 'Lily Ops');
+});
+
 test('ApiService actor transport rejects missing data and unsupported contract versions', async () => {
   for (const envelope of [
     { meta: { contract_version: 1 } },
@@ -925,7 +961,7 @@ test('ApiService actor transport rejects missing data and unsupported contract v
       () => service.getMyAccounts(ACTOR),
       (error) => error instanceof ApiContractError
         && error.code === 'INVALID_RESPONSE'
-        && error.message === 'Nexus returned an unsupported Discord response contract.',
+        && error.message === 'The API returned an unsupported Discord response contract.',
     );
   }
 });
@@ -940,7 +976,7 @@ test('ApiService actor transport rejects malformed error envelopes', async () =>
     () => service.getMyAccounts(ACTOR),
     (error) => error instanceof ApiContractError
       && error.code === 'INVALID_RESPONSE'
-      && error.message === 'Nexus returned a malformed Discord error response.',
+      && error.message === 'The API returned a malformed Discord error response.',
   );
 });
 

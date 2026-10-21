@@ -32,14 +32,14 @@ const freshnessField = (freshness) => {
 
 export const identityMessage = (identity, baseUrl) => {
   if (identity?.contract_version !== 1 || !['ready', 'unlinked', 'ambiguous', 'unavailable'].includes(identity?.state)) {
-    throw new TypeError('Nexus returned an invalid identity projection.');
+    throw new TypeError('The API returned an invalid identity projection.');
   }
   if (identity.state !== 'ready') {
     return {
       embeds: [buildEmbed({
-        title: 'Nexus Identity',
+        title: 'Member Identity',
         tone: 'warning',
-        description: escapeMarkdown(truncate(identity.message ?? 'No available Nexus identity was found.', 1_000)),
+        description: escapeMarkdown(truncate(identity.message ?? 'No available member identity was found.', 1_000)),
       })],
       allowedMentions: { parse: [] },
     };
@@ -47,12 +47,12 @@ export const identityMessage = (identity, baseUrl) => {
 
   const nationId = integer(identity?.nation?.id);
   if (!nationId || typeof identity?.nation?.name !== 'string') {
-    throw new TypeError('Nexus returned an incomplete identity projection.');
+    throw new TypeError('The API returned an incomplete identity projection.');
   }
   const nexusUrl = resolveDeepLink(baseUrl, identity.deep_link_path);
   return {
     embeds: [buildEmbed({
-      title: 'Nexus Identity',
+      title: 'Member Identity',
       tone: 'info',
       description: `**${markdownLink(identity.display_name ?? identity.nation.leader_name, nexusUrl)}**`,
       fields: [
@@ -73,7 +73,7 @@ export const identityMessage = (identity, baseUrl) => {
           : null,
         freshnessField(identity.freshness),
       ],
-      footer: 'Identity and visibility are determined by Nexus.',
+      footer: 'Identity and visibility are determined by alliance records, not Discord.',
     })],
     allowedMentions: { parse: [] },
   };
@@ -82,7 +82,7 @@ export const identityMessage = (identity, baseUrl) => {
 export const nationMessage = (nation) => {
   const nationId = integer(nation?.id);
   if (nation?.contract_version !== 1 || nation?.kind !== 'nation' || !nationId || typeof nation?.name !== 'string') {
-    throw new TypeError('Nexus returned an invalid nation projection.');
+    throw new TypeError('The API returned an invalid nation projection.');
   }
   return {
     embeds: [buildEmbed({
@@ -104,8 +104,8 @@ export const nationMessage = (nation) => {
         freshnessField(nation.freshness),
       ],
       footer: nation?.freshness?.state === 'stale'
-        ? 'Nexus marked this cached projection stale.'
-        : 'Public-safe projection supplied by Nexus.',
+        ? 'This cached projection is marked stale.'
+        : 'Public-safe cached projection.',
     })],
     allowedMentions: { parse: [] },
   };
@@ -114,7 +114,7 @@ export const nationMessage = (nation) => {
 export const allianceMessage = (alliance) => {
   const allianceId = integer(alliance?.id);
   if (alliance?.contract_version !== 1 || alliance?.kind !== 'alliance' || !allianceId || typeof alliance?.name !== 'string') {
-    throw new TypeError('Nexus returned an invalid alliance projection.');
+    throw new TypeError('The API returned an invalid alliance projection.');
   }
   return {
     embeds: [buildEmbed({
@@ -132,8 +132,8 @@ export const allianceMessage = (alliance) => {
         freshnessField(alliance.freshness),
       ],
       footer: alliance?.freshness?.state === 'stale'
-        ? 'Nexus marked this cached projection stale.'
-        : 'Public-safe projection supplied by Nexus.',
+        ? 'This cached projection is marked stale.'
+        : 'Public-safe cached projection.',
     })],
     allowedMentions: { parse: [] },
   };

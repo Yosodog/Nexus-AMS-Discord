@@ -66,13 +66,13 @@ const accountLabel = (account) => truncate(account?.account_name ?? `Account #${
 const noOptionsMessage = () => statusMessage({
   title: 'Resources No Longer Actionable',
   tone: 'neutral',
-  description: 'No single eligible Nexus account can currently fund the complete withdrawal. No intent was created and no funds were moved.',
-  footer: 'Balances and the nation shortfall were recalculated by Nexus.',
+  description: 'No single eligible account can currently fund the complete withdrawal. No intent was created and no funds were moved.',
+  footer: 'Balances and the nation shortfall were recalculated.',
 });
 
 const accountSelectorMessage = (control, accounts) => ({
   embeds: [buildEmbed({
-    title: 'Choose a Nexus Account',
+    title: 'Choose an Account',
     tone: 'finance',
     description: 'Each option can fund the complete 12-turn withdrawal. Accounts will never be combined.',
     fields: accounts.slice(0, 25).map((account) => ({
@@ -84,7 +84,7 @@ const accountSelectorMessage = (control, accounts) => ({
     })),
     footer: accounts.length > 25
       ? 'Discord can display only the first 25 eligible accounts.'
-      : 'Nexus will revalidate the selected account before creating a preview.',
+      : 'The selected account will be revalidated before a preview is created.',
   })],
   components: [new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
@@ -120,8 +120,8 @@ const fulfillmentPreviewMessage = (control, draft) => {
       title: 'Confirm Resource Shortfall Fulfillment',
       tone: 'warning',
       description: review.requires_approval
-        ? 'Nexus validated the full withdrawal. Confirmation will submit it for staff review.'
-        : 'Nexus validated the full withdrawal. Confirmation will dispatch it through the normal bank workflow.',
+        ? 'The full withdrawal was validated. Confirmation will submit it for staff review.'
+        : 'The full withdrawal was validated. Confirmation will dispatch it through the normal bank workflow.',
       fields: [
         { name: 'Source account', value: escapeMarkdown(truncate(account.name ?? `Account #${account.id}`, 100)), inline: true },
         { name: 'Mode', value: fulfillment.mode === 'mmr_purchase_withdrawal' ? 'MMR-assisted purchase + withdrawal' : 'Account withdrawal', inline: true },
@@ -141,7 +141,7 @@ const fulfillmentPreviewMessage = (control, draft) => {
       ],
       footer: fulfillment.mode === 'mmr_purchase_withdrawal'
         ? 'The MMR purchase becomes final on confirmation. A later denial returns resources, not the purchase charge.'
-        : 'Nexus will revalidate the shortfall, balances, blockade, limits, and pending withdrawals on confirmation.',
+        : 'The shortfall, balances, blockade, limits, and pending withdrawals will be revalidated on confirmation.',
     })],
     components: [new ActionRowBuilder().addComponents(
       new ButtonBuilder()
@@ -165,8 +165,8 @@ const resultMessage = (result) => {
     title: pendingReview ? 'Withdrawal Submitted for Review' : 'Resources Dispatched',
     tone: pendingReview ? 'warning' : 'success',
     description: pendingReview
-      ? 'Nexus created the complete withdrawal and routed it through the normal staff approval process.'
-      : 'Nexus created and dispatched the complete withdrawal through the normal bank process.',
+      ? 'The complete withdrawal was created and routed through the normal staff approval process.'
+      : 'The complete withdrawal was created and dispatched through the normal bank process.',
     fields: [
       transaction.id ? { name: 'Transaction', value: `#${transaction.id}`, inline: true } : null,
       { name: 'Status', value: statusLabel(result?.fulfillment_status), inline: true },
@@ -175,8 +175,8 @@ const resultMessage = (result) => {
       purchase ? { name: 'Purchase status', value: 'Final', inline: true } : null,
     ],
     footer: purchase
-      ? 'If this withdrawal is later denied or refunded, its resources return to the Nexus account; the MMR charge remains final.'
-      : 'The normal Nexus withdrawal, audit, and refund rules apply.',
+      ? 'If this withdrawal is later denied or refunded, its resources return to the selected account; the MMR charge remains final.'
+      : 'The normal withdrawal, audit, and refund rules apply.',
   });
 };
 
@@ -211,7 +211,7 @@ export const handleResourceShortfallInteraction = async (interaction, context) =
     if (control.action === 's') {
       await interaction.deferUpdate();
       const accountId = `${interaction.values?.[0] ?? ''}`;
-      if (!/^\d{1,20}$/.test(accountId)) throw new TypeError('Choose a valid Nexus account.');
+      if (!/^\d{1,20}$/.test(accountId)) throw new TypeError('Choose a valid account.');
       await draftForAccount(interaction, context, control, accountId);
       return;
     }

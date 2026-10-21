@@ -3,7 +3,7 @@ import { deferEphemeral, replyError } from '../utils/commandSupport.js';
 import { applicationReviewForDiscordContext } from './applications.js';
 
 export const data = new ContextMenuCommandBuilder()
-  .setName('Review Nexus application')
+  .setName('Review application')
   .setType(ApplicationCommandType.User)
   .setDMPermission(false);
 

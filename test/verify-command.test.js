@@ -120,7 +120,7 @@ test('/verify previews then confirms an installation-bound Nexus account link', 
   });
   assert.equal(calls[0].actor.discordUserId, USER_ID);
   assert.equal(calls[0].actor.discordInteractionId, interaction.id);
-  assert.equal(embedJson(interaction.edits[0]).title, 'Review Nexus Account Link');
+  assert.equal(embedJson(interaction.edits[0]).title, 'Review Account Link');
 
   const session = store.resolve(customId(interaction.edits[0]), USER_ID);
   assert.equal(session.commandName, 'verify');
@@ -134,7 +134,7 @@ test('/verify previews then confirms an installation-bound Nexus account link', 
   assert.equal(calls[1].actor.discordUserId, USER_ID);
   assert.equal(calls[1].actor.discordInteractionId, buttonInteraction.id);
   const success = embedJson(buttonInteraction.edits[0]);
-  assert.equal(success.title, 'Nexus Account Linked');
+  assert.equal(success.title, 'Account Linked');
   assert.match(success.description, /nation #9001/i);
   assert.deepEqual(buttonInteraction.edits[0].components, []);
 });

@@ -1,5 +1,6 @@
 import { SlashCommandBuilder } from 'discord.js';
 import { actorFromInteraction, collectionMessage, deferEphemeral, normalizeCollection, replyError } from '../utils/commandSupport.js';
+import { appNameFrom } from '../utils/discordUi.js';
 
 export const data = new SlashCommandBuilder()
   .setName('raid').setDescription('Find recommended raid targets.')
@@ -37,6 +38,7 @@ export const execute = async (interaction, context) => {
       variant: 'raid',
       description: `Up to ${filters.limit} targets for ${filters.nation_id ? `nation #${filters.nation_id}` : 'your linked nation'}, sorted by ${filters.sort}.`,
       baseUrl: context.apiService.baseUrl,
+      appName: appNameFrom(context.apiService),
       pageSize: 2,
     }));
   } catch (error) { await replyError(interaction, error); }

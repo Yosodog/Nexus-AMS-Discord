@@ -119,7 +119,7 @@ test('audit status renders Nexus summary, remediation, evidence, due date, and f
   assert.equal(interaction.replies.length, 1);
   const embed = embedJson(interaction.replies[0]);
   assert.equal(embed.title, 'Your Audit Findings');
-  assert.match(embed.description, /Open the audit center in Nexus/);
+  assert.match(embed.description, /\[Open the audit center\]\(/);
   assert.match(embed.fields[0].name, /Warchest below requirement/);
   assert.match(embed.fields[0].value, /Your warchest is below the alliance minimum/);
   assert.match(embed.fields[0].value, /How to correct/);

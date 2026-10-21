@@ -3,10 +3,11 @@ import {
   accountChoices, actorFromInteraction, collectionMessage, deferEphemeral,
   executeAutocomplete, normalizeCollection, replyError,
 } from '../utils/commandSupport.js';
+import { appNameFrom } from '../utils/discordUi.js';
 
 export const data = new SlashCommandBuilder()
   .setName('accounts')
-  .setDescription('View your linked Nexus banking accounts.')
+  .setDescription('View your linked banking accounts.')
   .addStringOption((option) => option.setName('account').setDescription('Account to view').setAutocomplete(true))
   .setDMPermission(false);
 
@@ -21,13 +22,14 @@ const render = async (interaction, context, state = {}) => {
   const account = state.account ?? interaction.options?.getString?.('account') ?? undefined;
   const result = await context.apiService.getMyAccounts(actorFromInteraction(interaction), { account });
   const message = collectionMessage({
-    title: 'Your Nexus Accounts', collection: normalizeCollection(result),
+    title: 'Your Accounts', collection: normalizeCollection(result),
     empty: 'No linked accounts were found.', commandName: 'accounts', userId: interaction.user.id,
     sessions: context.sessions, state: { account }, variant: 'account',
     baseUrl: context.apiService.baseUrl,
+    appName: appNameFrom(context.apiService),
     description: account
-      ? 'Showing the selected linked account and its current Nexus balance.'
-      : 'Current balances for your linked Nexus banking accounts.',
+      ? 'Showing the selected linked account and its current balance.'
+      : 'Current balances for your linked banking accounts.',
   });
   return interaction.editReply(message);
 };

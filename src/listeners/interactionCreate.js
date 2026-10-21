@@ -32,9 +32,9 @@ const resolutionFailure = async (interaction, kinds, logger, error) => {
   } else if (kinds.chat || kinds.context || kinds.button || kinds.select || kinds.modal) {
     await interaction.reply?.({
       ...statusMessage({
-        title: 'Nexus Unavailable',
+        title: 'Connection Unavailable',
         tone: 'warning',
-        description: 'This Discord guild is not connected to one active Nexus installation.',
+        description: 'This Discord server is not connected to one active installation.',
       }),
       ephemeral: true,
     }).catch?.(() => {});
@@ -134,7 +134,7 @@ export const registerInteractionListener = (
             ...statusMessage({
               title: 'Control Expired',
               tone: 'warning',
-              description: 'This control expired or belongs to another Nexus connection. Run the command again to get fresh controls.',
+              description: 'This control expired or belongs to another connection. Run the command again to get fresh controls.',
             }),
             ephemeral: true,
           }).catch(() => {});
