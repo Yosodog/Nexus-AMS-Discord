@@ -17,20 +17,22 @@ import {
   truncate,
 } from '../utils/discordUi.js';
 
+const HIDDEN_BALANCES_MESSAGE = 'Hidden. You do not have permission to view alliance bank balances.';
+
 export const data = new SlashCommandBuilder()
   .setName('sweepbank')
   .setDescription('Sweep the main bank into the primary offshore.')
   .addStringOption((option) =>
     option
       .setName('note')
-      .setDescription('Optional audit note for the Nexus sweep log.')
+      .setDescription('Optional note for the sweep audit log.')
       .setMaxLength(255)
       .setRequired(false),
   )
   .setDMPermission(false);
 
 export const help = Object.freeze({
-  audience: 'Staff',
+  audience: 'Administrators',
   topic: Object.freeze(['finance', 'staff']),
   examples: Object.freeze(['/sweepbank', '/sweepbank note:<note>']),
   related: Object.freeze(['accounts', 'transactions', 'audit']),
@@ -94,7 +96,7 @@ export const execute = async (interaction, { logger, apiService, sessions }) => 
     }
     const intentId = `${response?.intent?.id ?? ''}`;
     if (!/^[a-zA-Z0-9]{64}$/.test(intentId)) {
-      throw new TypeError('Nexus returned an invalid bank sweep confirmation token.');
+      throw new TypeError('Received an invalid bank sweep confirmation token.');
     }
     const confirmId = sessions.create({
       commandName: 'sweepbank',
@@ -122,7 +124,12 @@ export const execute = async (interaction, { logger, apiService, sessions }) => 
             value: summary?.offshore?.alliance_id ? `#${summary.offshore.alliance_id}` : 'Unknown',
             inline: true,
           },
-          { name: 'Resources', value: formatResourceSummary(summary.resources ?? {}) },
+          {
+            name: 'Resources',
+            value: summary.resources_hidden === true
+              ? HIDDEN_BALANCES_MESSAGE
+              : formatResourceSummary(summary.resources ?? {}),
+          },
           summary.note
             ? { name: 'Audit note', value: escapeMarkdown(truncate(summary.note, 500)) }
             : null,
@@ -130,10 +137,10 @@ export const execute = async (interaction, { logger, apiService, sessions }) => 
             ? { name: 'Confirmation expires', value: formatDiscordTime(response.intent.expires_at), inline: true }
             : null,
           warnings.length
-            ? { name: 'Nexus warning', value: escapeMarkdown(truncate(warnings.join('\n'), 1_000)) }
+            ? { name: 'Warning', value: escapeMarkdown(truncate(warnings.join('\n'), 1_000)) }
             : null,
         ],
-        footer: 'Nexus will refresh balances, permission, and destination again when you confirm.',
+        footer: 'Balances, permissions, and the destination are checked again when you confirm.',
       })],
       components: [new ActionRowBuilder().addComponents(
         new ButtonBuilder()
@@ -169,14 +176,16 @@ export const button = async (interaction, context) => {
     );
     if (response?.reconciliation_required === true) {
       await interaction.editReply({
-        embeds: [buildErrorEmbed('Nexus recorded an ambiguous bank response. Do not retry; reconcile this transfer in Nexus.')],
+        embeds: [buildErrorEmbed(
+          `The bank response was ambiguous and the transfer was recorded for manual reconciliation. Do not retry; reconcile this transfer in ${appNameFrom(response) ?? 'the admin panel'}.`,
+        )],
         components: [],
         allowedMentions: { parse: [] },
       });
       return;
     }
     if (response?.swept !== true || !response?.transfer?.id) {
-      throw new TypeError('Nexus returned an invalid bank sweep result.');
+      throw new TypeError('Received an invalid bank sweep result.');
     }
     await interaction.editReply({
       embeds: [buildSuccessEmbed(response, context.apiService.baseUrl)],
@@ -197,8 +206,9 @@ export const button = async (interaction, context) => {
 
 function buildSuccessEmbed(response, baseUrl) {
   const offshoreName = response?.offshore?.name ?? 'Primary Offshore';
-  const transferPayload = response?.transfer?.payload ?? {};
-  const resourceSummary = formatResourceSummary(transferPayload);
+  const resourceSummary = response?.resources_hidden === true
+    ? HIDDEN_BALANCES_MESSAGE
+    : formatResourceSummary(response?.transfer?.payload ?? {});
   const offshoreUrl = resolveDeepLink(
     baseUrl,
     response?.offshore?.deep_link_path ?? response?.offshore?.url,
@@ -226,7 +236,7 @@ function buildSuccessEmbed(response, baseUrl) {
         }
         : null,
     ],
-    footer: 'The sweep was recorded in the Nexus audit log.',
+    footer: 'The sweep was recorded in the audit log.',
     timestamp: true,
   });
 }
@@ -252,9 +262,14 @@ function buildErrorEmbed(message) {
     title: 'Sweep Failed',
     tone: 'danger',
     description: truncate(message, 4_096),
-    footer: 'Review the Nexus error before retrying.',
+    footer: 'Review the error before retrying.',
     timestamp: true,
   });
+}
+
+function appNameFrom(response) {
+  const name = typeof response?.app_name === 'string' ? response.app_name.trim() : '';
+  return name !== '' ? escapeMarkdown(truncate(name, 100)) : null;
 }
 
 function formatResourceSummary(payload) {
