@@ -37,7 +37,7 @@ export const archiveWarCounterRoom = async ({
   guildId,
   titlePrefix = '[Archived] ',
   lock = true,
-  reason = 'Nexus AMS war counter archive',
+  reason = 'War counter archive',
   logContext = {},
 }) => {
   const normalizedChannelId = typeof channelId === 'string' ? channelId.trim() : '';

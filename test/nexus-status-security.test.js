@@ -130,7 +130,7 @@ test('connected status renders no local diagnostics for forbidden, unlinked, or 
       });
 
       assert.equal(value.replies[0].ephemeral, true);
-      assert.match(description(value), /Nexus.*authorize|not authorized/i);
+      assert.match(description(value), /not authorized/i);
       assert.doesNotMatch(description(value), /Gateway:|Route mode:|Bot permissions:|active connections/i);
     });
   }
@@ -168,7 +168,7 @@ test('authorized connected status and manager setup status retain their legitima
     logger: createLogger(),
   });
   assert.match(description(connected), /Gateway:.*ready/i);
-  assert.match(description(connected), /Nexus provider:.*available/i);
+  assert.match(description(connected), /Status provider:.*available/i);
 
   const setup = interaction({ permissions: [PermissionFlagsBits.ManageGuild] });
   await execute(setup, {

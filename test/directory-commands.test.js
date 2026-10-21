@@ -109,7 +109,7 @@ test('/who and the user context action use the same always-ephemeral Nexus proje
   await whoExecute(slash, { apiService });
   assert.equal(slash.deferPayload.ephemeral, true);
   assert.equal(calls[0].id, TARGET_ID);
-  assert.equal(embedJson(slash.edits[0]).title, 'Nexus Identity');
+  assert.equal(embedJson(slash.edits[0]).title, 'Member Identity');
   assert.deepEqual(slash.edits[0].allowedMentions, { parse: [] });
 
   const context = interaction({ targetUser: { id: TARGET_ID } });

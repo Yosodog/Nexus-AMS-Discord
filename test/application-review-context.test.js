@@ -12,7 +12,7 @@ const GUILD_ID = '323456789012345678';
 
 test('application review context action reuses the canonical staff review flow', async () => {
   const serialized = data.toJSON();
-  assert.equal(serialized.name, 'Review Nexus application');
+  assert.equal(serialized.name, 'Review application');
   assert.equal(serialized.type, ApplicationCommandType.User);
   assert.equal(connectionCommandName, 'applications');
 
@@ -23,7 +23,7 @@ test('application review context action reuses the canonical staff review flow',
     id: '423456789012345678',
     guildId: GUILD_ID,
     channelId: '523456789012345678',
-    commandName: 'Review Nexus application',
+    commandName: 'Review application',
     user: { id: USER_ID },
     targetUser: { id: APPLICANT_ID },
     deferReply: async () => {},

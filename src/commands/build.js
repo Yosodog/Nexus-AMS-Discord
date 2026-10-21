@@ -13,7 +13,7 @@ import {
 
 export const data = new SlashCommandBuilder()
   .setName('build')
-  .setDescription("View your nation's recommended city build from Nexus.")
+  .setDescription("View your nation's recommended city build.")
   .setDMPermission(false);
 
 export const help = Object.freeze({
@@ -28,7 +28,7 @@ const positiveInteger = (value) => Number.isSafeInteger(value) && value > 0;
 const finiteNumber = (value) => typeof value === 'number' && Number.isFinite(value);
 
 const auditLink = (baseUrl, path) => markdownLink(
-  'Open Audit Center in Nexus',
+  'Open Audit Center',
   resolveDeepLink(baseUrl, path),
 );
 
@@ -41,7 +41,7 @@ const validateBase = (projection) => {
     || projection.nation.name.trim() === ''
     || typeof projection?.deep_link_path !== 'string'
     || !/^\/(?!\/)/.test(projection.deep_link_path)) {
-    throw new TypeError('Nexus returned an invalid build recommendation projection.');
+    throw new TypeError('The API returned an invalid build recommendation projection.');
   }
 };
 
@@ -59,7 +59,7 @@ const validateRecommendation = (recommendation) => {
     || numericKeys.some((key) => !finiteNumber(recommendation[key]))
     || !Array.isArray(recommendation.groups)
     || recommendation.groups.length > 10) {
-    throw new TypeError('Nexus returned an invalid build recommendation projection.');
+    throw new TypeError('The API returned an invalid build recommendation projection.');
   }
 
   for (const group of recommendation.groups) {
@@ -71,7 +71,7 @@ const validateRecommendation = (recommendation) => {
       || group.items.some((item) => !isRecord(item)
         || typeof item.label !== 'string'
         || !positiveInteger(item.count))) {
-      throw new TypeError('Nexus returned an invalid build recommendation projection.');
+      throw new TypeError('The API returned an invalid build recommendation projection.');
     }
   }
 };
@@ -98,7 +98,7 @@ export const buildMessage = (projection, baseUrl) => {
           escapeMarkdown(truncate(projection.message ?? 'No current recommendation is available.', 700)),
           auditLink(baseUrl, projection.deep_link_path),
         ].join('\n\n'),
-        footer: 'Build recommendations are generated and authorized by Nexus.',
+        footer: 'Build recommendations are generated from your alliance’s build policy.',
       })],
       allowedMentions: { parse: [] },
     };
@@ -148,7 +148,7 @@ export const buildMessage = (projection, baseUrl) => {
           ? { name: 'Calculated', value: formatDiscordTime(recommendation.calculated_at), inline: true }
           : null,
       ],
-      footer: 'This recommendation is private to your linked Nexus account.',
+      footer: 'This recommendation is private to your linked account.',
     })],
     allowedMentions: { parse: [] },
   };

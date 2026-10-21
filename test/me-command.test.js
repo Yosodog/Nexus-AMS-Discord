@@ -112,11 +112,12 @@ const nonReady = (state, overrides = {}) => ({
   ...overrides,
 });
 
-const run = async (response, { baseUrl = BASE_URL, apiError = null } = {}) => {
+const run = async (response, { baseUrl = BASE_URL, apiError = null, appName = null } = {}) => {
   const interaction = makeInteraction();
   const calls = [];
   const apiService = {
     baseUrl,
+    appName,
     getMySummary: async (actor) => {
       calls.push(actor);
       if (apiError) throw apiError;
@@ -182,11 +183,11 @@ test('renders every supported non-ready state using only the Nexus message and u
     'installation_unavailable',
   ];
   for (const state of states) {
-    const { interaction } = await run(nonReady(state));
+    const { interaction } = await run(nonReady(state), { appName: 'Rose Command' });
     const embed = embedJson(interaction.replies[0]);
-    assert.match(embed.title, /Nexus Account/);
+    assert.match(embed.title, /^Rose Command Account · /);
     assert.ok(embed.description.includes(escapeMarkdown(`Nexus says this account is ${state}.`)));
-    assert.match(embed.fields.find(({ name }) => name === 'Next step').value, /Continue in Nexus/);
+    assert.match(embed.fields.find(({ name }) => name === 'Next step').value, /Continue in Rose Command/);
     assert.match(embed.fields.find(({ name }) => name === 'Next step').value, /https:\/\/nexus\.example\/settings\/identity/);
   }
 
@@ -202,7 +203,7 @@ test('renders every supported non-ready state using only the Nexus message and u
 test('renders the complete ready projection without detailed finance or military data', async () => {
   const { interaction } = await run(ready);
   const embed = embedJson(interaction.replies[0]);
-  assert.equal(embed.title, 'Nexus Account');
+  assert.equal(embed.title, 'Your Account');
   assert.ok(embed.description.includes('Your Nexus account is ready'));
   assert.match(embed.fields.find(({ name }) => name === 'Identity').value, /Ada Example/);
   assert.ok(embed.fields.find(({ name }) => name === 'Identity').value.includes(escapeMarkdown('ada.example')));
@@ -212,11 +213,12 @@ test('renders the complete ready projection without detailed finance or military
   assert.match(embed.fields.find(({ name }) => name === 'Open work').value, /Total: 3/);
   assert.match(embed.fields.find(({ name }) => name === 'Profile sync').value, /healthy/);
   assert.match(embed.fields.find(({ name }) => name === 'Freshness').value, /fresh/);
-  assert.match(embed.fields.find(({ name }) => name === 'Nexus links').value, /https:\/\/nexus\.example\/audit/);
+  assert.match(embed.fields.find(({ name }) => name === 'Links').value, /https:\/\/nexus\.example\/audit/);
+  assert.doesNotMatch(JSON.stringify(embed), /in Nexus/);
   assert.doesNotMatch(JSON.stringify(embed), /balance|finance|loan|military|spy|transaction|war/i);
   const buttons = interaction.replies[0].components[0].toJSON().components;
   assert.deepEqual(buttons.map(({ label }) => label), [
-    'Open Nexus profile',
+    'Open profile',
     'Open nation profile',
     'Open alliance profile',
     'Open audit center',
@@ -225,10 +227,20 @@ test('renders the complete ready projection without detailed finance or military
   assert.ok(buttons.every(({ style }) => style === 5));
 });
 
+test('names the deployment in the title and links when Core reports an app name', async () => {
+  const { interaction } = await run(ready, { appName: 'Rose Command' });
+  const embed = embedJson(interaction.replies[0]);
+  assert.equal(embed.title, 'Rose Command Account');
+  assert.match(embed.fields.find(({ name }) => name === 'Identity').value, /Open profile in Rose Command/);
+  assert.match(embed.fields.find(({ name }) => name === 'Nation').value, /Open nation profile in Rose Command/);
+  const buttons = interaction.replies[0].components[0].toJSON().components;
+  assert.equal(buttons[0].label, 'Open profile in Rose Command');
+});
+
 test('accepts only the three envelopes and rejects missing or wrongly typed closed-v1 fields', async () => {
   for (const response of [{ me: ready }, { data: ready }, ready]) {
     const { interaction } = await run(response);
-    assert.equal(errorTitle(interaction), 'Nexus Account');
+    assert.equal(errorTitle(interaction), 'Your Account');
   }
 
   const missingSections = ['identity', 'nation', 'alliance', 'capabilities', 'open_work', 'profile_sync', 'freshness', 'links'];

@@ -9,10 +9,10 @@ import {
 
 export const data = new SlashCommandBuilder()
   .setName('work')
-  .setDescription('Review your permission-filtered Nexus Operations queue.')
+  .setDescription('Review your permission-filtered Operations queue.')
   .addSubcommand((subcommand) => subcommand
     .setName('queue')
-    .setDescription('View work items that Nexus allows you to see.')
+    .setDescription('View work items you are allowed to see.')
     .addStringOption((option) => option.setName('type').setDescription('Operations source').setAutocomplete(true))
     .addStringOption((option) => option.setName('priority').setDescription('Priority').addChoices(
       { name: 'P0 — immediate', value: 'p0' },
@@ -40,7 +40,7 @@ export const data = new SlashCommandBuilder()
   .setDMPermission(false);
 
 export const help = Object.freeze({
-  audience: 'Nexus staff',
+  audience: 'Staff',
   topic: Object.freeze(['staff']),
   examples: Object.freeze(['/work queue', '/work queue priority:p1 blocked:Yes', '/work show item:<work item>']),
   related: Object.freeze(['requests', 'applications', 'audit']),
@@ -55,7 +55,7 @@ const actorLabel = (actor) => {
 const workLink = (item, baseUrl) => {
   const path = item?.next_action?.deep_link_path;
   const url = resolveDeepLink(baseUrl, path);
-  return url ? markdownLink(item?.next_action?.label ?? 'Open in Nexus', url) : null;
+  return url ? markdownLink(item?.next_action?.label ?? 'Open work item', url) : null;
 };
 
 const attentionLine = (item) => [
@@ -76,7 +76,7 @@ const workField = (item, baseUrl) => {
     owner ? `**Owner:** ${owner}` : null,
     item?.actors?.next_actor ? `**Next actor:** ${escapeMarkdown(titleCase(item.actors.next_actor))}` : null,
     item?.attention?.blocked
-      ? `**Blocked:** ${escapeMarkdown(item.attention.blocker_summary ?? 'Nexus reports a blocker.')}`
+      ? `**Blocked:** ${escapeMarkdown(item.attention.blocker_summary ?? 'A blocker was reported.')}`
       : null,
     item?.times?.due_at ? `**Due:** ${formatDiscordTime(item.times.due_at)}` : null,
     item?.freshness?.state
@@ -96,12 +96,12 @@ const queueMessage = (result, baseUrl) => {
   const pagination = meta.pagination ?? {};
   const unavailable = Array.isArray(meta.unavailable_sources) ? meta.unavailable_sources : [];
   const description = unavailable.length
-    ? `Nexus returned available work, but ${unavailable.map(({ label, type }) => escapeMarkdown(label ?? type)).join(', ')} could not be refreshed. Counts may be incomplete.`
-    : 'Nexus-authorized work across the Operations sources you can access.';
+    ? `Available work was returned, but ${unavailable.map(({ label, type }) => escapeMarkdown(label ?? type)).join(', ')} could not be refreshed. Counts may be incomplete.`
+    : 'Authorized work across the Operations sources you can access.';
 
   return {
     embeds: [buildEmbed({
-      title: 'Nexus Staff Work Queue',
+      title: 'Staff Work Queue',
       tone: unavailable.length ? 'warning' : 'info',
       description: items.length ? description : `${description}\n\nNo work items match these filters.`,
       fields: items.slice(0, 10).map((item) => workField(item, baseUrl)),
@@ -128,11 +128,11 @@ const detailMessage = (item, baseUrl) => {
   const baseField = workField(item, baseUrl);
   return {
     embeds: [buildEmbed({
-      title: truncate(item?.title ?? item?.work_key ?? 'Nexus Work Item', 256),
+      title: truncate(item?.title ?? item?.work_key ?? 'Work Item', 256),
       tone: item?.attention?.blocked || item?.attention?.overdue ? 'warning' : 'info',
       description: item?.summary
         ? escapeMarkdown(truncate(item.summary, 2_000))
-        : 'Nexus did not provide an additional summary for this item.',
+        : 'No additional summary was provided for this item.',
       fields: [
         { name: 'Operational status', value: baseField.value },
         facts.length ? { name: 'Safe facts', value: facts.join('\n') } : null,

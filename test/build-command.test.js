@@ -83,7 +83,7 @@ test('/build renders the actor-scoped recommendation ephemerally', async () => {
   assert.equal(actors[0].discordCommand, 'build');
   const embed = embedJson(command.edits[0]);
   assert.equal(embed.title, 'Example Nation Recommended Build');
-  assert.match(embed.description, /Open Audit Center in Nexus/);
+  assert.match(embed.description, /\[Open Audit Center\]\(/);
   assert.match(embed.fields.find(({ name }) => name === 'Power').value, /1× Nuclear Power Plant/);
   assert.match(embed.fields.find(({ name }) => name === 'Attention').value, /2 cities/);
   assert.deepEqual(command.edits[0].allowedMentions, { parse: [] });

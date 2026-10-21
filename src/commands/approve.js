@@ -5,7 +5,7 @@ import { replyError } from '../utils/commandSupport.js';
 /** Permanent compatibility alias for the canonical /applications approval flow. */
 export const data = new SlashCommandBuilder()
   .setName('approve')
-  .setDescription('Approve an applicant through the Nexus application workflow.')
+  .setDescription('Approve an applicant through the application workflow.')
   .addUserOption((option) => option
     .setName('user')
     .setDescription('Applicant to approve')

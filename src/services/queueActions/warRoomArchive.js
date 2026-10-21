@@ -119,7 +119,7 @@ export const execute = async (command, runtime) => {
     guildId: runtime.guildId,
     titlePrefix,
     lock: payload?.archive?.lock !== false,
-    reason: `Nexus queue ${command?.id ?? 'unknown'} WAR_ROOM_ARCHIVE`,
+    reason: `Queue ${command?.id ?? 'unknown'} WAR_ROOM_ARCHIVE`,
     logContext: {
       commandId: command?.id ?? null,
       sourceType: source?.type ?? null,

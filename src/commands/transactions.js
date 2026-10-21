@@ -3,14 +3,14 @@ import {
   accountChoices, actorFromInteraction, collectionMessage, deferEphemeral,
   executeAutocomplete, normalizeCollection, replyError,
 } from '../utils/commandSupport.js';
-import { titleCase, truncate } from '../utils/discordUi.js';
+import { appNameFrom, titleCase, truncate } from '../utils/discordUi.js';
 
 const TYPES = ['all', 'deposit', 'withdrawal', 'internal', 'member-transfer'];
 const STATUSES = ['all', 'pending', 'completed', 'failed', 'needs-attention'];
 
 export const data = new SlashCommandBuilder()
   .setName('transactions')
-  .setDescription('View Nexus banking transactions.')
+  .setDescription('View your banking transactions.')
   .addStringOption((option) => option.setName('account').setDescription('Account').setRequired(true).setAutocomplete(true))
   .addStringOption((option) => {
     option.setName('type').setDescription('Transaction type');
@@ -42,7 +42,7 @@ const render = async (interaction, context, state = {}) => {
   return interaction.editReply(collectionMessage({
     title: 'Transactions', collection: normalizeCollection(result), empty: 'No matching transactions.',
     commandName: 'transactions', userId: interaction.user.id, sessions: context.sessions, state: filters,
-    variant: 'transaction', baseUrl: context.apiService.baseUrl,
+    variant: 'transaction', baseUrl: context.apiService.baseUrl, appName: appNameFrom(context.apiService),
     description: `Account #${truncate(filters.account, 64)} · Type: ${titleCase(filters.type)} · Status: ${titleCase(filters.status)}`,
   }));
 };

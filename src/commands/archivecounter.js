@@ -83,7 +83,7 @@ export const execute = async (
       await interaction.editReply({
         embeds: [
           buildErrorEmbed(
-            'Your Discord account is not linked in Nexus. Please link your Discord account in Nexus, then retry.',
+            'Your Discord account is not linked. Link it with /verify, then retry.',
             data?.error,
           ),
         ],
@@ -95,7 +95,7 @@ export const execute = async (
       await interaction.editReply({
         embeds: [
           buildErrorEmbed(
-            'Permission denied. You do not have permission to manage war counters in Nexus.',
+            'Permission denied. You do not have permission to manage war counters.',
             data?.error,
           ),
         ],
@@ -119,7 +119,7 @@ export const execute = async (
       channelId,
       guildId,
       titlePrefix: '[Archived] ',
-      reason: `Nexus direct archive for war_counter ${warCounterId}`,
+      reason: `Direct archive for war_counter ${warCounterId}`,
       logContext,
     });
   } else {
@@ -134,11 +134,11 @@ export const execute = async (
     title: 'War Counter Archived',
     tone: discordArchived ? 'success' : 'warning',
     description: [
-      `Counter **#${warCounterId}** archived in Nexus.`,
-      alreadyArchived ? 'Nexus indicated this counter was already archived.' : null,
+      `Counter **#${warCounterId}** archived.`,
+      alreadyArchived ? 'This counter was already archived.' : null,
       discordArchived
         ? `Discord thread archived and locked (<#${channelId}>).`
-        : 'Nexus archived the counter, but Discord thread archive could not be completed automatically.',
+        : 'The counter was archived, but the Discord thread archive could not be completed automatically.',
     ].filter(Boolean).join('\n'),
     fields: [
       {
@@ -153,7 +153,7 @@ export const execute = async (
         name: 'Discord Thread',
         value: discordArchived ? `<#${channelId}> · Archived and locked` : `<#${channelId}> · Follow-up required`,
         inline: true,
-      } : { name: 'Discord Thread', value: 'No channel is attached in Nexus.', inline: true },
+      } : { name: 'Discord Thread', value: 'No channel is attached to this counter.', inline: true },
       counter.archived_at || counter.updated_at ? {
         name: 'Archived',
         value: formatDiscordTime(counter.archived_at ?? counter.updated_at),
@@ -161,8 +161,8 @@ export const execute = async (
       } : null,
     ],
     footer: discordArchived
-      ? 'Nexus and Discord archive steps completed.'
-      : 'The Nexus archive is complete; staff should finish the Discord follow-up.',
+      ? 'Counter and Discord archive steps completed.'
+      : 'The counter archive is complete; staff should finish the Discord follow-up.',
     timestamp: true,
   }));
 };

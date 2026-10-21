@@ -5,6 +5,7 @@ import {
   actorFromInteraction, collectionMessage, deferEphemeral, normalizeCollection, replyError,
 } from '../utils/commandSupport.js';
 import {
+  appNameFrom,
   escapeMarkdown, formatDiscordTime, formatNumber, resolveDeepLink, statusMessage, titleCase, truncate,
 } from '../utils/discordUi.js';
 
@@ -63,7 +64,7 @@ const addEditOptions = (subcommand) => subcommand
 
 export const data = new SlashCommandBuilder()
   .setName('alerts')
-  .setDescription('Manage private Nexus alerts and watchlists.')
+  .setDescription('Manage your private alerts and watchlists.')
   .addSubcommand((subcommand) => subcommand.setName('list').setDescription('List alert state, delivery policy, and health.'))
   .addSubcommand((subcommand) => subcommand
     .setName('activity')
@@ -194,7 +195,7 @@ const subscriptionPayload = (alert) => {
   if (alert.type === 'market') {
     const { resource, direction, threshold } = alert.filter ?? {};
     if (!resource || !['above', 'below'].includes(direction) || !Number.isFinite(Number(threshold))) {
-      throw new TypeError('Nexus did not return a complete typed market filter. Edit this alert in Nexus web.');
+      throw new TypeError('The API did not return a complete typed market filter. Edit this alert on the web.');
     }
     return {
       ...payload,
@@ -208,7 +209,7 @@ const subscriptionPayload = (alert) => {
     : [];
   const targetId = alert.filter?.target_id ?? alert.target_id;
   if (!['nation', 'alliance'].includes(alert.type) || !targetId || events.length === 0) {
-    throw new TypeError('Nexus did not return a complete typed watchlist filter. Edit this alert in Nexus web.');
+    throw new TypeError('The API did not return a complete typed watchlist filter. Edit this alert on the web.');
   }
   return {
     ...payload,
@@ -250,7 +251,7 @@ const findAlert = async (context, actor, alertId) => {
   const response = await context.apiService.getMyAlerts(actor);
   const collection = normalizeCollection(response?.alerts ?? response);
   const alert = collection.items.find((item) => Number(item?.id) === Number(alertId));
-  if (!alert) throw new TypeError(`Alert #${alertId} was not found in your Nexus account.`);
+  if (!alert) throw new TypeError(`Alert #${alertId} was not found in your account.`);
   return alert;
 };
 
@@ -270,7 +271,7 @@ const chooseEventsMessage = (interaction, context, payload) => {
   return safeMessage(statusMessage({
     title: `Choose ${titleCase(payload.type)} Events`,
     tone: 'info',
-    description: `Select every change Nexus should watch for ${payload.type} **#${formatNumber(payload.target_id, { maximumFractionDigits: 0 })}**.`,
+    description: `Select every change to watch for ${payload.type} **#${formatNumber(payload.target_id, { maximumFractionDigits: 0 })}**.`,
     footer: 'You will preview delivery policy and test the alert before saving.',
     components: [new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder()
@@ -307,7 +308,7 @@ const listAlerts = async (interaction, context, actor) => {
   collection.items = collection.items.map(decorateAlert);
   const globalDelivery = settings?.discord_enabled ? 'Discord delivery enabled' : 'Discord delivery disabled';
   await interaction.editReply(safeMessage(collectionMessage({
-    title: 'Your Nexus Alerts',
+    title: 'Your Alerts',
     collection,
     empty: 'You have no custom alerts. Use `/alerts nation`, `/alerts alliance`, or `/alerts market` to create one.',
     commandName: 'alerts',
@@ -316,6 +317,7 @@ const listAlerts = async (interaction, context, actor) => {
     variant: 'alert',
     description: `${globalDelivery} · ${settings?.timezone ?? 'UTC'} · Web activity is always recorded.`,
     baseUrl: context.apiService.baseUrl,
+    appName: appNameFrom(context.apiService),
     pageSize: 4,
   })));
 };
@@ -361,7 +363,7 @@ const draftPreviewMessage = (interaction, context, payload, preview, {
     ? preview.events.map((event) => event.label).join(', ')
     : null;
   const fields = [
-    { name: 'Condition', value: escapeMarkdown(truncate(preview?.condition ?? events ?? 'Validated by Nexus', 1_000)) },
+    { name: 'Condition', value: escapeMarkdown(truncate(preview?.condition ?? events ?? 'Validated when saved', 1_000)) },
     { name: 'Delivery', value: deliveryLabel(preview?.delivery), inline: true },
     { name: 'Cooldown', value: `${formatNumber(preview?.cooldown_minutes ?? 60, { maximumFractionDigits: 0 })} minutes`, inline: true },
     preview?.delivery?.timezone ? { name: 'Time zone', value: escapeMarkdown(preview.delivery.timezone), inline: true } : null,
@@ -377,7 +379,7 @@ const draftPreviewMessage = (interaction, context, payload, preview, {
       ? 'Your active-alert limit is reached. Pause or delete an alert before saving.'
       : operation === 'update'
         ? 'Testing does not save these edits. Trigger changes reset the baseline only after you confirm the update.'
-        : 'Testing does not save the subscription or change baselines. Nexus establishes a baseline after creation.',
+        : 'Testing does not save the subscription or change baselines. A baseline is established after creation.',
     components: draftControls(interaction, context, payload, {
       alertId, canSave: preview?.can_save !== false || operation === 'update', operation, sourceFingerprint,
     }),
@@ -413,7 +415,7 @@ const testResultMessage = (interaction, context, result, draft = null) => {
   }));
   return safeMessage(statusMessage({
     ...outcome,
-    description: `Nexus recorded marked test occurrence **#${formatNumber(result?.occurrence_id, { maximumFractionDigits: 0 })}**. The states below are authoritative; a queued test may still be awaiting its final Discord receipt.`,
+    description: `Marked test occurrence **#${formatNumber(result?.occurrence_id, { maximumFractionDigits: 0 })}** was recorded. The states below are authoritative; a queued test may still be awaiting its final Discord receipt.`,
     fields,
     footer: 'Web activity remains available even when private Discord delivery is disabled or unavailable.',
     components: draft ? draftControls(interaction, context, draft.payload, {
@@ -429,14 +431,14 @@ const createdMessage = (created) => safeMessage(statusMessage({
   title: 'Alert Created',
   tone: 'success',
   description: `Created alert **#${formatNumber(created?.id, { maximumFractionDigits: 0 })} · ${escapeMarkdown(truncate(created?.name ?? 'New alert', 100))}**.`,
-  footer: 'Nexus will establish a baseline before sending matched notifications. Web activity is always recorded.',
+  footer: 'A baseline will be established before matched notifications are sent. Web activity is always recorded.',
 }));
 
 const updatedMessage = (updated) => safeMessage(statusMessage({
   title: 'Alert Updated',
   tone: 'success',
   description: `Updated alert **#${formatNumber(updated?.id, { maximumFractionDigits: 0 })} · ${escapeMarkdown(truncate(updated?.name ?? 'Alert', 100))}**.`,
-  footer: 'Nexus preserves the existing baseline for delivery-only edits and re-establishes it when trigger criteria change.',
+  footer: 'Delivery-only edits keep the existing baseline; changing trigger criteria re-establishes it.',
 }));
 
 const timeValue = (value, label) => {
@@ -538,7 +540,7 @@ const settingsMessage = (settings, { title = 'Alert Delivery Settings', tone = '
     },
   ],
   footer: settings?.uses_legacy_defaults
-    ? 'Nexus is showing migrated defaults. Confirm an update to persist your preferred time zone.'
+    ? 'These are migrated defaults. Confirm an update to persist your preferred time zone.'
     : 'Use /alerts settings with one or more options to propose a change.',
   components,
 }));
@@ -581,7 +583,7 @@ const activityField = (item, baseUrl) => {
       item.occurred_at ? `**Occurred:** ${formatDiscordTime(item.occurred_at)}` : null,
       item.is_test ? '**Marked test:** Yes' : null,
       context ? `**Context:** ${escapeMarkdown(truncate(context, 500))}` : null,
-      link ? `[Open authoritative Nexus record](${link})` : null,
+      link ? `[Open authoritative record](${link})` : null,
     ].filter(Boolean).join('\n'),
   };
 };
@@ -612,7 +614,7 @@ const activityPageMessage = (interaction, context, response, before = null, stac
     title: 'Alert Activity',
     tone: 'info',
     description: items.length
-      ? 'Canonical matched, suppressed, queued, delivered, and failed alert activity from Nexus.'
+      ? 'Canonical matched, suppressed, queued, delivered, and failed alert activity.'
       : 'No alert activity is available in the retained 30-day window.',
     fields: items.map((item) => activityField(item, context.apiService.baseUrl)),
     footer: items.length ? 'Use /alerts activity delivery:<id> to inspect a receipt or change its read state.' : null,
@@ -644,7 +646,7 @@ const receiptMessage = (delivery) => safeMessage(statusMessage({
       ].filter(Boolean).join('\n'),
     } : null,
   ],
-  footer: 'Nexus exposes normalized status and error codes without provider payloads or sensitive diagnostics.',
+  footer: 'Only normalized status and error codes are shown, without provider payloads or sensitive diagnostics.',
 }));
 
 const activityReadConfirmation = (interaction, context, deliveryId, read) => {
@@ -659,7 +661,7 @@ const activityReadConfirmation = (interaction, context, deliveryId, read) => {
     title: `Confirm Mark ${read ? 'Read' : 'Unread'}`,
     tone: 'warning',
     description: `Change activity **#${formatNumber(deliveryId, { maximumFractionDigits: 0 })}** to ${read ? 'read' : 'unread'}?`,
-    footer: 'This changes only your private Nexus activity state; it does not acknowledge or resolve an operational incident.',
+    footer: 'This changes only your private activity state; it does not acknowledge or resolve an operational incident.',
     components: [new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(confirmId).setLabel(`Mark ${read ? 'read' : 'unread'}`).setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId(cancelId).setLabel('Cancel').setStyle(ButtonStyle.Secondary),
@@ -669,16 +671,16 @@ const activityReadConfirmation = (interaction, context, deliveryId, read) => {
 
 const manageCopy = {
   pause: {
-    title: 'Confirm Alert Pause', description: 'Matched activity will remain visible in Nexus, but this subscription will stop matching new changes.', label: 'Pause alert', style: ButtonStyle.Danger,
+    title: 'Confirm Alert Pause', description: 'Matched activity will remain visible on the web, but this subscription will stop matching new changes.', label: 'Pause alert', style: ButtonStyle.Danger,
   },
   resume: {
-    title: 'Confirm Alert Resume', description: 'Nexus will revalidate eligibility, expiration, and duplicate constraints before resuming.', label: 'Resume alert', style: ButtonStyle.Success,
+    title: 'Confirm Alert Resume', description: 'Eligibility, expiration, and duplicate constraints will be revalidated before resuming.', label: 'Resume alert', style: ButtonStyle.Success,
   },
   test: {
-    title: 'Confirm Marked Alert Test', description: 'Nexus will record a marked test occurrence and report each web and Discord delivery state.', label: 'Send marked test', style: ButtonStyle.Primary,
+    title: 'Confirm Marked Alert Test', description: 'A marked test occurrence will be recorded with each web and Discord delivery state.', label: 'Send marked test', style: ButtonStyle.Primary,
   },
   delete: {
-    title: 'Confirm Alert Deletion', description: 'The subscription will be deleted. Retained activity and delivery receipts remain subject to Nexus retention policy.', label: 'Delete alert', style: ButtonStyle.Danger,
+    title: 'Confirm Alert Deletion', description: 'The subscription will be deleted. Retained activity and delivery receipts remain subject to the retention policy.', label: 'Delete alert', style: ButtonStyle.Danger,
   },
 };
 
@@ -694,7 +696,7 @@ const manageConfirmation = (interaction, context, id, action) => {
     title: copy.title,
     tone: 'warning',
     description: `${copy.description}\n\nAlert: **#${formatNumber(id, { maximumFractionDigits: 0 })}**`,
-    footer: 'Nexus revalidates ownership and current state when you confirm.',
+    footer: 'Ownership and current state are revalidated when you confirm.',
     components: [new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(confirmId).setLabel(copy.label).setStyle(copy.style),
       new ButtonBuilder().setCustomId(cancelId).setLabel('Cancel').setStyle(ButtonStyle.Secondary),
@@ -706,7 +708,7 @@ const manageResultMessage = (id, action) => safeMessage(statusMessage({
   title: { pause: 'Alert Paused', resume: 'Alert Resumed', delete: 'Alert Deleted' }[action],
   tone: ['pause', 'delete'].includes(action) ? 'warning' : 'success',
   description: `Alert **#${formatNumber(id, { maximumFractionDigits: 0 })}** was ${{ pause: 'paused', resume: 'resumed', delete: 'deleted' }[action]}.`,
-  footer: 'Your alert state is synchronized with Nexus.',
+  footer: 'Your alert state is synchronized with the web.',
 }));
 
 const hasSettingsChanges = (input) => Object.values(input).some((value) => value !== null);

@@ -48,12 +48,18 @@ const selectQueryParams = (params, supportedKeys) => {
 };
 
 export class ApiContractError extends Error {
-  constructor(message, { code = 'INVALID_RESPONSE', status = null, details = null } = {}) {
+  constructor(message, {
+    code = 'INVALID_RESPONSE',
+    status = null,
+    details = null,
+    appName = null,
+  } = {}) {
     super(message);
     this.name = 'ApiContractError';
     this.code = code;
     this.status = status;
     this.details = details;
+    this.appName = appName;
   }
 }
 
@@ -90,6 +96,8 @@ export class ApiService {
     this.logger = logger;
     this.relaySigner = relaySigner;
     this.connectionContext = connectionContext;
+    /** Deployment display name most recently reported by Core in response meta. */
+    this.appName = null;
     if (connectionContext && Number(connectionContext.protocolVersion) !== 2) {
       throw new TypeError('ApiService requires relay protocol v2 connection context.');
     }
@@ -159,8 +167,10 @@ export class ApiService {
           ? { ...options, url: this.#canonicalRequestUrl(options.url) }
           : options;
         const response = await this.http.request(requestOptions);
+        this.#rememberAppName(response.data);
         return response.data;
       } catch (error) {
+        this.#rememberAppName(error?.response?.data);
         const isLastAttempt = attempt === this.maxRetries;
         const retryable = retryMode !== RetryMode.NEVER && this.#isRetryableError(error);
         this.logger.warn(
@@ -243,11 +253,12 @@ export class ApiService {
         throw new ApiContractError(
           typeof apiError.message === 'string' && apiError.message.trim() !== ''
             ? apiError.message
-            : 'Nexus rejected the request.',
+            : 'The request was rejected.',
           {
             code: apiError.code,
             status: error?.response?.status ?? null,
             details: apiError.details ?? null,
+            appName: this.appName,
           },
         );
       }
@@ -1157,7 +1168,7 @@ export class ApiService {
       || response?.data?.item === null;
     if (emptyClaim) return;
     if (item === null) {
-      throw new ApiContractError('Nexus returned a v2 queue claim without a connection-bound item.', {
+      throw new ApiContractError('The API returned a v2 queue claim without a connection-bound item.', {
         code: 'INVALID_QUEUE_BINDING',
         details: { field: 'item' },
       });
@@ -1170,7 +1181,7 @@ export class ApiService {
     };
     for (const [field, value] of Object.entries(expected)) {
       if (item[field] !== value) {
-        throw new ApiContractError('Nexus returned a queue item with an invalid connection binding.', {
+        throw new ApiContractError('The API returned a queue item with an invalid connection binding.', {
           code: 'INVALID_QUEUE_BINDING',
           details: { field },
         });
@@ -1195,7 +1206,7 @@ export class ApiService {
       || (actor?.discordConnectionId && actor.discordConnectionId !== this.connectionContext.connectionId)
       || (actor?.discordConnectionGeneration && Number(actor.discordConnectionGeneration) !== this.connectionContext.generation)
     )) {
-      throw new TypeError('Discord actor context does not match the resolved Nexus connection.');
+      throw new TypeError('Discord actor context does not match the resolved connection.');
     }
 
     if (!this.relaySigner || !this.#isV2Relay()) {
@@ -1244,26 +1255,34 @@ export class ApiService {
     return `${parsed.origin}${target}`;
   }
 
+  /** Remember the deployment display name Core reports in `meta.app_name`, if any. */
+  #rememberAppName(body) {
+    const name = body?.meta?.app_name;
+    if (typeof name === 'string' && name.trim() !== '') {
+      this.appName = name.trim();
+    }
+  }
+
   #unwrapDiscordEnvelope(envelope) {
     if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) {
-      throw new ApiContractError('Nexus returned a malformed Discord response.');
+      throw new ApiContractError('The API returned a malformed Discord response.');
     }
 
     if (envelope.error !== undefined) {
       const error = envelope.error;
       if (!error || typeof error !== 'object' || typeof error.code !== 'string' || error.code.trim() === '') {
-        throw new ApiContractError('Nexus returned a malformed Discord error response.');
+        throw new ApiContractError('The API returned a malformed Discord error response.');
       }
       throw new ApiContractError(
         typeof error.message === 'string' && error.message.trim() !== ''
           ? error.message
-          : 'Nexus rejected the request.',
-        { code: error.code, details: error.details ?? null },
+          : 'The request was rejected.',
+        { code: error.code, details: error.details ?? null, appName: this.appName },
       );
     }
 
     if (!Object.hasOwn(envelope, 'data') || envelope?.meta?.contract_version !== 1) {
-      throw new ApiContractError('Nexus returned an unsupported Discord response contract.');
+      throw new ApiContractError('The API returned an unsupported Discord response contract.');
     }
 
     return envelope.data;

@@ -18,7 +18,7 @@ const HELP_TOPICS = Object.freeze([
   Object.freeze({
     value: 'member',
     name: 'Member tools',
-    description: 'Review your Nexus account, requests, audits, and support workflows.',
+    description: 'Review your account, requests, audits, and support workflows.',
   }),
   Object.freeze({
     value: 'finance',
@@ -28,7 +28,7 @@ const HELP_TOPICS = Object.freeze([
   Object.freeze({
     value: 'applications',
     name: 'Applications',
-    description: 'Start, continue, review, and decide Nexus applications.',
+    description: 'Start, continue, review, and decide applications.',
   }),
   Object.freeze({
     value: 'military',
@@ -78,7 +78,7 @@ export const help = Object.freeze({
 
 export const data = new SlashCommandBuilder()
   .setName('help')
-  .setDescription('Find Nexus Discord commands and learn how to use them.')
+  .setDescription('Find Discord bot commands and learn how to use them.')
   .addStringOption((option) => option
     .setName('command')
     .setDescription('The command to learn about.')
@@ -257,7 +257,7 @@ const capabilityAvailabilityFor = (command, context = {}) => {
 };
 
 const availabilityNoteFor = (command, context) => capabilityAvailabilityFor(command, context) === false
-  ? 'Setup or upgrade may be required before this command is available. Nexus will confirm access when you run it.'
+  ? 'Setup or upgrade may be required before this command is available. Access is confirmed when you run it.'
   : null;
 
 const guideUrlFor = (context = {}) => resolveDeepLink(
@@ -265,9 +265,9 @@ const guideUrlFor = (context = {}) => resolveDeepLink(
   GUIDE_PATH,
 );
 
-const guideText = (guideUrl) => markdownLink('Open the full Nexus Discord guide', guideUrl);
+const guideText = (guideUrl) => markdownLink('Open the full Discord guide', guideUrl);
 
-const commonFooter = 'Help metadata is for discoverability; Nexus enforces permissions and command availability.';
+const commonFooter = 'Help metadata is for discoverability; permissions and availability are enforced when a command runs.';
 
 const fieldValue = (value, fallback = '—') => truncate(value, MAX_FIELD_VALUE, fallback);
 
@@ -346,7 +346,7 @@ const overviewMessage = (commands, context) => {
     .filter(Boolean);
 
   return statusMessage({
-    title: 'Nexus Discord Help',
+    title: 'Discord Command Help',
     description: [
       'Choose a command to see its inferred usage and options, or choose a topic to browse related commands.',
       '',

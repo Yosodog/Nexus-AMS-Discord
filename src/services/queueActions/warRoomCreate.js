@@ -459,7 +459,7 @@ function buildWarRoomEmbed(command) {
     ['Declare war', links.declare_war],
     ['War simulators', links.war_simulators],
     ['War timeline', links.war_timeline],
-    [isMilcomObjectiveSource(payload.source) ? 'Nexus objective' : 'Source plan', payload?.source?.url],
+    [isMilcomObjectiveSource(payload.source) ? 'Milcom objective' : 'Source plan', payload?.source?.url],
     ['Operation', links.operation],
   ].flatMap(([label, url]) => {
     const href = safeOutputUrl(url);
@@ -562,7 +562,7 @@ function buildWarRoomAssignmentMessages(payload, roster = selectAssignedMembers(
       blocks: [[
         `To keep this war room readable, ${formatNumber(roster.omittedCount)} additional assignment ${roster.omittedCount === 1 ? 'entry was' : 'entries were'} omitted from the Discord summary.`,
         sourcePlan ? markdownLink(
-          milcomObjective ? 'Open the Nexus objective for the complete roster' : 'Open the source plan for the complete roster',
+          milcomObjective ? 'Open the Milcom objective for the complete roster' : 'Open the source plan for the complete roster',
           sourcePlan,
         ) : null,
       ].filter(Boolean).join('\n')],

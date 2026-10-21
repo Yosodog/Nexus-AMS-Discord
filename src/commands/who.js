@@ -4,7 +4,7 @@ import { identityMessage } from '../utils/directoryUi.js';
 
 export const data = new SlashCommandBuilder()
   .setName('who')
-  .setDescription('View a Discord user’s minimal Nexus identity.')
+  .setDescription('View a Discord user’s minimal member identity.')
   .addUserOption((option) => option
     .setName('user')
     .setDescription('Discord user to look up; defaults to you.')

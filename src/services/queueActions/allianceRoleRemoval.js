@@ -58,7 +58,7 @@ export const execute = async (command, runtime) => {
 
   try {
     await runtime.withDiscordRetry(
-      () => member.roles.remove(roleIds, 'Nexus AMS alliance role removal'),
+      () => member.roles.remove(roleIds, 'Alliance role removal'),
       'remove ALLIANCE_ROLE_REMOVAL roles',
     );
     if (!runtime.canContinue()) return { success: false, reason: 'lease_lost' };

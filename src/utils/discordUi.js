@@ -178,6 +178,20 @@ export const markdownLink = (label, url) => {
   return href ? `[${text}](${href})` : text;
 };
 
+/**
+ * Resolve the deployment display name Core reports as `meta.app_name`.
+ * Accepts an ApiService, a response or meta object, or a string and returns plain text or null.
+ */
+export const appNameFrom = (source) => {
+  const raw = typeof source === 'string'
+    ? source
+    : source?.appName ?? source?.app_name ?? source?.meta?.app_name;
+  return typeof raw === 'string' && raw.trim() !== '' ? truncate(raw, 100) : null;
+};
+
+/** Suffix a plain-text label with " in <app name>" when the deployment name is known. */
+export const inAppLabel = (label, appName) => (appName ? `${label} in ${appName}` : label);
+
 export const statusLabel = (status) => {
   if (!isPresent(status)) return null;
   const normalized = String(status).trim().toLowerCase().replaceAll('_', '-');
@@ -318,7 +332,7 @@ const renderRequest = (item, index, context) => {
     isPresent(item.nation_id) ? `**Nation:** ${markdownLink(`Nation #${item.nation_id}`, nationUrl({ id: item.nation_id }))}` : null,
     item.created_at ? `**Submitted:** ${formatDiscordTime(item.created_at)}` : null,
     item.updated_at ? `**Updated:** ${formatDiscordTime(item.updated_at)}` : null,
-    itemLink('Open request in Nexus', deepLink),
+    itemLink(inAppLabel('Open request', context.appName), deepLink),
   ]);
 };
 
@@ -333,7 +347,7 @@ const renderGrantProgram = (item, index, context) => {
     compactParts([eligibility, item.one_time ? 'One-time' : 'Repeatable']),
     item.description ? escapeMarkdown(truncate(item.description, 350)) : null,
     summary ? `**Eligibility:** ${escapeMarkdown(summary)}` : null,
-    itemLink('Open program in Nexus', deepLink),
+    itemLink(inAppLabel('Open program', context.appName), deepLink),
   ]);
 };
 
@@ -352,7 +366,7 @@ const renderLoan = (item, index, context) => {
       isPresent(item.scheduled_weekly_payment) ? `**Weekly:** ${formatMoney(item.scheduled_weekly_payment)}` : null,
     ]),
     item.next_due_date ? `**Next due:** ${formatDiscordTime(item.next_due_date, 'D')}` : null,
-    itemLink('Open loan in Nexus', deepLink),
+    itemLink(inAppLabel('Open loan', context.appName), deepLink),
   ]);
 };
 
@@ -365,7 +379,7 @@ const renderApplication = (item, index, context) => {
     item.discord_username ? `**Discord:** ${escapeMarkdown(item.discord_username)}` : null,
     item.created_at ? `**Submitted:** ${formatDiscordTime(item.created_at)}` : null,
     item.denial_reason ? `**Denial reason:** ${escapeMarkdown(item.denial_reason)}` : null,
-    itemLink('Open application in Nexus', deepLink),
+    itemLink(inAppLabel('Open application', context.appName), deepLink),
   ]);
 };
 
@@ -409,7 +423,7 @@ const renderWarCounter = (item, index, context) => {
       item.type ? `**Declaration:** ${titleCase(item.type)}` : null,
       isPresent(item.team_size) ? `**Team:** ${formatNumber(item.team_size, { maximumFractionDigits: 0 })}` : null,
     ]),
-    itemLink('Open counter in Nexus', deepLink),
+    itemLink(inAppLabel('Open counter', context.appName), deepLink),
   ]);
 };
 
@@ -450,7 +464,7 @@ const renderBlockade = (item, index, context) => {
     claimer ? `**Claimed by:** ${markdownLink(claimer.name ?? `Nation #${claimer.id}`, nationUrl(claimer))}` : '**Claimed by:** Unassigned',
     item.deadline_at ? `**Deadline:** ${formatDiscordTime(item.deadline_at)}` : null,
     isPresent(item.war_id) ? `[Open war](https://politicsandwar.com/nation/war/timeline/war=${encodeURIComponent(item.war_id)})` : null,
-    itemLink('Open request in Nexus', deepLink),
+    itemLink(inAppLabel('Open request', context.appName), deepLink),
   ]);
 };
 
@@ -462,7 +476,7 @@ const renderAlert = (item, index, context) => {
     isPresent(item.cooldown_minutes) ? `**Cooldown:** ${formatNumber(item.cooldown_minutes, { maximumFractionDigits: 0 })} minutes` : null,
     item.last_triggered_at ? `**Last triggered:** ${formatDiscordTime(item.last_triggered_at)}` : null,
     item.expires_at ? `**Expires:** ${formatDiscordTime(item.expires_at)}` : null,
-    itemLink('Open alert in Nexus', deepLink),
+    itemLink(inAppLabel('Open alert', context.appName), deepLink),
   ]);
 };
 

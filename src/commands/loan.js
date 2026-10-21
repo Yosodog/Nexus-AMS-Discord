@@ -7,10 +7,11 @@ import {
   normalizeCollection, replyError,
 } from '../utils/commandSupport.js';
 import {
+  appNameFrom,
   buildEmbed, formatDiscordTime, formatMoney, resolveDeepLink, statusLabel, statusMessage, truncate,
 } from '../utils/discordUi.js';
 
-export const data = new SlashCommandBuilder().setName('loan').setDescription('Apply for and manage Nexus loans.')
+export const data = new SlashCommandBuilder().setName('loan').setDescription('Apply for and manage alliance loans.')
   .addSubcommand((sub) => sub.setName('apply').setDescription('Apply for a loan.')
     .addStringOption((option) => option.setName('account').setDescription('Destination account').setRequired(true).setAutocomplete(true)))
   .addSubcommand((sub) => sub.setName('status').setDescription('View a loan.')
@@ -76,7 +77,7 @@ export const execute = async (interaction, context) => {
       await interaction.editReply(collectionMessage({
         title: 'Your Loans', collection: visibleLoans, empty: 'No loans found.',
         commandName: 'loan', userId: interaction.user.id, sessions: context.sessions,
-        variant: 'loan', baseUrl: context.apiService.baseUrl,
+        variant: 'loan', baseUrl: context.apiService.baseUrl, appName: appNameFrom(context.apiService),
         description: selectedLoan
           ? 'Showing the selected loan with its current balance and payment schedule.'
           : 'Current loans, balances, and upcoming payment details.',
@@ -154,7 +155,7 @@ export const modal = async (interaction, context) => {
           title: 'Review Loan Application',
           tone: 'warning',
           description: truncate(
-            preview?.summary ?? 'Nexus validated the application. Confirm to submit it.',
+            preview?.summary ?? 'The application was validated. Confirm to submit it.',
             1200,
           ),
           fields: [
@@ -165,7 +166,7 @@ export const modal = async (interaction, context) => {
               ? { name: 'Preview expires', value: formatDiscordTime(preview.intent.expires_at), inline: true }
               : null,
           ],
-          footer: 'Nexus will revalidate eligibility when you confirm.',
+          footer: 'Eligibility will be revalidated when you confirm.',
         })],
         components: [new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId(confirmId).setLabel('Confirm application').setStyle(ButtonStyle.Success),
@@ -200,7 +201,7 @@ export const modal = async (interaction, context) => {
         title: 'Review Loan Payment',
         tone: 'warning',
         description: truncate(
-          preview?.summary ?? 'Nexus validated the payment amount and allocation. Confirm to submit it.',
+          preview?.summary ?? 'The payment amount and allocation were validated. Confirm to submit it.',
           1200,
         ),
         fields: [
@@ -243,7 +244,7 @@ export const button = async (interaction, context) => {
       await interaction.editReply(statusMessage({
         title: 'Loan Application Submitted',
         tone: 'success',
-        description: truncate(result?.message ?? 'Nexus accepted the loan application for processing.', 1200),
+        description: truncate(result?.message ?? 'The loan application was accepted for processing.', 1200),
         fields: [
           loan?.id !== undefined ? { name: 'Loan', value: `#${loan.id}`, inline: true } : null,
           accountId !== undefined
@@ -270,7 +271,7 @@ export const button = async (interaction, context) => {
     await interaction.editReply(statusMessage({
       title: 'Loan Payment Submitted',
       tone: 'success',
-      description: truncate(result?.message ?? 'Nexus applied the payment to the loan.', 1200),
+      description: truncate(result?.message ?? 'The payment was applied to the loan.', 1200),
       fields: [
         loanId !== undefined ? { name: 'Loan', value: `#${loanId}`, inline: true } : null,
         accountId !== undefined ? { name: 'Source account', value: `Account #${accountId}`, inline: true } : null,

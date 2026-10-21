@@ -6,7 +6,7 @@ import {
   formatDiscordTime, statusLabel, statusMessage, truncate,
 } from '../utils/discordUi.js';
 
-export const data = new SlashCommandBuilder().setName('deposit').setDescription('Create a Nexus deposit request.')
+export const data = new SlashCommandBuilder().setName('deposit').setDescription('Create a bank deposit request.')
   .addStringOption((option) => option.setName('account').setDescription('Destination account').setRequired(true).setAutocomplete(true))
   .setDMPermission(false);
 
@@ -24,7 +24,7 @@ const selectedAccount = async (interaction, apiService, accountId) => {
   });
   const account = normalizeCollection(result).items.find((item) => `${item?.id}` === `${accountId}`);
   if (!account) {
-    throw Object.assign(new Error('The selected account is not available to your Nexus account.'), {
+    throw Object.assign(new Error('The selected account is not available to you.'), {
       code: 'NOT_FOUND',
     });
   }
@@ -33,7 +33,7 @@ const selectedAccount = async (interaction, apiService, accountId) => {
 
 const depositResultMessage = (result, accountId) => {
   const deposit = result?.deposit_request;
-  if (!deposit?.deposit_code) throw new TypeError('Nexus did not return a deposit code.');
+  if (!deposit?.deposit_code) throw new TypeError('The API did not return a deposit code.');
   return statusMessage({
     title: result?.reused ? 'Existing Deposit Code' : 'Deposit Code Created',
     tone: 'success',
@@ -67,12 +67,12 @@ export const execute = async (interaction, context) => {
     await interaction.editReply(statusMessage({
       title: 'Review Deposit Request',
       tone: 'warning',
-      description: 'Nexus authorized this destination account. Confirm to create a deposit request and receive a deposit code.',
+      description: 'This destination account is authorized. Confirm to create a deposit request and receive a deposit code.',
       fields: [
         { name: 'Destination account', value: `${accountName} (#${accountId})`, inline: true },
         account.frozen ? { name: 'Account status', value: 'Frozen', inline: true } : null,
       ],
-      footer: 'Nexus will revalidate account access and any finance rules when you confirm.',
+      footer: 'Account access and any finance rules will be revalidated when you confirm.',
       components: [new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(confirmId).setLabel('Create deposit request').setStyle(ButtonStyle.Success),
       )],

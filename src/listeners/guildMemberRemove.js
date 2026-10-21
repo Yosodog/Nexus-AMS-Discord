@@ -18,7 +18,7 @@ export const registerGuildMemberRemoveListener = (
 
     try {
       const apiService = connection.apiService ?? connectionServiceFactory(connection);
-      if (!apiService) throw new Error('Nexus connection service unavailable');
+      if (!apiService) throw new Error('Connection service unavailable');
       await apiService.reportApplicationMemberDeparture(member.id);
     } catch (error) {
       logger.warn('Failed to report Discord member departure to Nexus', {

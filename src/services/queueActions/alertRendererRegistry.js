@@ -12,6 +12,7 @@ import {
   escapeMarkdown,
   formatDiscordTime,
   formatNumber,
+  inAppLabel,
   markdownLink,
   statusLabel,
   statusTone,
@@ -275,7 +276,7 @@ const displayValue = (value) => {
 
 const eventTitle = (eventKey, fallback) => EVENT_LABELS[eventKey] ?? fallback;
 
-const renderStandardAlert = ({ definition, eventKey, data, deepLink, occurredAt, observedAt }) => {
+const renderStandardAlert = ({ definition, eventKey, data, deepLink, occurredAt, observedAt, appName }) => {
   const subject = data.subject_label ?? data.label ?? data.name ?? null;
   const event = data.event ?? eventTitle(eventKey, definition.title);
   const status = statusLabel(data.status);
@@ -309,7 +310,7 @@ const renderStandardAlert = ({ definition, eventKey, data, deepLink, occurredAt,
     data.detail ? escapeMarkdown(data.detail) : null,
     data.reason ? `**Reason:** ${escapeMarkdown(data.reason)}` : null,
     observedAt ? `**Observed:** ${formatDiscordTime(observedAt)}` : null,
-    deepLink ? markdownLink('Open details in Nexus', deepLink) : null,
+    deepLink ? markdownLink(inAppLabel('Open details', appName), deepLink) : null,
   ].filter(Boolean).join('\n');
 
   const timestamp = new Date(occurredAt);
@@ -325,7 +326,7 @@ const renderStandardAlert = ({ definition, eventKey, data, deepLink, occurredAt,
   };
 };
 
-const renderDigest = ({ data, deepLink, remainingItemsLink, observedAt }) => {
+const renderDigest = ({ data, deepLink, remainingItemsLink, observedAt, appName }) => {
   const fields = data.items.map((item) => {
     const itemLink = deepLinkForPath(deepLink, item.deep_link_path);
     return {
@@ -333,7 +334,7 @@ const renderDigest = ({ data, deepLink, remainingItemsLink, observedAt }) => {
       value: [
         escapeMarkdown(item.description),
         `**Occurred:** ${formatDiscordTime(item.occurred_at)}`,
-        itemLink ? markdownLink('Open in Nexus', itemLink) : null,
+        itemLink ? markdownLink(inAppLabel('Open', appName), itemLink) : null,
       ].filter(Boolean).join('\n'),
       inline: false,
     };
@@ -344,14 +345,14 @@ const renderDigest = ({ data, deepLink, remainingItemsLink, observedAt }) => {
 
   return {
     embeds: [buildEmbed({
-      title: data.title ?? 'Nexus Alert Digest',
+      title: data.title ?? 'Alert Digest',
       description: [
         data.description ? escapeMarkdown(data.description) : null,
         data.count !== undefined ? `**Items:** ${formatNumber(data.count, { maximumFractionDigits: 0 })}` : null,
         observedAt ? `**Generated:** ${formatDiscordTime(observedAt)}` : null,
         remainingCount > 0 && (remainingItemsLink ?? deepLink)
-          ? markdownLink(`View ${formatNumber(remainingCount, { maximumFractionDigits: 0 })} remaining items in Nexus`, remainingItemsLink ?? deepLink)
-          : deepLink ? markdownLink('Open alert activity in Nexus', deepLink) : null,
+          ? markdownLink(inAppLabel(`View ${formatNumber(remainingCount, { maximumFractionDigits: 0 })} remaining items`, appName), remainingItemsLink ?? deepLink)
+          : deepLink ? markdownLink(inAppLabel('Open alert activity', appName), deepLink) : null,
       ].filter(Boolean).join('\n'),
       tone: 'info',
       url: deepLink,
@@ -360,7 +361,9 @@ const renderDigest = ({ data, deepLink, remainingItemsLink, observedAt }) => {
   };
 };
 
-const renderResourceShortfall = ({ data, deepLink, occurredAt, occurrenceId, guildId, destinationType }) => {
+const renderResourceShortfall = ({
+  data, deepLink, occurredAt, occurrenceId, guildId, destinationType, appName,
+}) => {
   const timestamp = new Date(occurredAt);
   const actionEnabled = data.action_available
     && destinationType === 'dm'
@@ -368,12 +371,12 @@ const renderResourceShortfall = ({ data, deepLink, occurredAt, occurrenceId, gui
     && /^\d{17,20}$/.test(`${guildId ?? ''}`);
   const message = {
     embeds: [buildEmbed({
-      title: 'Nexus Resource Shortfall',
+      title: 'Resource Shortfall',
       tone: 'warning',
       description: [
         `**${escapeMarkdown(data.nation_name)}** cannot cover at least one resource required for its next turn.`,
         'The suggested withdrawal covers the remaining net shortfall for the next 12 turns.',
-        deepLink ? markdownLink('Open accounts in Nexus', deepLink) : null,
+        deepLink ? markdownLink(inAppLabel('Open accounts', appName), deepLink) : null,
       ].filter(Boolean).join('\n'),
       fields: data.shortfalls.map((line) => ({
         name: titleCase(line.resource),
@@ -385,8 +388,8 @@ const renderResourceShortfall = ({ data, deepLink, occurredAt, occurrenceId, gui
         inline: true,
       })),
       footer: actionEnabled
-        ? 'Resolve resources uses one Nexus account and revalidates all balances before any transaction.'
-        : 'No single Nexus account currently appears able to fund the complete withdrawal.',
+        ? 'Resolve resources uses one account and revalidates all balances before any transaction.'
+        : 'No single account currently appears able to fund the complete withdrawal.',
     })],
   };
   if (!Number.isNaN(timestamp.getTime())) message.embeds[0].setTimestamp(timestamp);
@@ -419,7 +422,7 @@ const DEFINITIONS = Object.freeze([
     template_key: 'member_alert_v1',
     version: 1,
     event_keys: MEMBER_EVENT_KEYS,
-    title: 'Nexus Watchlist Alert',
+    title: 'Watchlist Alert',
     tone: 'info',
     render: renderStandardAlert,
   },
@@ -427,7 +430,7 @@ const DEFINITIONS = Object.freeze([
     template_key: 'workflow_status_v1',
     version: 1,
     event_keys: WORKFLOW_EVENT_KEYS,
-    title: 'Nexus Workflow Update',
+    title: 'Workflow Update',
     tone: 'finance',
     render: renderStandardAlert,
   },
@@ -443,7 +446,7 @@ const DEFINITIONS = Object.freeze([
     template_key: 'operational_alert_v1',
     version: 1,
     event_keys: OPERATIONAL_EVENT_KEYS,
-    title: 'Nexus Operations Alert',
+    title: 'Operations Alert',
     tone: 'warning',
     render: renderStandardAlert,
   },
@@ -451,7 +454,7 @@ const DEFINITIONS = Object.freeze([
     template_key: 'digest.v1',
     version: 1,
     event_keys: [...MEMBER_EVENT_KEYS, ...WORKFLOW_EVENT_KEYS, ...OPERATIONAL_EVENT_KEYS, ...MILCOM_EVENT_KEYS, ...RESOURCE_SHORTFALL_EVENT_KEYS],
-    title: 'Nexus Alert Digest',
+    title: 'Alert Digest',
     tone: 'info',
     render: renderDigest,
   },
@@ -459,7 +462,7 @@ const DEFINITIONS = Object.freeze([
     template_key: 'resource_shortfall_v1',
     version: 1,
     event_keys: RESOURCE_SHORTFALL_EVENT_KEYS,
-    title: 'Nexus Resource Shortfall',
+    title: 'Resource Shortfall',
     tone: 'warning',
     render: renderResourceShortfall,
   },

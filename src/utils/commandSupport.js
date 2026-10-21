@@ -4,8 +4,10 @@ import {
   ButtonStyle,
 } from 'discord.js';
 import {
+  appNameFrom,
   buildEmbed,
   buildPlainMessage,
+  inAppLabel,
   pluralize,
   renderCollectionItem,
   variantConfig,
@@ -40,26 +42,29 @@ export const actorFromInteraction = (interaction, command = null) => {
 
 export const errorMessage = (error) => {
   const code = `${error?.code ?? ''}`.toUpperCase();
+  const appName = appNameFrom(error);
   const messages = {
-    DISCORD_ACCOUNT_NOT_LINKED: 'Link your Discord account in Nexus before using this command.',
+    DISCORD_ACCOUNT_NOT_LINKED: appName
+      ? `Link your Discord account in ${appName} before using this command.`
+      : 'Link your Discord account with /verify before using this command.',
     FORBIDDEN: 'You do not have permission to do that.',
     NOT_FOUND: 'That item is no longer available.',
     STALE_INTENT: 'This draft changed or expired. Start a new request.',
     INTENT_EXPIRED: 'This draft expired. Start a new request.',
     DUPLICATE_REQUEST: 'You already have an open request of this type.',
-    VALIDATION_ERROR: 'Nexus could not validate that request.',
+    VALIDATION_ERROR: 'That request could not be validated.',
     FEATURE_DISABLED: 'This feature is currently disabled.',
     APPLICATION_PREVIEW_STALE: 'Your application eligibility changed after the preview.',
-    APPLICATION_RECONCILIATION_UNAVAILABLE: 'This server cannot safely create Nexus applications yet.',
+    APPLICATION_RECONCILIATION_UNAVAILABLE: 'This server cannot safely create applications yet.',
     VERIFICATION_TOKEN_INVALID: 'This verification code is invalid or has already been used.',
     VERIFICATION_INTENT_STALE: 'This verification code changed or was already used after the preview.',
-    NEXUS_ACCOUNT_DISABLED: 'This Nexus account is disabled and cannot be linked.',
+    NEXUS_ACCOUNT_DISABLED: `This ${appName ? `${appName} ` : ''}account is disabled and cannot be linked.`,
   };
   const detail = typeof error?.message === 'string' && error.message.length <= 300 ? error.message : null;
   if (code === 'VALIDATION_ERROR' && detail) return detail;
   return messages[code]
     ?? detail
-    ?? 'Nexus is unavailable right now. Please try again later.';
+    ?? `${appName ?? 'The service'} is unavailable right now. Please try again later.`;
 };
 
 const errorGuidance = (error) => {
@@ -68,22 +73,25 @@ const errorGuidance = (error) => {
     return nexusGuidance.slice(0, 300);
   }
 
+  const appName = appNameFrom(error);
   return ({
-    DISCORD_ACCOUNT_NOT_LINKED: 'Link your Discord account in Nexus, then run this command again.',
-    DUPLICATE_REQUEST: 'Open your existing request in Nexus before starting another one.',
-    FEATURE_DISABLED: 'Contact a Nexus administrator if you need access to this feature.',
-    FORBIDDEN: 'If you believe you should have access, contact a Nexus administrator.',
+    DISCORD_ACCOUNT_NOT_LINKED: appName
+      ? `Link your Discord account in ${appName}, then run this command again.`
+      : 'Link your Discord account with /verify, then run this command again.',
+    DUPLICATE_REQUEST: `${inAppLabel('Open your existing request', appName)} before starting another one.`,
+    FEATURE_DISABLED: 'Contact an administrator if you need access to this feature.',
+    FORBIDDEN: 'If you believe you should have access, contact an administrator.',
     INTENT_EXPIRED: 'Run the command again to create a fresh draft.',
     NOT_FOUND: 'Refresh the list or run the command again to get current data.',
     STALE_INTENT: 'Run the command again to create a fresh draft.',
     VALIDATION_ERROR: 'Review the values above, then try again.',
     APPLICATION_PREVIEW_STALE: 'Run /apply again to review the latest application details.',
-    APPLICATION_RECONCILIATION_UNAVAILABLE: 'Ask a server administrator to update the Nexus Discord integration.',
-    VERIFICATION_TOKEN_INVALID: 'Copy a current verification code from your Nexus account settings.',
-    VERIFICATION_INTENT_STALE: 'Get a fresh verification code from Nexus and run /verify again.',
-    NEXUS_ACCOUNT_DISABLED: 'Contact a Nexus administrator.',
+    APPLICATION_RECONCILIATION_UNAVAILABLE: 'Ask a server administrator to update the Discord integration.',
+    VERIFICATION_TOKEN_INVALID: `Copy a current verification code from your ${appName ? `${appName} ` : ''}account settings.`,
+    VERIFICATION_INTENT_STALE: `Get a fresh verification code from your ${appName ? `${appName} ` : ''}account settings and run /verify again.`,
+    NEXUS_ACCOUNT_DISABLED: 'Contact an administrator.',
   }[`${error?.code ?? ''}`.toUpperCase()]
-    ?? 'Try the command again. If this keeps happening, contact a Nexus administrator.');
+    ?? 'Try the command again. If this keeps happening, contact an administrator.');
 };
 
 export const replyError = async (interaction, error, title = 'Request Failed') => {
@@ -157,6 +165,7 @@ export const collectionMessage = ({
   variant = 'generic',
   description,
   baseUrl,
+  appName = null,
   page: requestedPage,
   pageSize: requestedPageSize,
   noun: requestedNoun,
@@ -181,7 +190,7 @@ export const collectionMessage = ({
     variant,
     item,
     start + index,
-    { baseUrl },
+    { baseUrl, appName },
   ));
   const footer = total === 0
     ? null
@@ -198,6 +207,7 @@ export const collectionMessage = ({
       variant,
       description,
       baseUrl,
+      appName,
       pageSize,
       noun,
     };

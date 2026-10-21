@@ -7,14 +7,14 @@ import {
   normalizeCollection, replyError, summarizeItem,
 } from '../utils/commandSupport.js';
 import {
-  buildEmbed, buildPlainMessages, escapeMarkdown, formatDiscordTime, formatMilitary,
+  appNameFrom, buildEmbed, buildPlainMessages, escapeMarkdown, formatDiscordTime, formatMilitary,
   formatNumber, markdownLink, statusLabel, statusMessage, titleCase, truncate,
 } from '../utils/discordUi.js';
 
 export const data = new SlashCommandBuilder().setName('war').setDescription('View active wars and war guidance.')
   .addSubcommand((sub) => sub.setName('active').setDescription('View your active wars.'))
   .addSubcommand((sub) => sub.setName('assignments').setDescription('View and respond to current Milcom-v2 assignments.'))
-  .addSubcommand((sub) => sub.setName('readiness').setDescription('View a Nexus Milcom-v2 readiness snapshot.')
+  .addSubcommand((sub) => sub.setName('readiness').setDescription('View a Milcom-v2 readiness snapshot.')
     .addStringOption((option) => option.setName('nation').setDescription('Nation; defaults to your linked nation.')
       .setAutocomplete(true)))
   .addSubcommand((sub) => sub.setName('room').setDescription('View an actor-safe Milcom-v2 war-room summary.')
@@ -163,11 +163,11 @@ const assignmentsMessage = (result, interaction, context) => {
       title: 'Milcom-v2 Assignments',
       tone: 'military',
       description: assignments.length
-        ? 'Current assignments Nexus has approved for your linked nation.'
-        : 'Nexus has no current Milcom-v2 assignments for your linked nation.',
+        ? 'Current approved assignments for your linked nation.'
+        : 'There are no current Milcom-v2 assignments for your linked nation.',
       fields: assignments.slice(0, 10).map(assignmentField),
       footer: assignments.length > 10
-        ? `Showing 10 of ${assignments.length} assignments. Open Nexus for the complete list.`
+        ? `Showing 10 of ${assignments.length} assignments. Open ${appNameFrom(context.apiService) ?? 'the website'} for the complete list.`
         : `${assignments.length} current assignment${assignments.length === 1 ? '' : 's'}${assignments.length > 5 ? ' · Response controls shown for the first 5' : ''}`,
       timestamp: true,
     })],
@@ -221,7 +221,7 @@ const assignmentResponseConfirmation = (interaction, context, preview) => {
       ? 'Confirm Assignment Unavailable'
       : 'Confirm Assignment Acknowledgement',
     tone: 'warning',
-    description: 'Nexus will revalidate the assignment, your linked nation, and this installation when you confirm.',
+    description: 'The assignment, your linked nation, and this installation will be revalidated when you confirm.',
     fields: [
       { name: 'Assignment', value: `#${id}`, inline: true },
       { name: 'Target', value: safeText(target.nation_name, `Nation #${target.id ?? '?'}`), inline: true },
@@ -231,7 +231,7 @@ const assignmentResponseConfirmation = (interaction, context, preview) => {
         ? { name: 'Confirmation expires', value: formatDiscordTime(preview.intent.expires_at), inline: true }
         : null,
     ],
-    footer: 'The response is recorded and audited in Nexus. It does not change the assignment state by itself.',
+    footer: 'The response is recorded and audited. It does not change the assignment state by itself.',
     components: [new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(confirmId).setLabel('Confirm response').setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId(cancelId).setLabel('Cancel').setStyle(ButtonStyle.Secondary),
@@ -247,7 +247,7 @@ const readinessMessage = (readiness) => {
     embeds: [buildEmbed({
       title: `Readiness · ${safeText(nation.nation_name, `Nation #${nation.id ?? '?'}`)}`,
       tone: 'military',
-      description: 'Persisted Milcom-v2 snapshot from Nexus. Values are shown as recorded; Discord does not recalculate readiness.',
+      description: 'Persisted Milcom-v2 snapshot. Values are shown as recorded; Discord does not recalculate readiness.',
       fields: [
         {
           name: 'Nation',
@@ -300,7 +300,7 @@ const warRoomMessage = (room) => {
     embeds: [buildEmbed({
       title: `War Room · ${safeText(target.nation_name, `Nation #${target.id ?? '?'}`)}`,
       tone: 'military',
-      description: room?.reason ? safeText(room.reason) : 'Actor-safe Milcom-v2 room summary from Nexus.',
+      description: room?.reason ? safeText(room.reason) : 'Actor-safe Milcom-v2 room summary.',
       fields: [
         {
           name: 'Objective',
@@ -375,6 +375,7 @@ export const execute = async (interaction, context) => {
         variant: 'war-counter',
         description: `Recommended counters for nation #${interaction.options.getInteger('nation', true)}.`,
         baseUrl: context.apiService.baseUrl,
+        appName: appNameFrom(context.apiService),
         pageSize: 3,
       }));
       return;
@@ -407,6 +408,7 @@ export const execute = async (interaction, context) => {
       variant: 'war',
       description: 'Wars currently active for your linked nation.',
       baseUrl: context.apiService.baseUrl,
+      appName: appNameFrom(context.apiService),
       pageSize: 3,
     }));
   } catch (error) { await replyError(interaction, error); }
@@ -481,8 +483,8 @@ export const button = async (interaction, context) => {
       title: unavailable ? 'Assignment Marked Unavailable' : 'Assignment Acknowledged',
       tone: unavailable ? 'warning' : 'success',
       description: unavailable
-        ? 'Nexus recorded that you are unavailable for this assignment.'
-        : 'Nexus recorded your assignment acknowledgement.',
+        ? 'You are recorded as unavailable for this assignment.'
+        : 'Your assignment acknowledgement was recorded.',
       fields: [
         { name: 'Assignment', value: `#${id}`, inline: true },
         { name: 'Response', value: safeText(statusLabel(result?.response) ?? titleCase(result?.response)), inline: true },

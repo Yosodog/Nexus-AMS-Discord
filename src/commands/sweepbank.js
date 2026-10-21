@@ -6,6 +6,7 @@ import {
 } from 'discord.js';
 import { actorFromInteraction, replyError } from '../utils/commandSupport.js';
 import {
+  appNameFrom,
   buildEmbed,
   escapeMarkdown,
   formatDiscordTime,
@@ -177,7 +178,7 @@ export const button = async (interaction, context) => {
     if (response?.reconciliation_required === true) {
       await interaction.editReply({
         embeds: [buildErrorEmbed(
-          `The bank response was ambiguous and the transfer was recorded for manual reconciliation. Do not retry; reconcile this transfer in ${appNameFrom(response) ?? 'the admin panel'}.`,
+          `The bank response was ambiguous and the transfer was recorded for manual reconciliation. Do not retry; reconcile this transfer in ${escapeMarkdown(appNameFrom(response) ?? 'the admin panel')}.`,
         )],
         components: [],
         allowedMentions: { parse: [] },
@@ -265,11 +266,6 @@ function buildErrorEmbed(message) {
     footer: 'Review the error before retrying.',
     timestamp: true,
   });
-}
-
-function appNameFrom(response) {
-  const name = typeof response?.app_name === 'string' ? response.app_name.trim() : '';
-  return name !== '' ? escapeMarkdown(truncate(name, 100)) : null;
 }
 
 function formatResourceSummary(payload) {

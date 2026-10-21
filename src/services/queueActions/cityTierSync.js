@@ -110,7 +110,7 @@ export const execute = async (command, runtime) => {
         role = await runtime.withDiscordRetry(
           () => guild.roles.create({
             name: roleDefinition.name,
-            reason: `Nexus AMS city tier ${roleDefinition.bucket_start}-${roleDefinition.bucket_end}`,
+            reason: `City tier ${roleDefinition.bucket_start}-${roleDefinition.bucket_end}`,
           }),
           `create CITY_TIER_SYNC role ${roleDefinition.name}`,
         );
@@ -187,13 +187,13 @@ export const execute = async (command, runtime) => {
       if (!runtime.canContinue()) return { success: false, reason: 'lease_lost' };
       if (needsDesiredRole) {
         await runtime.withDiscordRetry(
-          () => member.roles.add(desiredRoleId, 'Nexus AMS city-tier synchronization'),
+          () => member.roles.add(desiredRoleId, 'City-tier synchronization'),
           'add CITY_TIER_SYNC member role',
         );
       }
       if (roleIdsToRemove.length > 0) {
         await runtime.withDiscordRetry(
-          () => member.roles.remove(roleIdsToRemove, 'Nexus AMS city-tier synchronization'),
+          () => member.roles.remove(roleIdsToRemove, 'City-tier synchronization'),
           'remove obsolete CITY_TIER_SYNC member roles',
         );
       }
