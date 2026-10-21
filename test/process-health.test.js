@@ -6,6 +6,7 @@ import path from 'node:path';
 import { ProcessHealth, writeHealthSnapshot } from '../src/services/ProcessHealth.js';
 import { runHealthcheck, validateHealthSnapshot } from '../src/healthcheck.js';
 import { createLogger } from './helpers.js';
+import packageMetadata from '../package.json' with { type: 'json' };
 
 const queueReady = {
   started: true,
@@ -66,7 +67,7 @@ test('ProcessHealth publishes a bounded lifecycle without tenant credentials', a
     'stopped',
   ]);
   assert.deepEqual(snapshots[1].build, {
-    version: '0.1.0',
+    version: packageMetadata.version,
     commit: 'abc123',
     release: 'release-1',
   });
@@ -90,7 +91,7 @@ test('ProcessHealth publishes a bounded lifecycle without tenant credentials', a
     installed: true,
     enabled: true,
     configuration_ready: true,
-    version: '0.1.0',
+    version: packageMetadata.version,
     release_id: 'release-1',
   });
   assert.deepEqual(snapshots[1].scope, { guild_configured: true });

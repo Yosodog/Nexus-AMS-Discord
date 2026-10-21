@@ -4,21 +4,21 @@ Use this guide when you want to run your own Discord application for one Nexus i
 
 You do not need Nexus Cloud for this setup.
 
-If Nexus Setup manages Core and Discord on the same host, use the simpler
-managed path: create the Discord application and invite it using steps 2–5
-below, then run `nexus component install discord` or open
-**Admin → Settings → Software**. The managed installer prompts only for the bot
-token, application ID, and guild ID; it creates the internal credential and
-relay key, installs a dedicated service, and registers guild slash commands.
-Do not also run the manual `.env`/`npm start` instructions on that host. The
-remaining steps describe independent/manual and container deployments.
+> **Installed Nexus with Nexus Setup?** Use the managed path instead: follow
+> steps 2–5 below to create and invite the Discord application, then run
+> `sudo nexus component install discord` on the Core host or open
+> **Admin → Settings → Software**. Setup asks only for the bot token,
+> application ID, and server ID, and handles everything else. Do not also
+> follow the manual steps on that host.
 
 ## Before you start
 
 You need:
 
 - A server or virtual machine that can run Node.js 22 or newer.
-- A working [Nexus AMS installation](https://github.com/Yosodog/Nexus-AMS).
+- A working [Nexus AMS installation](https://github.com/Yosodog/Nexus-AMS) that
+  meets the bot's `nexus-core` requirement in
+  [`nexus-release.requires.json`](../nexus-release.requires.json).
 - A Discord account that can create an application and install it in the server.
 - An HTTPS address for Nexus that the bot host can reach. A dedicated setup may use a private network address.
 - Access to edit the `.env` file for both the bot and Nexus.
@@ -27,9 +27,13 @@ The bot does not need an inbound public port. It opens an outgoing Discord Gatew
 
 ## 1. Download the bot
 
+Check out the latest release tag rather than `main`, which may be ahead of
+the newest release:
+
 ```bash
 git clone https://github.com/Yosodog/Nexus-AMS-Discord.git
 cd Nexus-AMS-Discord
+git checkout "$(git describe --tags --abbrev=0)"
 npm ci
 cp .env.example .env
 chmod 600 .env
@@ -112,9 +116,13 @@ umask 077
 npm run keygen:relay > relay-keys.env
 ```
 
-The output contains a private key for the bot and a public key for Nexus. Never copy the private key into Nexus. Never copy the public key into the bot token field.
+The output contains a private key for the bot and a public key for Nexus. Never copy the private key into Nexus.
 
-The [configuration reference](configuration.md) has complete examples for the current compatible setup and relay protocol v2.
+Generate a connection ID:
+
+```bash
+node -e "console.log(require('node:crypto').randomUUID())"
+```
 
 ## 7. Configure the bot and Nexus
 
@@ -129,15 +137,16 @@ DISCORD_GUILD_ID=your-server-id
 NEXUS_API_URL=https://your-nexus.example
 NEXUS_API_KEY=the-shared-api-credential
 NEXUS_DISCORD_RELAY_PRIVATE_KEY=the-generated-private-key
-NEXUS_DISCORD_CONNECTION_ID=the-connection-uuid-from-nexus
+NEXUS_DISCORD_CONNECTION_ID=the-connection-id-you-generated
 NEXUS_DISCORD_CONNECTION_GENERATION=1
 NEXUS_DISCORD_RELAY_PROTOCOL=2
 NEXUS_DISCORD_RELAY_KEY_ID=relay-current
+NEXUS_DISCORD_RELAY_CURRENT_KEY_ID=relay-current
 ```
 
 Then set the matching Discord values in the Nexus `.env` file. Follow [Configure a dedicated connection](configuration.md#configure-a-dedicated-connection) to avoid mixing the bot variable names with the Nexus variable names.
 
-Run the required Nexus migrations and keep its scheduler and queue worker running. The bot depends on the leased Discord queue APIs in the matching Nexus release.
+Keep the Nexus scheduler and queue worker running. The bot depends on them for queue delivery and retries.
 
 ## 8. Register commands
 
@@ -172,6 +181,8 @@ Then test these steps in Discord:
 3. Generate a Discord verification code in Nexus and run `/verify`.
 4. Run one read-only command such as `/me` or `/accounts`.
 5. Test any enabled role, channel, alert, or war-room automation in a test server before using it in your main server.
+
+Private Discord notifications are switched off in Nexus by default. Once the bot is healthy, an administrator can turn them on in Nexus, and members opt in by category.
 
 ## 10. Run it as a service
 
@@ -237,21 +248,16 @@ Do not add a `ports` mapping. The bot needs outbound Discord and Nexus access bu
 
 ## Updating the bot
 
-For a Nexus Setup-managed bot, run `nexus update` or start the update from the
-Admin Software page. The updater applies every intermediate stable Nexus tag
-and updates all installed local components together. It registers the guild
-commands after a successful Discord activation, and code rollback re-registers
-the previous command set. It does not create a database backup or reverse
-migrations. The manual sequence below is for deployments outside Nexus Setup.
+A bot installed by Nexus Setup is updated by `nexus update` or the Admin
+Software page. Setup installs the newest bot release that is compatible with
+your Core release and re-registers the slash commands. The steps below are for
+a bot you run yourself.
 
-Before an update:
-
-1. Read the release notes and confirm the required Nexus version.
-2. Deploy Nexus migrations and API changes first.
-3. Stop the bot cleanly.
-4. Update the checked-out revision and run `npm ci`.
-5. Run `npm run check`.
-6. Run `npm run register` if the command set changed.
-7. Start the bot and run the smoke tests again.
+1. Read the release notes and check the `nexus-core` requirement in
+   `nexus-release.requires.json`. Update Nexus first if needed.
+2. Stop the bot cleanly.
+3. Fetch tags, check out the new release tag, and run `npm ci`.
+4. Run `npm run register` if the command set changed.
+5. Start the bot and run the smoke tests again.
 
 Do not run two copies of the same dedicated bot at once. Both processes would poll the same Nexus queue and connect the same Discord application without a coordinated shard assignment.
