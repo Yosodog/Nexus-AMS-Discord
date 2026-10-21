@@ -1,12 +1,12 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import {
   COMPONENT_CONTRACT_VERSION,
   COMPONENT_ID,
   HEALTH_SCHEMA_VERSION,
   SERVICE_NAME,
 } from './processHealthContract.js';
+import { isMainModule } from './utils/isMainModule.js';
 
 const DEFAULT_STALE_AFTER_MS = 45_000;
 const FUTURE_TOLERANCE_MS = 30_000;
@@ -113,8 +113,7 @@ export async function runHealthcheck(options = {}) {
   }
 }
 
-const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isMain) {
+if (isMainModule(import.meta.url)) {
   const result = await runHealthcheck();
   if (result.healthy) {
     process.stdout.write('healthy\n');

@@ -1,11 +1,11 @@
 import 'dotenv/config';
-import { pathToFileURL } from 'node:url';
 import { REST, Routes } from 'discord.js';
 import { loadCommands } from './commands/index.js';
 import { Logger } from './services/Logger.js';
 import { isOfficialSharedMode } from './services/connection/ConnectionContext.js';
 import { config } from './utils/config.js';
 import { validateEnv } from './utils/validateEnv.js';
+import { isMainModule } from './utils/isMainModule.js';
 
 export const registerCommands = async ({
   rest,
@@ -26,12 +26,13 @@ export const registerCommands = async ({
   logger.info(`Successfully registered ${shared ? 'global' : 'guild'} commands.`);
 };
 
-const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isMain) {
+if (isMainModule(import.meta.url)) {
   const logger = new Logger('RegisterCommands');
   const requiredEnv = ['DISCORD_BOT_TOKEN', 'DISCORD_CLIENT_ID'];
   if (config.discord.deploymentMode === 'dedicated') requiredEnv.push('DISCORD_GUILD_ID');
-  validateEnv(requiredEnv, logger);
+  validateEnv(requiredEnv, logger, {
+    values: { ...process.env, DISCORD_BOT_TOKEN: config.discord.token },
+  });
   const rest = new REST({ version: '10' }).setToken(config.discord.token);
 
   registerCommands({

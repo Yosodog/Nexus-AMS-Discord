@@ -1,5 +1,4 @@
 import 'dotenv/config';
-import { pathToFileURL } from 'node:url';
 import { Client, Collection, Events, GatewayIntentBits } from 'discord.js';
 import { createDedicatedConnection } from './services/connection/DedicatedConnectionAdapter.js';
 import {
@@ -27,6 +26,7 @@ import { DiscordStatusService } from './services/status/DiscordStatusService.js'
 import { alertRendererRegistry } from './services/queueActions/alertRendererRegistry.js';
 import { config } from './utils/config.js';
 import { validateEnv } from './utils/validateEnv.js';
+import { isMainModule } from './utils/isMainModule.js';
 
 const requiredEnv = ['DISCORD_BOT_TOKEN', 'DISCORD_CLIENT_ID'];
 if (config.discord.deploymentMode === CONNECTION_MODES.DEDICATED) {
@@ -432,8 +432,7 @@ export const bootstrap = async () => {
   }
 };
 
-const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isMain) {
+if (isMainModule(import.meta.url)) {
   bootstrap().catch((error) => {
     logger.error('Fatal startup error', error);
     process.exit(1);
