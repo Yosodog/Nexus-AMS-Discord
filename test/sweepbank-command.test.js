@@ -194,6 +194,53 @@ test('/sweepbank confirmation submits only the opaque Nexus intent and renders t
   assert.deepEqual(interaction.edits[0].components, []);
 });
 
+test('/sweepbank hides balances from administrators Nexus marks as unable to view them', async () => {
+  const interaction = createSweepInteraction();
+  const sessions = sessionsRecorder();
+  await execute(interaction, {
+    logger: createLogger(),
+    sessions,
+    apiService: {
+      baseUrl: 'https://nexus.example',
+      previewPrimaryOffshoreSweep: async () => preview({
+        summary: {
+          description: 'Confirm to transfer the full main-bank balance.',
+          offshore: { id: 7, name: 'Primary Vault', alliance_id: 42 },
+          resources: null,
+          resources_hidden: true,
+          note: 'after audit',
+        },
+      }),
+    },
+  });
+
+  assert.equal(sessions.created.length, 1);
+  const previewEmbed = embedJson(interaction.edits[0]);
+  assert.match(previewEmbed.fields.find(({ name }) => name === 'Resources').value, /^Hidden/);
+  assert.equal(interaction.edits[0].components[0].toJSON().components[0].label, 'Confirm bank sweep');
+
+  const confirmInteraction = createSweepInteraction();
+  await button(confirmInteraction, {
+    logger: createLogger(),
+    apiService: {
+      baseUrl: 'https://nexus.example',
+      confirmPrimaryOffshoreSweep: async () => ({
+        swept: true,
+        reconciliation_required: false,
+        resources_hidden: true,
+        offshore: { id: 7, name: 'Primary Vault', alliance_id: 42 },
+        transfer: { id: 99, payload: null, completed_at: '2026-08-08T12:05:00Z' },
+      }),
+    },
+    session: { event: 'confirm', state: { intentId: INTENT_ID } },
+  });
+
+  const sweptEmbed = embedJson(confirmInteraction.edits[0]);
+  assert.equal(sweptEmbed.title, 'Bank Swept');
+  assert.match(sweptEmbed.fields.find(({ name }) => name === 'Transferred Resources').value, /^Hidden/);
+  assert.doesNotMatch(JSON.stringify(sweptEmbed), /Money|\$/);
+});
+
 test('/sweepbank warns staff not to retry an ambiguous transfer', async () => {
   const interaction = createSweepInteraction();
   await button(interaction, {
@@ -202,6 +249,7 @@ test('/sweepbank warns staff not to retry an ambiguous transfer', async () => {
       confirmPrimaryOffshoreSweep: async () => ({
         swept: false,
         reconciliation_required: true,
+        app_name: 'Alliance Bank',
         transfer: { id: 99, status: 'reconciliation_required' },
       }),
     },
@@ -209,7 +257,8 @@ test('/sweepbank warns staff not to retry an ambiguous transfer', async () => {
   });
 
   assert.match(embedJson(interaction.edits[0]).description, /do not retry/i);
-  assert.match(embedJson(interaction.edits[0]).description, /reconcile/i);
+  assert.match(embedJson(interaction.edits[0]).description, /reconcile this transfer in Alliance Bank\./);
+  assert.doesNotMatch(JSON.stringify(embedJson(interaction.edits[0])), /Nexus/);
 });
 
 test('/sweepbank rejects stale component state before calling Nexus', async () => {
