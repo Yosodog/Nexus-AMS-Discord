@@ -5,7 +5,7 @@ import { createLogger } from './helpers.js';
 
 const CHANNEL_ID = '123456789012345678';
 
-const renderWarAlert = async (counter) => {
+const sendWarAlert = async (payloadOverrides = {}) => {
   let outgoing;
   const result = await execute({
     id: 'war-alert-1',
@@ -14,9 +14,9 @@ const renderWarAlert = async (counter) => {
       channel_id: CHANNEL_ID,
       war_id: 701,
       war_url: 'https://politicsandwar.com/nation/war/timeline/war=701',
-      counter,
       attacker: { nation_name: 'Attacker Nation', leader_name: 'Attacker' },
       defender: { nation_name: 'Defender Nation', leader_name: 'Defender' },
+      ...payloadOverrides,
     },
   }, {
     logger: createLogger(),
@@ -31,8 +31,10 @@ const renderWarAlert = async (counter) => {
   });
 
   assert.deepEqual(result, { success: true });
-  return outgoing.embeds[0].toJSON();
+  return outgoing;
 };
+
+const renderWarAlert = async (counter) => (await sendWarAlert({ counter })).embeds[0].toJSON();
 
 test('WAR_ALERT labels a safe Milcom v2 counter link as Review fast counter', async () => {
   const embed = await renderWarAlert({
@@ -68,4 +70,20 @@ test('WAR_ALERT omits unsafe counter URLs', async () => {
   });
 
   assert.doesNotMatch(embed.description, /Review fast counter|javascript:/);
+});
+
+test('WAR_ALERT pings the defender when a linked Discord user ID is provided', async () => {
+  const message = await sendWarAlert({ defender_discord_user_id: '323456789012345678' });
+
+  assert.equal(message.content, '<@323456789012345678>');
+  assert.deepEqual(message.allowedMentions, { users: ['323456789012345678'] });
+});
+
+test('WAR_ALERT sends without a ping when the defender has no linked Discord user', async () => {
+  for (const defenderDiscordUserId of [undefined, null, 'not-a-snowflake', '<@everyone>']) {
+    const message = await sendWarAlert({ defender_discord_user_id: defenderDiscordUserId });
+
+    assert.equal(message.content, undefined);
+    assert.deepEqual(message.allowedMentions, { parse: [] });
+  }
 });

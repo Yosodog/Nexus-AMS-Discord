@@ -57,6 +57,7 @@ export const execute = async (command, context) => {
   }
 
   const embed = buildWarAlertEmbed(command);
+  const mentionUserId = normalizeSnowflake(payload.defender_discord_user_id);
 
   try {
     if (!context.canContinue()) return { success: false, reason: 'lease_lost' };
@@ -64,7 +65,11 @@ export const execute = async (command, context) => {
       channel,
       command,
       'war-alert',
-      { embeds: [embed] },
+      {
+        content: mentionUserId ? `<@${mentionUserId}>` : undefined,
+        embeds: [embed],
+        allowedMentions: mentionUserId ? { users: [mentionUserId] } : { parse: [] },
+      },
       'send WAR_ALERT embed',
     );
     context.logger.info('Delivered WAR_ALERT embed', { commandId: command?.id, channelId });
@@ -165,4 +170,9 @@ function formatNumber(value) {
   }
 
   return new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(Number(value));
+}
+
+function normalizeSnowflake(value) {
+  const normalized = `${value ?? ''}`.trim();
+  return isDiscordSnowflake(normalized) ? normalized : null;
 }
